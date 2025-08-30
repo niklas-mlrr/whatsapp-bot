@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
-import axios from 'axios';
+import apiClient from '@/services/api';
 
 // Import types from chat.service.ts
 type Message = {
@@ -87,7 +87,7 @@ export const useChatStore = defineStore('chat', () => {
   const fetchChats = async () => {
     try {
       loading.value = true;
-      const response = await axios.get('/api/chats');
+      const response = await apiClient.get('/chats');
       chats.value = response.data.data || [];
       error.value = null;
     } catch (err: any) {
@@ -103,7 +103,7 @@ export const useChatStore = defineStore('chat', () => {
     
     try {
       loading.value = true;
-      const response = await axios.get(`/api/chats/${chatId}/messages`);
+      const response = await apiClient.get(`/chats/${chatId}/messages`);
       messages.value[chatId] = response.data.data || [];
       error.value = null;
     } catch (err: any) {
@@ -139,7 +139,7 @@ export const useChatStore = defineStore('chat', () => {
       messages.value[chatId] = [...messages.value[chatId], tempMessage];
 
       // Send to server
-      const response = await axios.post(`/api/chats/${chatId}/messages`, {
+      const response = await apiClient.post(`/chats/${chatId}/messages`, {
         content,
         type: options.type || 'text',
         ...options
@@ -193,7 +193,7 @@ export const useChatStore = defineStore('chat', () => {
 
   const markAsRead = async (chatId: string, messageIds: string[]) => {
     try {
-      await axios.post(`/api/chats/${chatId}/read`, { message_ids: messageIds });
+      await apiClient.post(`/chats/${chatId}/read`, { message_ids: messageIds });
       
       // Update read status in state
       if (messages.value[chatId]) {

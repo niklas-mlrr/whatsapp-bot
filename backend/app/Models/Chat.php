@@ -51,7 +51,7 @@ class Chat extends Model
      */
     protected $casts = [
         'last_message_at' => 'datetime',
-        'is_group' => 'boolean',
+        'type' => 'string', 
         'is_archived' => 'boolean',
         'is_muted' => 'boolean',
         'metadata' => 'array',
@@ -79,7 +79,7 @@ class Chat extends Model
     protected $attributes = [
         'participants' => '[]',
         'metadata' => '{}',
-        'is_group' => false,
+        'type' => 'private',
         'is_archived' => false,
         'is_muted' => false,
         'unread_count' => 0,
@@ -134,7 +134,15 @@ class Chat extends Model
      */
     public function scopeGroups(Builder $query): Builder
     {
-        return $query->where('is_group', true);
+        return $query->where('type', 'group');
+    }
+
+    /**
+     * Check if this chat is a group chat.
+     */
+    public function isGroup(): bool
+    {
+        return $this->type === 'group';
     }
 
     /**
@@ -206,12 +214,6 @@ class Chat extends Model
         // For direct chats, get the other participant's avatar
         $otherUser = $this->otherUser;
         return $otherUser ? $otherUser->avatar_url : null;
-        $participant = $this->participants[0] ?? null;
-        if ($participant && $user = User::where('phone', $participant)->first()) {
-            return $user->avatar_url;
-        }
-
-        return null;
     }
 
     /**

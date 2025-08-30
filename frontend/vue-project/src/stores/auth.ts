@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
-import axios from 'axios';
 import { useRouter } from 'vue-router';
+import apiClient from '@/services/api';
 
 export interface User {
   id: number;
@@ -22,17 +22,22 @@ export const useAuthStore = defineStore('auth', () => {
   const isAuthenticated = computed(() => !!token.value);
   const router = useRouter();
 
+  // Initialize API client with token if it exists
+  if (token.value) {
+    apiClient.defaults.headers.common['Authorization'] = `Bearer ${token.value}`;
+  }
+
   // Set auth token and update axios headers
   const setToken = (newToken: string) => {
     token.value = newToken;
     localStorage.setItem('token', newToken);
-    axios.defaults.headers.common['Authorization'] = `Bearer ${newToken}`;
+    apiClient.defaults.headers.common['Authorization'] = `Bearer ${newToken}`;
   };
 
   // Simplified login with just password
   const login = async (password: string) => {
     try {
-      const response = await axios.post('/api/login', { password });
+      const response = await apiClient.post('/login', { password });
       const { token: authToken } = response.data;
       setToken(authToken);
       return response.data;
@@ -44,11 +49,11 @@ export const useAuthStore = defineStore('auth', () => {
 
   const logout = () => {
     // Make API call to invalidate token if needed
-    axios.post('/api/logout').finally(() => {
+    apiClient.post('/logout').finally(() => {
       // Clear auth state regardless of API call result
       token.value = null;
       localStorage.removeItem('token');
-      delete axios.defaults.headers.common['Authorization'];
+      delete apiClient.defaults.headers.common['Authorization'];
       
       // Redirect to login
       router.push('/login');

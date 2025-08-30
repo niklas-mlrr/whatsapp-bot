@@ -80,23 +80,24 @@ export function useWebSocket(): WebSocketService {
         return false;
       }
       
-      // Create new Echo instance for Laravel Reverb
-      const reverbHost = import.meta.env.VITE_REVERB_HOST || 'localhost';
-      const reverbPort = parseInt(import.meta.env.VITE_REVERB_PORT || '8080', 10);
-      const reverbAppKey = import.meta.env.VITE_REVERB_APP_KEY || 'whatsapp-bot-key';
+      // Create new Echo instance for Laravel Pusher/Soketi
+      const pusherHost = import.meta.env.VITE_PUSHER_HOST || 'localhost';
+      const pusherPort = parseInt(import.meta.env.VITE_PUSHER_PORT || '6001', 10);
+      const pusherAppKey = import.meta.env.VITE_PUSHER_APP_KEY || 'whatsapp-bot-key';
       
       console.log('Connecting to WebSocket at:', {
-        host: reverbHost,
-        port: reverbPort,
-        key: reverbAppKey
+        host: pusherHost,
+        port: pusherPort,
+        key: pusherAppKey
       });
       
       echo = new Echo({
-        broadcaster: 'reverb',
-        key: reverbAppKey,
-        wsHost: reverbHost,
-        wsPort: reverbPort,
+        broadcaster: 'pusher',
+        key: pusherAppKey,
+        wsHost: pusherHost,
+        wsPort: pusherPort,
         forceTLS: false,
+        encrypted: false,
         enabledTransports: ['ws', 'wss'],
         auth: {
           headers: {

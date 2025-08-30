@@ -3,10 +3,9 @@
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Session;
 
-// Main route
-Route::get('/', function () {
-    return view('welcome');
-});
+
+
+
 
 // WebSocket test page
 Route::get('/websocket-test', function () {
@@ -41,7 +40,8 @@ $testRoutes = [
     'test.php',
     'test2.php',
     'test3.php',
-    'db-test.php' // Include our test routes
+    'db-test.php', // Include our test routes
+    'test-memory.php' // Include memory test routes
 ];
 
 foreach ($testRoutes as $routeFile) {
@@ -51,7 +51,3 @@ foreach ($testRoutes as $routeFile) {
     }
 }
 
-// Catch-all route for SPA (if using Vue Router in history mode)
-Route::get('/{any}', function () {
-    return view('welcome');
-})->where('any', '.*');

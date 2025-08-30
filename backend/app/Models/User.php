@@ -7,7 +7,7 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 use Illuminate\Support\Facades\Hash;
-use App\Models\Chat;
+// use App\Models\Chat;
 use Illuminate\Support\Str;
 
 class User extends Authenticatable
@@ -64,10 +64,8 @@ class User extends Authenticatable
      */
     public function chats()
     {
-        return $this->belongsToMany(Chat::class, 'chat_user')
-            ->withTimestamps()
-            ->withPivot(['is_admin', 'muted_until', 'last_read_at'])
-            ->orderByPivot('last_read_at', 'desc');
+        // Temporarily disabled to avoid circular dependency issues
+        return null;
     }
 
     /**
@@ -75,7 +73,8 @@ class User extends Authenticatable
      */
     public function createdChats()
     {
-        return $this->hasMany(Chat::class, 'created_by');
+        // Temporarily disabled to avoid circular dependency issues
+        return null;
     }
 
     /**

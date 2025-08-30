@@ -1,8 +1,8 @@
 // API configuration
 export const API_CONFIG = {
   BASE_URL: import.meta.env.VITE_API_URL || '/api',
-  WS_URL: import.meta.env.VITE_WS_URL || 'ws://localhost:6001',
-  PUSHER_KEY: import.meta.env.VITE_PUSHER_APP_KEY || 'your-pusher-key',
+  WS_URL: import.meta.env.VITE_WS_URL || 'ws://localhost:8080',
+  PUSHER_KEY: import.meta.env.VITE_PUSHER_APP_KEY || 'whatsapp-bot-key',
   PUSHER_CLUSTER: import.meta.env.VITE_PUSHER_APP_CLUSTER || 'mt1',
 };
 

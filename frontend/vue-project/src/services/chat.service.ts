@@ -1,5 +1,5 @@
 import { ref, onUnmounted } from 'vue';
-import axios from 'axios';
+import apiClient from '@/services/api';
 
 // Define types inline to avoid module resolution issues
 type User = {
@@ -432,7 +432,7 @@ export const useChatWebSockets = () => {
       }
       
       // In a real app, you would make an API call to mark messages as read
-      await axios.post(`/api/chats/${chatId}/messages/read`, {
+      await apiClient.post(`/chats/${chatId}/messages/read`, {
         message_ids: messageIds
       });
       

@@ -140,7 +140,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick, computed, watch } from 'vue';
-import axios from 'axios';
+import apiClient from '@/services/api';
 import { useWebSocket } from '@/services/websocket';
 
 // Types
@@ -190,7 +190,7 @@ interface ChatMember {
 
 const props = defineProps({
   chat: {
-    type: String,
+    type: [String, Number],
     required: true
   },
   isGroupChat: {
@@ -445,7 +445,7 @@ const loadMoreMessages = async () => {
   isLoadingMore.value = true;
   
   try {
-    const response = await axios.get(`/api/chats/${props.chat}/messages`, {
+    const response = await apiClient.get(`/chats/${props.chat}/messages`, {
       params: {
         before: lastMessageId.value,
         limit: 20
@@ -580,7 +580,7 @@ const fetchLatestMessages = async () => {
     console.log('Current messages length:', messages.value?.length);
     console.log('Last message ID:', messages.value?.[messages.value?.length - 1]?.id);
     
-    const response = await axios.get(`/api/chats/${props.chat}/messages/latest`, {
+    const response = await apiClient.get(`/chats/${props.chat}/messages/latest`, {
       params: {
         after: messages.value?.[messages.value?.length - 1]?.id || null
       }
@@ -665,7 +665,7 @@ const markMessagesAsRead = async (messageIds: string[]) => {
   if (messageIds.length === 0) return;
   
   try {
-    await axios.post('/api/messages/read', {
+    await apiClient.post('/messages/read', {
       message_ids: messageIds
     });
     
@@ -992,7 +992,7 @@ const setupWebSocketListeners = () => {
 const fetchMessages = async (params: { chatId: string; limit: number; before?: string }): Promise<{ messages: Message[]; hasMore: boolean }> => {
   try {
     console.log('Fetching messages with params:', params);
-    const response = await axios.get('/api/messages', { params });
+    const response = await apiClient.get('/messages', { params });
     
     // Ensure messages are properly typed and have required fields
     const messages = (response.data.data || []).map((msg: any) => ({

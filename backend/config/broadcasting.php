@@ -1,7 +1,7 @@
 <?php
 
 return [
-    'default' => env('BROADCAST_DRIVER', 'reverb'),
+    'default' => env('BROADCAST_DRIVER', 'pusher'),
 
     'connections' => [
         'reverb' => [
@@ -18,14 +18,14 @@ return [
         ],
         'pusher' => [
             'driver' => 'pusher',
-            'key' => env('PUSHER_APP_KEY'),
-            'secret' => env('PUSHER_APP_SECRET'),
-            'app_id' => env('PUSHER_APP_ID'),
+            'key' => env('PUSHER_APP_KEY', 'whatsapp-bot-key'),
+            'secret' => env('PUSHER_APP_SECRET', 'whatsapp-bot-secret'),
+            'app_id' => env('PUSHER_APP_ID', 'whatsapp-bot'),
             'options' => [
                 'host' => env('PUSHER_HOST', '127.0.0.1'),
                 'port' => env('PUSHER_PORT', 6001),
                 'scheme' => env('PUSHER_SCHEME', 'http'),
-                'encrypted' => true,
+                'encrypted' => false,
                 'useTLS' => env('PUSHER_SCHEME') === 'https',
             ],
         ],

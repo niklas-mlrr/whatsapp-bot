@@ -7,9 +7,9 @@
         <div v-if="loadingChats" class="text-blue-500 p-4">Loading chats...</div>
         <div v-if="errorChats" class="text-red-500 p-4">{{ errorChats }}</div>
         <ul v-if="!loadingChats && !errorChats">
-          <li v-for="chat in chats" :key="chat" @click="selectChat(chat)"
-              :class="['cursor-pointer px-4 py-3 border-b border-gray-100 hover:bg-green-50', chat === selectedChat ? 'bg-green-100 font-bold' : '']">
-            {{ chat }}
+          <li v-for="chat in chats" :key="chat.id" @click="selectChat(chat)"
+              :class="['cursor-pointer px-4 py-3 border-b border-gray-100 hover:bg-green-50', selectedChat && selectedChat.id === chat.id ? 'bg-green-100 font-bold' : '']">
+            {{ chat.name }}
           </li>
         </ul>
       </div>
@@ -19,10 +19,10 @@
       <!-- Chat header -->
       <div class="flex items-center gap-3 px-6 py-4 bg-white border-b border-gray-200 shadow-sm min-h-[64px] sticky top-0 z-10">
         <div class="w-10 h-10 rounded-full bg-green-300 flex items-center justify-center text-green-700 font-bold text-lg">
-          <span v-if="selectedChat">{{ selectedChat.slice(0,2).toUpperCase() }}</span>
+          <span v-if="selectedChat">{{ selectedChat.name.slice(0,2).toUpperCase() }}</span>
         </div>
         <div class="flex flex-col">
-          <span class="font-semibold text-lg text-gray-900">{{ selectedChat || 'Select a chat' }}</span>
+          <span class="font-semibold text-lg text-gray-900">{{ selectedChat ? selectedChat.name : 'Select a chat' }}</span>
           <span class="text-xs text-gray-400">Online</span>
         </div>
       </div>
@@ -32,7 +32,7 @@
         <MessageList 
           v-if="selectedChat"
           ref="messageListRef" 
-          :chat="selectedChat"
+          :chat="selectedChat.id"
           :current-user="currentUser"
         />
         <div v-else class="flex items-center justify-center h-full text-gray-500">
@@ -114,10 +114,10 @@ const currentUser = ref({
   last_seen: new Date().toISOString()
 })
 
-const chats = ref<string[]>([])
+const chats = ref<any[]>([])
 const loadingChats = ref(false)
 const errorChats = ref<string | null>(null)
-const selectedChat = ref<string | null>(null)
+const selectedChat = ref<any | null>(null)
 const input = ref('')
 const imageFile = ref<File | null>(null)
 const imagePath = ref<string | null>(null)
@@ -128,7 +128,7 @@ const isSending = ref(false)
 
 const messageListRef = ref<any>(null)
 
-function selectChat(chat: string) {
+function selectChat(chat: any) {
   selectedChat.value = chat
 }
 
@@ -145,7 +145,7 @@ async function sendMessageHandler() {
   try {
     let payload: any = {
       sender: 'me',
-      chat: selectedChat.value,
+      chat: selectedChat.value.id,
       type: messageImagePath ? 'image' : 'text',
       content: messageContent,
     }
@@ -187,7 +187,7 @@ async function sendMessageHandler() {
       messageListRef.value.addTemporaryMessage({
         id: 'temp-' + Date.now(),
         sender: 'me',
-        chat: selectedChat.value,
+        chat: selectedChat.value.id,
         type: messageImagePath ? 'image' : 'text',
         content: messageContent,
         media: messageImagePath,
@@ -308,18 +308,39 @@ const checkAuthAndRedirect = async () => {
 }
 
 onMounted(async () => {
+  console.log('MessagesView component mounted')
+  console.log('Auth store state:', useAuthStore())
+  
   const isAuthenticated = await checkAuthAndRedirect()
-  if (!isAuthenticated) return
+  console.log('Authentication check result:', isAuthenticated)
+  
+  if (!isAuthenticated) {
+    console.log('User not authenticated, returning early')
+    return
+  }
   
   loadingChats.value = true
   errorChats.value = null
   try {
+    console.log('Fetching chats...')
     const response = await fetchChats()
-    chats.value = response.data.data
-    if (chats.value.length > 0) {
-      selectedChat.value = chats.value[0]
+    console.log('Chats response:', response)
+    
+    if (response && response.data && response.data.data) {
+      chats.value = response.data.data
+      console.log('Chats loaded:', chats.value)
+      
+      if (chats.value && chats.value.length > 0) {
+        selectedChat.value = chats.value[0]
+        console.log('Selected chat:', selectedChat.value)
+      }
+    } else {
+      console.error('Invalid response format:', response)
+      errorChats.value = 'Invalid response format from server'
     }
   } catch (e: any) {
+    console.error('Error fetching chats:', e)
+    
     if (e.response?.status === 401) {
       errorChats.value = 'Session expired. Please login again.'
       const authStore = useAuthStore()

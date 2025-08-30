@@ -1,4 +1,4 @@
-import axios from 'axios';
+import apiClient from '@/services/api';
 export interface WhatsAppMessage {
   id: number;
   sender: string;
@@ -16,10 +16,10 @@ export interface PaginatedResponse<T> {
 }
 
 export const fetchMessages = (params: Record<string, any>) =>
-  axios.get<PaginatedResponse<WhatsAppMessage>>('/api/messages', { params });
+  apiClient.get<PaginatedResponse<WhatsAppMessage>>('/messages', { params });
 
 export const fetchChats = () =>
-  axios.get<{ data: string[] }>('/api/chats');
+  apiClient.get<{ data: any[] }>('/chats');
 
 export const sendMessage = (data: {
   sender: string;
@@ -30,12 +30,12 @@ export const sendMessage = (data: {
   mimetype?: string;
   sending_time?: string;
 }) =>
-  axios.post('/api/messages', data);
+  apiClient.post('/messages', data);
 
 export const uploadImage = (file: File) => {
   const formData = new FormData();
   formData.append('file', file);
-  return axios.post<{ path: string; url: string }>('/api/upload', formData, {
+  return apiClient.post<{ path: string; url: string }>('/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   });
 };

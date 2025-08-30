@@ -1,19 +1,36 @@
 <?php
 
+// Load custom PHP configuration
+$customPhpIni = __DIR__ . '/../config/custom-php.ini';
+if (file_exists($customPhpIni)) {
+    $config = parse_ini_file($customPhpIni);
+    foreach ($config as $key => $value) {
+        if (strpos($key, 'memory_limit') !== false) {
+            ini_set('memory_limit', $value);
+        }
+    }
+}
+
+// Set memory limit early in the bootstrap process
+$memoryLimit = env('MEMORY_LIMIT', '1024M');
+ini_set('memory_limit', $memoryLimit);
+
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Laravel\Reverb\ReverbServiceProvider;
 
 return Application::configure(basePath: dirname(__DIR__))
-    ->withProviders([
-        ReverbServiceProvider::class,
-    ])
     ->withRouting(
-        web: __DIR__.'/../routes/web.php',
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
     )
+    ->withProviders([
+        ReverbServiceProvider::class,
+        \App\Providers\AppServiceProvider::class,
+        \App\Providers\RouteServiceProvider::class,
+    ])
+
     ->withMiddleware(function (Middleware $middleware) {
         $middleware->alias([
             'throttle' => \Illuminate\Routing\Middleware\ThrottleRequests::class,

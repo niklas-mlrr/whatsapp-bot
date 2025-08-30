@@ -15,9 +15,10 @@ const apiClient: AxiosInstance = axios.create({
 // Add request interceptor to include auth token
 apiClient.interceptors.request.use(
   (config) => {
-    const authStore = useAuthStore();
-    if (authStore.token) {
-      config.headers.Authorization = `Bearer ${authStore.token}`;
+    // Get token from localStorage directly to avoid Pinia store context issues
+    const token = localStorage.getItem('token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
     }
     return config;
   },
@@ -31,26 +32,17 @@ apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
-    const authStore = useAuthStore();
     
-    // If the error status is 401 and we haven't tried to refresh the token yet
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    // If the error status is 401 and we have a token (meaning it's expired/invalid)
+    if (error.response?.status === 401 && localStorage.getItem('token') && !originalRequest._retry) {
       originalRequest._retry = true;
       
-      try {
-        // Try to refresh the token
-        // const response = await apiClient.post('/refresh-token');
-        // authStore.setToken(response.data.token);
-        
-        // Retry the original request with the new token
-        // originalRequest.headers.Authorization = `Bearer ${authStore.token}`;
-        // return apiClient(originalRequest);
-      } catch (refreshError) {
-        // If refresh token fails, log the user out
-        authStore.logout();
-        window.location.href = '/login';
-        return Promise.reject(refreshError);
-      }
+      // For now, just log the user out since we don't have token refresh
+      console.log('Token expired or invalid, logging out');
+      // Clear token and redirect to login
+      localStorage.removeItem('token');
+      window.location.href = '/login';
+      return Promise.reject(error);
     }
     
     return Promise.reject(error);
@@ -59,8 +51,8 @@ apiClient.interceptors.response.use(
 
 // Auth API
 export const authApi = {
-  login: async (email: string, password: string) => {
-    const response = await apiClient.post(API_ENDPOINTS.LOGIN, { email, password });
+  login: async (password: string) => {
+    const response = await apiClient.post(API_ENDPOINTS.LOGIN, { password });
     return response.data;
   },
   

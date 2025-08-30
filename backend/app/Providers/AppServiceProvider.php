@@ -2,33 +2,27 @@
 
 namespace App\Providers;
 
-use App\Models\Chat;
-use App\Policies\ChatPolicy;
-use App\Services\ChatService;
-use Illuminate\Support\Facades\Schema;
-use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Support\Facades\Log;
+use Monolog\Logger;
 
 class AppServiceProvider extends ServiceProvider
 {
-    /**
-     * The policy mappings for the application.
-     *
-     * @var array
-     */
-    protected $policies = [
-        Chat::class => ChatPolicy::class,
-    ];
-
     /**
      * Register any application services.
      */
     public function register(): void
     {
-        // Register the ChatService
-        $this->app->singleton(ChatService::class, function ($app) {
-            return new ChatService();
-        });
+        // Set memory limit from environment
+        $memoryLimit = env('MEMORY_LIMIT', '1024M');
+        ini_set('memory_limit', $memoryLimit);
+        
+        // Optimize logging to prevent memory issues
+        if (app()->environment('local')) {
+            // In local environment, limit log level to prevent excessive logging
+            config(['logging.channels.single.level' => 'error']);
+            config(['logging.channels.daily.level' => 'error']);
+        }
     }
 
     /**
@@ -36,24 +30,14 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        // Set default string length for MySQL
-        Schema::defaultStringLength(191);
-
-        // Register policies
-        foreach ($this->policies as $model => $policy) {
-            Gate::policy($model, $policy);
+        // Additional memory optimization
+        if (function_exists('gc_enable')) {
+            gc_enable();
         }
-
-        // Set up model observers
-        $this->registerObservers();
-    }
-
-    /**
-     * Register model observers.
-     */
-    protected function registerObservers(): void
-    {
-        // Register model observers here
-        // Example: Chat::observe(ChatObserver::class);
+        
+        // Set garbage collection threshold
+        if (function_exists('gc_threshold')) {
+            gc_threshold(1000);
+        }
     }
 }
