@@ -26,7 +26,6 @@ const config = {
     // Backend API Configuration
     backend: {
         apiUrl: process.env.BACKEND_API_URL || 'http://192.168.178.84:8000/api/whatsapp-webhook',
-        apiKey: process.env.BACKEND_API_KEY || '',
         timeoutMs: parseInt(process.env.BACKEND_TIMEOUT_MS, 10) || 10000,
         maxRetries: parseInt(process.env.BACKEND_MAX_RETRIES, 10) || 3,
         retryDelayMs: parseInt(process.env.BACKEND_RETRY_DELAY_MS, 10) || 1000,

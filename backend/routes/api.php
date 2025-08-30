@@ -34,6 +34,11 @@ Route::middleware('api')->group(function () {
         return response()->json(['authenticated' => auth()->check()]);
     });
 
+    // WhatsApp Webhook
+    Route::post('/api/whatsapp-webhook', [\App\Http\Controllers\Api\WhatsAppWebhookController::class, 'handle'])
+        ->middleware('api')
+        ->name('api.whatsapp.webhook');
+
     // Protected routes
     Route::middleware(['auth:sanctum'])->group(function () {
         // Auth routes

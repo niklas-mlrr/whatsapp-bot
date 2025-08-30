@@ -28,6 +28,45 @@ Route::middleware('web')->group(function () {
         return response()->json(['token' => csrf_token()]);
     });
 
+    // Temporary route to check encryption configuration
+    Route::get('/check-encryption', function() {
+        return [
+            'has_key' => !empty(config('app.key')),
+            'key_length' => strlen(config('app.key')),
+            'cipher' => config('app.cipher'),
+        ];
+    });
+
+    // Route to test encrypter service
+    Route::get('/test-encrypter', function() {
+        try {
+            if (!class_exists('Illuminate\\Encryption\\Encrypter')) {
+                throw new \Exception('Encrypter class not found');
+            }
+            
+            if (empty(config('app.key'))) {
+                throw new \Exception('APP_KEY not set in config');
+            }
+            
+            $encrypter = app('encrypter');
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Encrypter service is available',
+                'config' => [
+                    'key' => config('app.key'),
+                    'cipher' => config('app.cipher')
+                ],
+                'test_encryption' => $encrypter->encrypt('test')
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ], 500);
+        }
+    });
+
     // Include test routes
     $testRoutes = [
         'test-routes.php',
