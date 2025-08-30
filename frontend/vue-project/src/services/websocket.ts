@@ -81,7 +81,7 @@ export function useWebSocket(): WebSocketService {
       }
       
       // Create new Echo instance for Laravel Reverb
-      const reverbHost = import.meta.env.VITE_REVERB_HOST || window.location.hostname;
+      const reverbHost = import.meta.env.VITE_REVERB_HOST || 'localhost';
       const reverbPort = parseInt(import.meta.env.VITE_REVERB_PORT || '8080', 10);
       const reverbAppKey = import.meta.env.VITE_REVERB_APP_KEY || 'whatsapp-bot-key';
       
@@ -96,44 +96,15 @@ export function useWebSocket(): WebSocketService {
         key: reverbAppKey,
         wsHost: reverbHost,
         wsPort: reverbPort,
-        wssPort: reverbPort,
         forceTLS: false,
         enabledTransports: ['ws', 'wss'],
-        disableStats: true,
         auth: {
           headers: {
             'Authorization': `Bearer ${token}`,
-            'X-CSRF-TOKEN': document.head.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
-            'Accept': 'application/json',
-            'X-Socket-ID': socketId.value || '',
-            'X-Requested-With': 'XMLHttpRequest',
-          },
+            'Accept': 'application/json'
+          }
         },
-        authEndpoint: '/broadcasting/auth',
-        authorizer: (channel: any, options: any) => {
-          return {
-            authorize: (socketId: string, callback: Function) => {
-              axios.post('/broadcasting/auth', {
-                socket_id: socketId,
-                channel_name: channel.name
-              }, {
-                headers: {
-                  'Authorization': `Bearer ${token}`,
-                  'X-CSRF-TOKEN': document.head.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
-                  'Accept': 'application/json',
-                  'X-Requested-With': 'XMLHttpRequest',
-                }
-              })
-              .then((response: any) => {
-                callback(false, response.data);
-              })
-              .catch((error: any) => {
-                console.error('Authorization error:', error);
-                callback(true, error);
-              });
-            }
-          };
-        }
+        authEndpoint: '/broadcasting/auth'
       });
       
       // Add error handling

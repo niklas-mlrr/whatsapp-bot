@@ -21,61 +21,29 @@ class ChatController extends Controller
     {
         $user = $request->user();
         
-        $query = $user->chats()
-            ->with([
-                'users' => function ($query) use ($user) {
-                    $query->where('users.id', '!=', $user->id)
-                        ->select(['id', 'name', 'avatar_url']);
-                },
-                'lastMessage.sender:id,name,avatar_url'
-            ])
-            ->withCount(['unreadMessages' => function($query) use ($user) {
-                $query->whereDoesntHave('readers', function($q) use ($user) {
-                    $q->where('user_id', $user->id);
-                });
-            }])
-            ->latest('updated_at');
-
-        // Apply search filter if provided
-        if ($request->has('search')) {
-            $search = $request->input('search');
-            $query->where(function($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                  ->orWhereHas('users', function($q) use ($search) {
-                      $q->where('name', 'like', "%{$search}%");
-                  });
-            });
-        }
-
-        // Paginate the results with a smaller default page size
-        $perPage = $request->input('per_page', 15);
-        $chats = $query->paginate($perPage);
-
-        // Simplify the response format
-        return response()->json([
-            'data' => $chats->map(function ($chat) {
+        // Process chats in chunks
+        $chats = $user->chats()
+            ->select(['id', 'name', 'is_group', 'avatar_url', 'updated_at'])
+            ->orderBy('updated_at', 'desc')
+            ->cursor()
+            ->map(function ($chat) use ($user) {
                 return [
                     'id' => $chat->id,
                     'name' => $chat->name,
                     'is_group' => $chat->is_group,
                     'avatar_url' => $chat->avatar_url,
-                    'unread_count' => $chat->unread_messages_count,
-                    'last_message' => $chat->last_message ? [
-                        'content' => $chat->last_message->content,
-                        'created_at' => $chat->last_message->created_at,
-                        'sender' => $chat->last_message->sender
-                    ] : null,
-                    'users' => $chat->users,
-                    'updated_at' => $chat->updated_at
+                    'updated_at' => $chat->updated_at,
+                    'unread_count' => $chat->unreadMessages()->count(),
+                    'users' => $chat->users()
+                        ->where('users.id', '!=', $user->id)
+                        ->limit(5)
+                        ->get(['id', 'name', 'avatar_url']),
+                    'last_message' => $chat->lastMessage()->first(['id', 'content', 'created_at'])
                 ];
-            }),
-            'meta' => [
-                'current_page' => $chats->currentPage(),
-                'last_page' => $chats->lastPage(),
-                'per_page' => $chats->perPage(),
-                'total' => $chats->total(),
-            ]
-        ]);
+            })
+            ->paginate($request->input('per_page', 10));
+
+        return response()->json($chats);
     }
     protected ChatService $chatService;
 
