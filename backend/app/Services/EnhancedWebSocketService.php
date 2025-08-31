@@ -76,7 +76,7 @@ class EnhancedWebSocketService
             $chat->id,
             'chat.created',
             [
-                'chat' => $chat->toArray(),
+                'chat' => $chat->only(['id', 'name', 'is_group', 'is_archived', 'is_muted', 'unread_count', 'last_message_at', 'created_at', 'updated_at']),
                 'created_by' => $createdBy ? $createdBy->only(['id', 'name', 'avatar_url']) : null,
             ]
         );
@@ -88,7 +88,7 @@ class EnhancedWebSocketService
             $chat->id,
             'chat.updated',
             [
-                'chat' => $chat->toArray(),
+                'chat' => $chat->only(['id', 'name', 'is_group', 'is_archived', 'is_muted', 'unread_count', 'last_message_at', 'created_at', 'updated_at']),
                 'updated_by' => $updatedBy ? $updatedBy->only(['id', 'name', 'avatar_url']) : null,
                 'changes' => $changes,
             ]

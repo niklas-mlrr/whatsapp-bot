@@ -29,11 +29,13 @@ return Application::configure(basePath: dirname(__DIR__))
         ReverbServiceProvider::class,
         \App\Providers\AppServiceProvider::class,
         \App\Providers\RouteServiceProvider::class,
+        \App\Providers\BroadcastServiceProvider::class,
     ])
 
     ->withMiddleware(function (Middleware $middleware) {
         $middleware->alias([
             'throttle' => \Illuminate\Routing\Middleware\ThrottleRequests::class,
+            'auth.sanctum' => \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class,
         ]);
         
         // Completely disable CSRF middleware

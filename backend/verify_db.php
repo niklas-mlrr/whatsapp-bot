@@ -11,10 +11,10 @@ $app->make(\Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
 // Check latest message
 try {
-    $message = WhatsAppMessage::latest()->first(['id', 'content', 'sender', 'chat_id', 'created_at']);
+    $message = WhatsAppMessage::latest()->first(['id', 'content', 'sender_id', 'chat_id', 'created_at']);
     echo "Latest Message:\nID: ".($message->id ?? 'None')."\n";
     echo "Content: ".($message->content ?? 'None')."\n";
-    echo "Sender: ".($message->sender ?? 'None')."\n";
+    echo "Sender ID: ".($message->sender_id ?? 'None')."\n";
     echo "Chat ID: ".($message->chat_id ?? 'None')."\n";
     echo "Created At: ".($message->created_at ?? 'None')."\n\n";
 } catch (\Exception $e) {

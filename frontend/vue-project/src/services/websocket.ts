@@ -80,22 +80,22 @@ export function useWebSocket(): WebSocketService {
         return false;
       }
       
-      // Create new Echo instance for Laravel Pusher/Soketi
-      const pusherHost = import.meta.env.VITE_PUSHER_HOST || 'localhost';
-      const pusherPort = parseInt(import.meta.env.VITE_PUSHER_PORT || '6001', 10);
-      const pusherAppKey = import.meta.env.VITE_PUSHER_APP_KEY || 'whatsapp-bot-key';
+      // Create new Echo instance for Laravel Reverb
+      const reverbHost = import.meta.env.VITE_REVERB_HOST || 'localhost';
+      const reverbPort = parseInt(import.meta.env.VITE_REVERB_PORT || '8080', 10);
+      const reverbAppKey = import.meta.env.VITE_REVERB_APP_KEY || 'whatsapp-bot-key';
       
       console.log('Connecting to WebSocket at:', {
-        host: pusherHost,
-        port: pusherPort,
-        key: pusherAppKey
+        host: reverbHost,
+        port: reverbPort,
+        key: reverbAppKey
       });
       
       echo = new Echo({
         broadcaster: 'pusher',
-        key: pusherAppKey,
-        wsHost: pusherHost,
-        wsPort: pusherPort,
+        key: reverbAppKey,
+        wsHost: reverbHost,
+        wsPort: reverbPort,
         forceTLS: false,
         encrypted: false,
         enabledTransports: ['ws', 'wss'],
@@ -105,10 +105,10 @@ export function useWebSocket(): WebSocketService {
             'Accept': 'application/json'
           }
         },
-        authEndpoint: '/broadcasting/auth'
+        authEndpoint: '/api/broadcasting/auth'
       });
       
-      // Add error handling
+      // Add error handling for Pusher (connecting to Reverb server)
       echo.connector.pusher.connection.bind('error', (err: any) => {
         console.error('Pusher error:', err);
         isConnected.value = false;

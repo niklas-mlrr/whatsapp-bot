@@ -4,12 +4,14 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Support\Facades\DB;
 use App\Models\User;
 use App\Models\WhatsAppMessage;
 
 class Chat extends Model
 {
+    use HasFactory;
     /**
      * The table associated with the model.
      *
@@ -24,6 +26,7 @@ class Chat extends Model
      */
     protected $fillable = [
         'name',
+        'type',
         'last_message_id',
         'last_message_at',
         'unread_count',
@@ -32,6 +35,7 @@ class Chat extends Model
         'is_muted',
         'metadata',
         'created_by',
+        'participants',
     ];
     
     /**
@@ -41,7 +45,7 @@ class Chat extends Model
     {
         return $this->belongsToMany(User::class, 'chat_user', 'chat_id', 'user_id')
             ->withTimestamps()
-            ->withPivot(['is_admin', 'muted_until']);
+            ->withPivot(['role', 'joined_at', 'left_at']);
     }
 
     /**
@@ -55,6 +59,7 @@ class Chat extends Model
         'is_archived' => 'boolean',
         'is_muted' => 'boolean',
         'metadata' => 'array',
+        'participants' => 'array',
         'unread_count' => 'integer',
         'created_by' => 'integer',
     ];
@@ -175,7 +180,7 @@ class Chat extends Model
      */
     public function getLastMessageAttribute()
     {
-        return $this->lastMessage;
+        return $this->lastMessage()->first();
     }
 
     /**
@@ -190,8 +195,13 @@ class Chat extends Model
             return false;
         }
 
-        $otherUser = $this->users()->where('users.id', '!=', auth()->id())->first();
-        return $otherUser ? $otherUser->is_online : false;
+        try {
+            $otherUser = $this->users()->where('users.id', '!=', auth()->id())->first();
+            return $otherUser ? $otherUser->isOnline() : false;
+        } catch (\Exception $e) {
+            // If there's an issue with the relationship, return false
+            return false;
+        }
     }
 
     /**
@@ -202,7 +212,12 @@ class Chat extends Model
         if ($this->is_group) {
             return null;
         }
-        return $this->users()->where('users.id', '!=', auth()->id())->first();
+        try {
+            return $this->users()->where('users.id', '!=', auth()->id())->first();
+        } catch (\Exception $e) {
+            // If there's an issue with the relationship, return null
+            return null;
+        }
     }
 
     public function getAvatarUrlAttribute(): ?string

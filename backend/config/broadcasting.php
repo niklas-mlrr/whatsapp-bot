@@ -1,7 +1,7 @@
 <?php
 
 return [
-    'default' => env('BROADCAST_DRIVER', 'pusher'),
+    'default' => env('BROADCAST_DRIVER', 'reverb'),
 
     'connections' => [
         'reverb' => [
@@ -27,6 +27,7 @@ return [
                 'scheme' => env('PUSHER_SCHEME', 'http'),
                 'encrypted' => false,
                 'useTLS' => env('PUSHER_SCHEME') === 'https',
+                'cluster' => env('PUSHER_APP_CLUSTER', 'mt1'),
             ],
         ],
         'log' => [

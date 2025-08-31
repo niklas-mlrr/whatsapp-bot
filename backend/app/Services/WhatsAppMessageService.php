@@ -46,7 +46,7 @@ class WhatsAppMessageService
                     [
                         'name' => 'WhatsApp User', 
                         'password' => Hash::make(Str::random(32)),
-                        'status' => 'active'
+                        'status' => 'offline'
                     ]
                 );
 
@@ -721,13 +721,11 @@ class WhatsAppMessageService
         // If not found by phone, create a new user
         try {
             $user = User::create([
-                'name' => $phone, // Default name is the phone number
-                'email' => $phone . '@whatsapp.local', // Dummy email
+                'name' => 'WhatsApp User', // Default name
                 'password' => bcrypt(Str::random(16)), // Random password
                 'phone' => $phone,
                 'status' => 'offline',
                 'last_seen_at' => now(),
-                'settings' => json_encode([]), // Empty settings JSON
             ]);
             
             Log::channel('whatsapp')->info('Created new user', [

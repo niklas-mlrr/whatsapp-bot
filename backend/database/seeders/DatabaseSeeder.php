@@ -17,7 +17,11 @@ class DatabaseSeeder extends Seeder
 
         User::factory()->create([
             'name' => 'Test User',
-            'email' => 'test@example.com',
+        ]);
+        
+        // Create test chats
+        $this->call([
+            ChatSeeder::class,
         ]);
     }
 }

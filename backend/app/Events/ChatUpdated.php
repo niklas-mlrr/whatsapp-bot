@@ -103,7 +103,7 @@ class ChatUpdated implements ShouldBroadcast
     {
         return [
             'chat' => array_merge(
-                $this->chat->toArray(),
+                $this->chat->only(['id', 'name', 'is_group', 'is_archived', 'is_muted', 'unread_count', 'last_message_at', 'created_at', 'updated_at']),
                 ['event_type' => $this->eventType]
             ),
             'user' => $this->user ? [

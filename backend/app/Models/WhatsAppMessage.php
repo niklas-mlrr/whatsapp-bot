@@ -15,37 +15,29 @@ class WhatsAppMessage extends Model
 {
     use HasFactory;
 
-    protected $table = 'messages';
+    protected $table = 'whatsapp_messages';
 
     protected $fillable = [
-        'sender',
         'sender_id',
-        'chat',
         'chat_id',
         'type',
-        'direction',
         'status',
         'content',
-        'media',
-        'mimetype',
-        'sending_time',
+        'media_url',
+        'media_type',
+        'media_size',
         'read_at',
-        'reactions',
         'metadata',
     ];
 
     protected $casts = [
-        'sending_time' => 'datetime',
         'read_at' => 'datetime',
-        'reactions' => 'array',
         'metadata' => 'array',
         'is_read' => 'boolean',
     ];
     
     protected $appends = [
         'is_read', 
-        'media_url', 
-        'thumbnail_url',
         'sender_name',
         'sender_avatar',
     ];
@@ -106,20 +98,19 @@ class WhatsAppMessage extends Model
     
     // Default values for attributes
     protected $attributes = [
-        'reactions' => '{}',
         'metadata' => '{}',
-        'status' => 'pending',
+        'status' => 'sent',
     ];
 
     // Scopes
     public function scopeIncoming(Builder $query): Builder
     {
-        return $query->where('direction', 'incoming');
+        return $query->where('status', 'sent');
     }
 
     public function scopeOutgoing(Builder $query): Builder
     {
-        return $query->where('direction', 'outgoing');
+        return $query->where('status', 'delivered');
     }
 
     public function scopeUnread(Builder $query): Builder
@@ -129,18 +120,18 @@ class WhatsAppMessage extends Model
     
     public function scopeForChat(Builder $query, string $chatId): Builder
     {
-        return $query->where('chat', $chatId);
+        return $query->where('chat_id', $chatId);
     }
     
     public function scopeRecent(Builder $query, int $days = 30): Builder
     {
-        return $query->where('sending_time', '>=', now()->subDays($days))
-                    ->orderBy('sending_time', 'desc');
+        return $query->where('created_at', '>=', now()->subDays($days))
+                    ->orderBy('created_at', 'desc');
     }
     
     public function scopeWithMedia(Builder $query): Builder
     {
-        return $query->whereNotNull('media');
+        return $query->whereNotNull('media_url');
     }
     
     public function scopeWithStatus(Builder $query, string $status): Builder
@@ -152,15 +143,16 @@ class WhatsAppMessage extends Model
     {
         return $query->where(function($q) use ($searchTerm) {
             $q->where('content', 'like', "%{$searchTerm}%")
-              ->orWhere('sender', 'like', "%{$searchTerm}%")
-              ->orWhere('chat', 'like', "%{$searchTerm}%");
+              ->orWhereHas('sender', function($subQ) use ($searchTerm) {
+                  $subQ->where('name', 'like', "%{$searchTerm}%");
+              });
         });
     }
 
     // Relationships
     public function senderUser()
     {
-        return $this->belongsTo(User::class, 'sender', 'phone');
+        return $this->belongsTo(User::class, 'sender_id');
     }
     
     /**
@@ -179,20 +171,25 @@ class WhatsAppMessage extends Model
     
     public function getMediaUrlAttribute(): ?string
     {
-        if (!$this->media) {
+        // Check if media_url column exists and has a value
+        if (isset($this->attributes['media_url']) && $this->attributes['media_url']) {
+            $mediaUrl = $this->attributes['media_url'];
+        } elseif (isset($this->attributes['media']) && $this->attributes['media']) {
+            $mediaUrl = $this->attributes['media'];
+        } else {
             return null;
         }
         
-        if (filter_var($this->media, FILTER_VALIDATE_URL)) {
-            return $this->media;
+        if (filter_var($mediaUrl, FILTER_VALIDATE_URL)) {
+            return $mediaUrl;
         }
         
-        if (Storage::disk('public')->exists($this->media)) {
-            return Storage::disk('public')->url($this->media);
+        if (Storage::disk('public')->exists($mediaUrl)) {
+            return Storage::disk('public')->url($mediaUrl);
         }
         
-        if (config('filesystems.default') === 's3' && Storage::disk('s3')->exists($this->media)) {
-            return Storage::disk('s3')->url($this->media);
+        if (config('filesystems.default') === 's3' && Storage::disk('s3')->exists($mediaUrl)) {
+            return Storage::disk('s3')->url($mediaUrl);
         }
         
         return null;
@@ -239,28 +236,7 @@ class WhatsAppMessage extends Model
         ]);
     }
     
-    public function addReaction(string $userId, string $reaction): bool
-    {
-        $reactions = $this->reactions ?? [];
-        $reactions[$userId] = $reaction;
-        
-        return $this->update(['reactions' => $reactions]);
-    }
-    
-    public function removeReaction(string $userId): bool
-    {
-        $reactions = $this->reactions ?? [];
-        
-        if (!isset($reactions[$userId])) {
-            return true;
-        }
-        
-        unset($reactions[$userId]);
-        
-        return $this->update([
-            'reactions' => !empty($reactions) ? $reactions : null,
-        ]);
-    }
+
     
     public function updateStatus(string $status, ?string $error = null): bool
     {
@@ -281,12 +257,10 @@ class WhatsAppMessage extends Model
     
     public function getMediaType(): string
     {
-        if (!$this->mimetype) {
+        if (!$this->media_type) {
             return 'unknown';
         }
         
-        [$type] = explode('/', $this->mimetype);
-        
-        return in_array($type, ['image', 'video', 'audio']) ? $type : 'document';
+        return $this->media_type;
     }
 }

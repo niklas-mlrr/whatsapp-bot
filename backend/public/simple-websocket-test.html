@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple WebSocket Test</title>
+    <script src="https://js.pusher.com/8.4.0/pusher.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/laravel-echo@1.15.3/dist/echo.iife.js"></script>
+</head>
+<body>
+    <h1>Simple WebSocket Test</h1>
+    <div id="status">Initializing...</div>
+    <div id="debug"></div>
+    <button onclick="testConnection()">Test Connection</button>
+
+    <script>
+        function log(message) {
+            console.log(message);
+            document.getElementById('debug').innerHTML += '<p>' + message + '</p>';
+        }
+
+        function testConnection() {
+            log('Starting connection test...');
+            
+            // Get token
+            let token = localStorage.getItem('token');
+            if (!token) {
+                token = prompt('Enter your auth token:');
+                if (token) {
+                    localStorage.setItem('token', token);
+                }
+            }
+
+            if (!token) {
+                log('❌ No token provided');
+                return;
+            }
+
+            log('✅ Token: ' + token.substring(0, 20) + '...');
+            log('🔧 Using WebSocket config: wsHost=localhost, wsPort=8080, key=whatsapp-bot-key, cluster=mt1');
+            log('🔧 Testing with token: ' + token.substring(0, 20) + '...');
+            log('🔧 Full token length: ' + token.length + ' characters');
+            log('🔧 Token starts with: ' + token.substring(0, 10) + '...');
+
+            try {
+                // Test direct Pusher connection first
+                log('Testing direct Pusher connection...');
+                
+                const pusher = new Pusher('whatsapp-bot-key', {
+                    wsHost: 'localhost',
+                    wsPort: 8080,
+                    forceTLS: false,
+                    encrypted: false,
+                    enabledTransports: ['ws', 'wss'],
+                    cluster: 'mt1' // Add default cluster
+                });
+
+                pusher.connection.bind('connected', () => {
+                    log('✅ Direct Pusher connection successful!');
+                    document.getElementById('status').innerHTML = '✅ Direct Pusher Connected';
+                    document.getElementById('status').style.color = 'green';
+                });
+
+                pusher.connection.bind('connecting', () => {
+                    log('🔄 Direct Pusher connecting...');
+                    document.getElementById('status').innerHTML = '🔄 Direct Pusher Connecting...';
+                    document.getElementById('status').style.color = 'orange';
+                });
+
+                pusher.connection.bind('disconnected', () => {
+                    log('🔌 Direct Pusher disconnected');
+                    document.getElementById('status').innerHTML = '🔌 Direct Pusher Disconnected';
+                    document.getElementById('status').style.color = 'gray';
+                });
+
+                pusher.connection.bind('error', (error) => {
+                    let errorMessage = 'Unknown error occurred';
+                    if (error) {
+                        if (error.message) {
+                            errorMessage = error.message;
+                        } else if (error.error) {
+                            errorMessage = error.error;
+                        } else if (typeof error === 'string') {
+                            errorMessage = error;
+                        } else {
+                            errorMessage = JSON.stringify(error);
+                        }
+                    }
+                    log('❌ Direct Pusher error: ' + errorMessage);
+                    document.getElementById('status').innerHTML = '❌ Direct Pusher Error: ' + errorMessage;
+                    document.getElementById('status').style.color = 'red';
+                });
+
+                pusher.connection.bind('failed', () => {
+                    log('❌ Direct Pusher connection failed');
+                    document.getElementById('status').innerHTML = '❌ Direct Pusher Failed';
+                    document.getElementById('status').style.color = 'red';
+                });
+
+                // Now test Echo connection
+                setTimeout(() => {
+                    log('Testing Echo connection...');
+                    
+                    window.Echo = new Echo({
+                        broadcaster: 'pusher',
+                        key: 'whatsapp-bot-key',
+                        wsHost: 'localhost',
+                        wsPort: 8080,
+                        forceTLS: false,
+                        encrypted: false,
+                        enabledTransports: ['ws', 'wss'],
+                        cluster: 'mt1', // Add default cluster
+                        auth: {
+                            headers: {
+                                'Authorization': `Bearer ${token}`,
+                                'Accept': 'application/json'
+                            }
+                        },
+                        // Add debugging for headers
+                        beforeConnect: function() {
+                            log('🔧 Attempting to connect with headers:');
+                            log('🔧 Authorization: Bearer ' + token.substring(0, 20) + '...');
+                            log('🔧 Accept: application/json');
+                        },
+                        authEndpoint: '/broadcasting/auth'
+                    });
+
+                    window.Echo.connector.pusher.connection.bind('connected', () => {
+                        log('✅ Echo connection successful!');
+                        document.getElementById('status').innerHTML = '✅ Echo Connected';
+                        document.getElementById('status').style.color = 'green';
+                        
+                        // Try to subscribe to a channel
+                        try {
+                            // First try a public channel to test basic connection
+                            window.Echo.channel('test-channel')
+                                .listen('test-event', (e) => {
+                                    log('🎉 Test event received!');
+                                });
+                            log('✅ Subscribed to test-channel (public)');
+                            
+                            // Then try the private channel
+                            window.Echo.private('chat.1')
+                                .listen('message.sent', (e) => {
+                                    log('🎉 Message sent event received!');
+                                });
+                            log('✅ Subscribed to chat.1 channel (private)');
+                        } catch (error) {
+                            log('❌ Error subscribing to channel: ' + error.message);
+                        }
+                    });
+
+                    window.Echo.connector.pusher.connection.bind('connecting', () => {
+                        log('🔄 Echo connecting...');
+                        document.getElementById('status').innerHTML = '🔄 Echo Connecting...';
+                        document.getElementById('status').style.color = 'orange';
+                    });
+
+                    window.Echo.connector.pusher.connection.bind('disconnected', () => {
+                        log('🔌 Echo disconnected');
+                        document.getElementById('status').innerHTML = '🔌 Echo Disconnected';
+                        document.getElementById('status').style.color = 'gray';
+                    });
+
+                    window.Echo.connector.pusher.connection.bind('error', (error) => {
+                        let errorMessage = 'Unknown error occurred';
+                        if (error) {
+                            if (error.message) {
+                                errorMessage = error.message;
+                            } else if (error.error) {
+                                errorMessage = error.error;
+                            } else if (typeof error === 'string') {
+                                errorMessage = error;
+                            } else {
+                                errorMessage = JSON.stringify(error);
+                            }
+                        }
+                        log('❌ Echo error: ' + errorMessage);
+                        document.getElementById('status').innerHTML = '❌ Echo Error: ' + errorMessage;
+                        document.getElementById('status').style.color = 'red';
+                    });
+
+                    window.Echo.connector.pusher.connection.bind('failed', () => {
+                        log('❌ Echo connection failed');
+                        document.getElementById('status').innerHTML = '❌ Echo Failed';
+                        document.getElementById('status').style.color = 'red';
+                    });
+
+                }, 2000);
+
+            } catch (error) {
+                let errorMessage = 'Unknown error occurred';
+                if (error) {
+                    if (error.message) {
+                        errorMessage = error.message;
+                    } else if (error.error) {
+                        errorMessage = error.error;
+                    } else if (typeof error === 'string') {
+                        errorMessage = error;
+                    } else {
+                        errorMessage = JSON.stringify(error);
+                    }
+                }
+                log('❌ Error creating connection: ' + errorMessage);
+                document.getElementById('status').innerHTML = '❌ Error: ' + errorMessage;
+                document.getElementById('status').style.color = 'red';
+            }
+        }
+
+        // Auto-start the test
+        window.onload = function() {
+            log('Page loaded, ready to test...');
+            document.getElementById('status').innerHTML = 'Ready to test - click button or wait 3 seconds';
+        };
+
+        // Auto-start after 3 seconds
+        setTimeout(testConnection, 3000);
+    </script>
+</body>
+</html>

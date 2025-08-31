@@ -24,12 +24,14 @@ class WebSocketController extends Controller
         }
 
         $pusher = new Pusher(
-            config('broadcasting.connections.pusher.key'),
-            config('broadcasting.connections.pusher.secret'),
-            config('broadcasting.connections.pusher.app_id'),
+            config('broadcasting.connections.reverb.key'),
+            config('broadcasting.connections.reverb.secret'),
+            config('broadcasting.connections.reverb.app_id'),
             [
-                'cluster' => config('broadcasting.connections.pusher.options.cluster'),
-                'useTLS' => true,
+                'host' => config('broadcasting.connections.reverb.options.host'),
+                'port' => config('broadcasting.connections.reverb.options.port'),
+                'scheme' => config('broadcasting.connections.reverb.options.scheme'),
+                'useTLS' => config('broadcasting.connections.reverb.options.useTLS'),
             ]
         );
 
@@ -61,7 +63,7 @@ class WebSocketController extends Controller
     {
         // Verify the webhook signature
         $webhookSignature = $request->header('X-Pusher-Signature');
-        $appSecret = config('broadcasting.connections.pusher.secret');
+        $appSecret = config('broadcasting.connections.reverb.secret');
         $payload = $request->getContent();
         $expectedSignature = hash_hmac('sha256', $payload, $appSecret, false);
 

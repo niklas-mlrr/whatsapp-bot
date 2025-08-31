@@ -17,7 +17,6 @@ class MessageStatusController extends Controller
     public function __construct(WebSocketService $webSocketService)
     {
         $this->webSocketService = $webSocketService;
-        $this->middleware('auth:api');
     }
 
     /**
@@ -58,6 +57,90 @@ class MessageStatusController extends Controller
             return response()->json([
                 'status' => 'error',
                 'message' => 'Failed to mark message as read',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Mark multiple messages as read
+     */
+    public function markMultipleAsRead(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'message_ids' => 'required|array',
+            'message_ids.*' => 'required|string|exists:whatsapp_messages,id',
+        ]);
+        
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Validation failed',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+        
+        try {
+            $messageIds = $request->input('message_ids');
+            $currentUser = auth()->user();
+            
+            if (!$currentUser) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Unauthorized',
+                ], 401);
+            }
+            
+            $updatedMessages = [];
+            $now = now();
+            
+            // Update all messages in a single query for better performance
+            $messages = WhatsAppMessage::whereIn('id', $messageIds)
+                ->whereNull('read_at')
+                ->get();
+            
+            foreach ($messages as $message) {
+                $message->update([
+                    'read_at' => $now,
+                    'status' => 'read',
+                ]);
+                
+                // Add current user to read_by array if it exists
+                if ($message->read_by) {
+                    $readBy = is_array($message->read_by) ? $message->read_by : [];
+                    if (!in_array($currentUser->id, $readBy)) {
+                        $readBy[] = $currentUser->id;
+                        $message->update(['read_by' => $readBy]);
+                    }
+                } else {
+                    $message->update(['read_by' => [$currentUser->id]]);
+                }
+                
+                $updatedMessages[] = $message->id;
+                
+                // Notify via WebSocket
+                $this->webSocketService->messageStatusUpdated($message);
+            }
+            
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Messages marked as read',
+                'data' => [
+                    'updated_count' => count($updatedMessages),
+                    'message_ids' => $updatedMessages,
+                ],
+            ]);
+            
+        } catch (\Exception $e) {
+            Log::channel('whatsapp')->error('Error marking multiple messages as read', [
+                'error' => $e->getMessage(),
+                'message_ids' => $request->input('message_ids'),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to mark messages as read',
                 'error' => $e->getMessage(),
             ], 500);
         }

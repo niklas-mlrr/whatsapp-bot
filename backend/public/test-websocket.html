@@ -1,37 +1,100 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>WebSocket Authentication Test</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Test</title>
+    <script src="https://js.pusher.com/8.4.0/pusher.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/laravel-echo@1.15.3/dist/echo.iife.js"></script>
 </head>
 <body>
-    <h1>WebSocket Authentication Test</h1>
-    <button id="testAuth">Test Authentication</button>
-    <div id="result"></div>
+    <h1>WebSocket Connection Test</h1>
+    <div id="status">Connecting...</div>
+    <div id="messages"></div>
 
     <script>
-        document.getElementById('testAuth').addEventListener('click', function() {
-            const resultDiv = document.getElementById('result');
-            resultDiv.innerHTML = 'Testing...';
+        // Get token from localStorage or prompt user
+        let token = localStorage.getItem('token');
+        if (!token) {
+            token = prompt('Enter your auth token:');
+            if (token) {
+                localStorage.setItem('token', token);
+            }
+        }
 
-            fetch('/test-auth', {
-                method: 'POST',
+        if (!token) {
+            document.getElementById('status').innerHTML = 'No token provided';
+            return;
+        }
+
+        // Initialize Echo
+        window.Echo = new Echo({
+            broadcaster: 'pusher',
+            key: 'whatsapp-bot-key',
+            wsHost: 'localhost',
+            wsPort: 8080,
+            forceTLS: false,
+            encrypted: false,
+            enabledTransports: ['ws', 'wss'],
+            auth: {
                 headers: {
-                    'Content-Type': 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest'
-                },
-                body: JSON.stringify({
-                    socket_id: '123.456',
-                    channel_name: 'private-test-channel'
-                })
-            })
-            .then(response => response.json())
-            .then(data => {
-                resultDiv.innerHTML = '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
-            })
-            .catch(error => {
-                resultDiv.innerHTML = '<p style="color: red;">Error: ' + error + '</p>';
-            });
+                    'Authorization': `Bearer ${token}`,
+                    'Accept': 'application/json'
+                }
+            },
+            authEndpoint: '/api/broadcasting/auth'
         });
+
+        // Test connection
+        const statusDiv = document.getElementById('status');
+        const messagesDiv = document.getElementById('messages');
+
+        // Listen for connection events
+        window.Echo.connector.pusher.connection.bind('connected', () => {
+            statusDiv.innerHTML = '✅ Connected to WebSocket';
+            statusDiv.style.color = 'green';
+            
+            // Try to subscribe to a private channel
+            try {
+                window.Echo.private('chat.1')
+                    .listen('message.sent', (e) => {
+                        console.log('Message sent event:', e);
+                        messagesDiv.innerHTML += '<p>Message sent event received</p>';
+                    })
+                    .listen('message.read', (e) => {
+                        console.log('Message read event:', e);
+                        messagesDiv.innerHTML += '<p>Message read event received</p>';
+                    });
+                
+                messagesDiv.innerHTML += '<p>✅ Subscribed to chat.1 channel</p>';
+            } catch (error) {
+                console.error('Error subscribing to channel:', error);
+                messagesDiv.innerHTML += '<p>❌ Error subscribing to channel: ' + error.message + '</p>';
+            }
+        });
+
+        window.Echo.connector.pusher.connection.bind('error', (error) => {
+            statusDiv.innerHTML = '❌ WebSocket Error: ' + error.message;
+            statusDiv.style.color = 'red';
+            console.error('WebSocket error:', error);
+        });
+
+        window.Echo.connector.pusher.connection.bind('failed', () => {
+            statusDiv.innerHTML = '❌ WebSocket connection failed';
+            statusDiv.style.color = 'red';
+        });
+
+        window.Echo.connector.pusher.connection.bind('disconnected', () => {
+            statusDiv.innerHTML = '🔌 WebSocket disconnected';
+            statusDiv.style.color = 'orange';
+        });
+
+        // Test sending a message
+        setTimeout(() => {
+            if (window.Echo.connector.pusher.connection.state === 'connected') {
+                messagesDiv.innerHTML += '<p>🎉 WebSocket connection test successful!</p>';
+            }
+        }, 2000);
     </script>
 </body>
 </html>

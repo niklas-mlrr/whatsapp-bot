@@ -138,7 +138,7 @@ class ChatServiceTest extends TestCase
         );
 
         // Make the second user an admin
-        $chat->users()->updateExistingPivot($users[1]->id, ['is_admin' => true]);
+        $chat->users()->updateExistingPivot($users[1]->id, ['role' => 'admin']);
         
         // First user (admin) leaves
         $this->chatService->removeParticipants($chat->id, [$users[0]->id]);
@@ -146,7 +146,7 @@ class ChatServiceTest extends TestCase
 
         // Second user should now be the only admin
         $adminIds = $chat->users()
-            ->wherePivot('is_admin', true)
+            ->wherePivot('role', 'admin')
             ->pluck('users.id')
             ->toArray();
 

@@ -175,12 +175,14 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/me', [\App\Http\Controllers\Api\AuthController::class, 'user']);
 
     // WebSocket
-    Route::post('/broadcasting/auth', [WebSocketController::class, 'authenticate']);
     Route::post('/broadcasting/webhook', [WebSocketController::class, 'webhook']);
 
     // Messages
     Route::apiResource('messages', WhatsAppMessageController::class)
         ->only(['index', 'show', 'destroy', 'store']);
+
+    // Mark multiple messages as read
+    Route::post('/messages/read', [MessageStatusController::class, 'markMultipleAsRead']);
 
     // Message status
     Route::prefix('messages/{message}')->group(function () {
@@ -207,11 +209,19 @@ Route::middleware(['auth:sanctum'])->group(function () {
             
             $formattedChats = [];
             foreach ($chats as $chat) {
+                // Create a Chat model instance to access computed attributes
+                $chatModel = new \App\Models\Chat();
+                $chatModel->forceFill([
+                    'id' => $chat->id,
+                    'name' => $chat->name,
+                    'type' => $chat->type,
+                ]);
+                
                 $formattedChats[] = [
                     'id' => $chat->id,
                     'name' => $chat->name,
                     'is_group' => $chat->type === 'group',
-                    'avatar_url' => null,
+                    'avatar_url' => $chatModel->avatar_url,
                     'updated_at' => $chat->updated_at,
                     'unread_count' => 0,
                     'users' => [],

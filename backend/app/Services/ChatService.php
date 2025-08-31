@@ -41,8 +41,8 @@ class ChatService
             
             // Attach users to the chat
             $chat->users()->attach([
-                $user1->id => ['is_admin' => true],
-                $user2->id => ['is_admin' => true],
+                $user1->id => ['role' => 'admin'],
+                $user2->id => ['role' => 'admin'],
             ]);
             
             return $chat->load('users');
@@ -79,7 +79,7 @@ class ChatService
             $participantData = [];
             foreach ($participants as $participant) {
                 $participantData[$participant->id] = [
-                    'is_admin' => $creator && $participant->id === $creator->id,
+                    'role' => $creator && $participant->id === $creator->id ? 'admin' : 'member',
                     'muted_until' => null,
                 ];
             }
@@ -127,7 +127,7 @@ class ChatService
             
             // Add users to the chat
             $chat->users()->syncWithoutDetaching(
-                $users->pluck('id')->mapWithKeys(fn ($id) => [$id => ['is_admin' => false]])
+                $users->pluck('id')->mapWithKeys(fn ($id) => [$id => ['role' => 'member']])
             );
             
             return $chat->load('users');
@@ -165,10 +165,10 @@ class ChatService
             }
             
             // If the last admin left, assign admin to another participant
-            $hasAdmin = $chat->users()->wherePivot('is_admin', true)->exists();
+            $hasAdmin = $chat->users()->wherePivot('role', 'admin')->exists();
             if (!$hasAdmin && $chat->users()->exists()) {
                 $newAdmin = $chat->users()->first();
-                $chat->users()->updateExistingPivot($newAdmin->id, ['is_admin' => true]);
+                $chat->users()->updateExistingPivot($newAdmin->id, ['role' => 'admin']);
             }
             
             return $chat->load('users');

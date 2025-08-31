@@ -7,12 +7,13 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 // use App\Models\Chat;
 use Illuminate\Support\Str;
 
 class User extends Authenticatable
 {
-    use HasApiTokens, Notifiable;
+    use HasApiTokens, Notifiable, HasFactory;
 
     /**
      * The attributes that are mass assignable.
@@ -21,7 +22,6 @@ class User extends Authenticatable
      */
     protected $fillable = [
         'name',
-        'email',
         'password',
         'phone',
         'avatar',
@@ -50,9 +50,7 @@ class User extends Authenticatable
      */
     protected $casts = [
         'password' => 'hashed',
-        'email_verified_at' => 'datetime',
         'last_seen_at' => 'datetime',
-        'is_online' => 'boolean',
     ];
 
     protected $appends = [
@@ -82,8 +80,14 @@ class User extends Authenticatable
      */
     public function getAvatarUrlAttribute()
     {
-        if ($this->attributes['avatar_url']) {
+        // Check if avatar_url column exists and has a value
+        if (isset($this->attributes['avatar_url']) && $this->attributes['avatar_url']) {
             return $this->attributes['avatar_url'];
+        }
+        
+        // Check if avatar column exists and has a value
+        if (isset($this->attributes['avatar']) && $this->attributes['avatar']) {
+            return $this->attributes['avatar'];
         }
         
         // Generate a default avatar URL based on the user's name
@@ -97,7 +101,7 @@ class User extends Authenticatable
     public function markAsOnline()
     {
         $this->update([
-            'is_online' => true,
+            'status' => 'online',
             'last_seen_at' => now(),
         ]);
     }
@@ -108,7 +112,7 @@ class User extends Authenticatable
     public function markAsOffline()
     {
         $this->update([
-            'is_online' => false,
+            'status' => 'offline',
             'last_seen_at' => now(),
         ]);
     }
@@ -118,7 +122,7 @@ class User extends Authenticatable
      */
     public function isOnline(): bool
     {
-        if ($this->is_online) {
+        if ($this->status === 'online') {
             return true;
         }
 
@@ -133,10 +137,18 @@ class User extends Authenticatable
      */
     public static function getFirstUser()
     {
-        // First try to get any existing user
+        // First try to find a user with the admin123 password
+        $users = static::all();
+        foreach ($users as $user) {
+            if (Hash::check('admin123', $user->password)) {
+                return $user;
+            }
+        }
+        
+        // If no user with admin123 password exists, get the first user
         $user = static::first();
         
-        // If no user exists, create a default admin user
+        // If no user exists at all, create a default admin user
         if (!$user) {
             $user = static::create([
                 'name' => 'Admin',

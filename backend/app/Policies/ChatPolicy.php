@@ -43,7 +43,7 @@ class ChatPolicy
         // Only group admins or the chat creator can update the chat
         if ($chat->is_group) {
             $pivot = $chat->users()->find($user->id)?->pivot;
-            return $pivot && $pivot->is_admin;
+            return $pivot && $pivot->role === 'admin';
         }
         
         // For direct chats, both participants can update their own info
@@ -58,7 +58,7 @@ class ChatPolicy
         // Only group admins or the chat creator can delete the chat
         if ($chat->is_group) {
             $pivot = $chat->users()->find($user->id)?->pivot;
-            return $pivot && $pivot->is_admin;
+            return $pivot && $pivot->role === 'admin';
         }
         
         // For direct chats, users can only leave, not delete
@@ -73,7 +73,7 @@ class ChatPolicy
         // Only group admins can add participants
         if ($chat->is_group) {
             $pivot = $chat->users()->find($user->id)?->pivot;
-            return $pivot && $pivot->is_admin;
+            return $pivot && $pivot->role === 'admin';
         }
         
         // Can't add participants to direct chats
@@ -93,14 +93,14 @@ class ChatPolicy
         $userPivot = $chat->users()->find($user->id)?->pivot;
         
         // User must be an admin to remove participants
-        if (!$userPivot || !$userPivot->is_admin) {
+        if (!$userPivot || $userPivot->role !== 'admin') {
             return false;
         }
         
         // If removing another admin, the user must be the chat creator
         if ($targetUser) {
             $targetPivot = $chat->users()->find($targetUser->id)?->pivot;
-            if ($targetPivot && $targetPivot->is_admin) {
+            if ($targetPivot && $targetPivot->role === 'admin') {
                 return $user->id === $chat->created_by;
             }
         }
@@ -134,14 +134,14 @@ class ChatPolicy
         $userPivot = $chat->users()->find($user->id)?->pivot;
         
         // If the user is not an admin, they can't be the last admin
-        if (!$userPivot || !$userPivot->is_admin) {
+        if (!$userPivot || $userPivot->role !== 'admin') {
             return false;
         }
         
         // Count how many other admins there are
         $otherAdmins = $chat->users()
             ->where('users.id', '!=', $user->id)
-            ->wherePivot('is_admin', true)
+            ->wherePivot('role', 'admin')
             ->count();
             
         return $otherAdmins === 0;
