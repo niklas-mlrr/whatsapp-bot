@@ -4,6 +4,7 @@ import type { EchoOptions } from 'laravel-echo';
 import Pusher from 'pusher-js';
 import axios from 'axios';
 import { useAuthStore } from '@/stores/auth';
+import { websocketConfig } from '@/config/websocket';
 
 // Type definitions for our WebSocket events
 type MessageEvent = {
@@ -31,8 +32,8 @@ type ReadReceiptEvent = {
 // Extended Window interface for Pusher and Echo
 declare global {
   interface Window {
-    Pusher: typeof Pusher;
-    Echo: typeof Echo;
+    Pusher: any;
+    Echo: any;
   }
 }
 
@@ -40,6 +41,15 @@ declare global {
 if (!window.Pusher) {
   window.Pusher = Pusher;
 }
+
+// Local registries for callbacks and channels
+// Maps chatId -> Set of callbacks for each event type
+const messageCallbacks: Map<string, Set<(message: MessageEvent) => void>> = new Map();
+const typingCallbacks: Map<string, Set<(event: TypingEvent) => void>> = new Map();
+const readReceiptCallbacks: Map<string, Set<(event: ReadReceiptEvent) => void>> = new Map();
+
+// Cache for private channels per chat to avoid re-subscribing
+const privateChannels: Map<string, any> = new Map();
 
 // Type for our WebSocket service return value
 export interface WebSocketService {
@@ -55,159 +65,90 @@ export interface WebSocketService {
   getSocketId(): string | null;
 }
 
-export function useWebSocket(): WebSocketService {
-  const authStore = useAuthStore();
+// Initialize Echo instance
+let echo: Echo<any> | null = null;
+
+export function useWebSocket() {
   const isConnected = ref(false);
   const socketId = ref<string | null>(null);
-  let echo: any = null;
-  
-  // Store channel instances and their callbacks
-  const privateChannels = new Map<string, any>();
-  const messageCallbacks = new Map<string, Set<(message: MessageEvent) => void>>();
-  const typingCallbacks = new Map<string, Set<(event: TypingEvent) => void>>();
-  const readReceiptCallbacks = new Map<string, Set<(event: ReadReceiptEvent) => void>>();
-  
+  const authStore = useAuthStore();
+
   // Connect to WebSocket server
   const connect = async (): Promise<boolean> => {
     try {
       if (echo) {
-        return true; // Already connected
+        echo.disconnect();
       }
-      
+
       const token = authStore.token;
       if (!token) {
         console.error('No authentication token available');
         return false;
       }
-      
-      // Create new Echo instance for Laravel Reverb
-      const reverbHost = import.meta.env.VITE_REVERB_HOST || 'localhost';
-      const reverbPort = parseInt(import.meta.env.VITE_REVERB_PORT || '8080', 10);
-      const reverbAppKey = import.meta.env.VITE_REVERB_APP_KEY || 'whatsapp-bot-key';
-      
-      console.log('Connecting to WebSocket at:', {
-        host: reverbHost,
-        port: reverbPort,
-        key: reverbAppKey
-      });
-      
-      echo = new Echo({
-        broadcaster: 'pusher',
-        key: reverbAppKey,
-        wsHost: reverbHost,
-        wsPort: reverbPort,
-        forceTLS: false,
-        encrypted: false,
+
+      echo = new Echo<'reverb'>({
+        ...websocketConfig,
+        // make enabledTransports mutable to match type expectations
         enabledTransports: ['ws', 'wss'],
         auth: {
           headers: {
-            'Authorization': `Bearer ${token}`,
-            'Accept': 'application/json'
-          }
+            Authorization: `Bearer ${token}`,
+          },
         },
-        authEndpoint: '/api/broadcasting/auth'
+      } as any);
+
+      console.log('Connecting to WebSocket:', websocketConfig);
+
+      // Wait for connection
+      await new Promise<void>((resolve, reject) => {
+        if (!echo) return reject('Echo not initialized');
+
+        echo.connector.pusher.connection.bind('connected', () => {
+          isConnected.value = true;
+          socketId.value = echo?.socketId() || null;
+          resolve();
+        });
+
+        echo.connector.pusher.connection.bind('error', (error: any) => {
+          reject(error);
+        });
       });
-      
-      // Add error handling for Pusher (connecting to Reverb server)
-      echo.connector.pusher.connection.bind('error', (err: any) => {
-        console.error('Pusher error:', err);
-        isConnected.value = false;
-      });
-      
-      // Connection established
-      echo.connector.pusher.connection.bind('connected', () => {
-        isConnected.value = true;
-        socketId.value = echo.socketId();
-        console.log('WebSocket connected');
-      });
-      
-      // Connection failed
-      echo.connector.pusher.connection.bind('failed', () => {
-        console.error('WebSocket connection failed');
-        isConnected.value = false;
-      });
-      
-      // Connection disconnected
-      echo.connector.pusher.connection.bind('disconnected', () => {
-        console.log('WebSocket disconnected');
-        isConnected.value = false;
-      });
-      
-      // Set up connection handlers
-      const pusher = (echo as any).connector.pusher;
-      
-      pusher.connection.bind('connected', () => {
-        isConnected.value = true;
-        socketId.value = pusher.connection.socket_id;
-        console.log('WebSocket connected');
-      });
-      
-      pusher.connection.bind('disconnected', () => {
-        isConnected.value = false;
-        console.log('WebSocket disconnected');
-      });
-      
-      pusher.connection.bind('error', (error: any) => {
-        console.error('WebSocket error:', error);
-        isConnected.value = false;
-      });
-      
+
       return true;
     } catch (error) {
-      console.error('Failed to connect to WebSocket:', error);
-      isConnected.value = false;
+      console.error('WebSocket connection error:', error);
       return false;
     }
   };
-  
+
   // Disconnect from WebSocket server
-  const disconnect = (): void => {
+  const disconnect = () => {
     if (echo) {
-      try {
-        // Leave all channels
-        privateChannels.forEach((channel, channelName) => {
-          try {
-            echo?.leave(channelName);
-          } catch (error) {
-            console.error(`Failed to leave channel ${channelName}:`, error);
-          }
-        });
-        
-        // Disconnect
-        echo.disconnect();
-        echo = null;
-        privateChannels.clear();
-        messageCallbacks.clear();
-        typingCallbacks.clear();
-        readReceiptCallbacks.clear();
-        isConnected.value = false;
-        socketId.value = null;
-        
-        console.log('WebSocket disconnected');
-      } catch (error) {
-        console.error('Error disconnecting WebSocket:', error);
-      }
+      echo.disconnect();
+      echo = null;
     }
+    isConnected.value = false;
+    socketId.value = null;
   };
-  
+
   // Listen for new messages in a chat
   const listenForNewMessages = (
-    chatId: string, 
+    chatId: string,
     callback: (message: MessageEvent) => void
   ): (() => void) => {
     if (!messageCallbacks.has(chatId)) {
       messageCallbacks.set(chatId, new Set());
     }
-    
+
     const callbacks = messageCallbacks.get(chatId)!;
     callbacks.add(callback);
-    
+
     // Set up the channel if not already done
     if (!privateChannels.has(chatId)) {
       const channel = echo?.private(`chat.${chatId}`);
       if (channel) {
         privateChannels.set(chatId, channel);
-        
+
         channel.listen('.message.sent', (data: any) => {
           const callbacks = messageCallbacks.get(chatId);
           if (callbacks) {
@@ -216,7 +157,7 @@ export function useWebSocket(): WebSocketService {
         });
       }
     }
-    
+
     // Return cleanup function
     return () => {
       const callbacks = messageCallbacks.get(chatId);
@@ -229,25 +170,25 @@ export function useWebSocket(): WebSocketService {
       }
     };
   };
-  
+
   // Listen for typing indicators in a chat
   const listenForTyping = (
-    chatId: string, 
+    chatId: string,
     callback: (event: TypingEvent) => void
   ): (() => void) => {
     if (!typingCallbacks.has(chatId)) {
       typingCallbacks.set(chatId, new Set());
     }
-    
+
     const callbacks = typingCallbacks.get(chatId)!;
     callbacks.add(callback);
-    
+
     // Set up the channel if not already done
     if (!privateChannels.has(chatId)) {
       const channel = echo?.private(`chat.${chatId}`);
       if (channel) {
         privateChannels.set(chatId, channel);
-        
+
         channel.listenForWhisper('typing', (data: TypingEvent) => {
           const callbacks = typingCallbacks.get(chatId);
           if (callbacks) {
@@ -256,7 +197,7 @@ export function useWebSocket(): WebSocketService {
         });
       }
     }
-    
+
     // Return cleanup function
     return () => {
       const callbacks = typingCallbacks.get(chatId);
@@ -268,25 +209,25 @@ export function useWebSocket(): WebSocketService {
       }
     };
   };
-  
+
   // Listen for read receipts in a chat
   const listenForReadReceipts = (
-    chatId: string, 
+    chatId: string,
     callback: (event: ReadReceiptEvent) => void
   ): (() => void) => {
     if (!readReceiptCallbacks.has(chatId)) {
       readReceiptCallbacks.set(chatId, new Set());
     }
-    
+
     const callbacks = readReceiptCallbacks.get(chatId)!;
     callbacks.add(callback);
-    
+
     // Set up the channel if not already done
     if (!privateChannels.has(chatId)) {
       const channel = echo?.private(`chat.${chatId}`);
       if (channel) {
         privateChannels.set(chatId, channel);
-        
+
         channel.listen('.message.read', (data: any) => {
           const callbacks = readReceiptCallbacks.get(chatId);
           if (callbacks) {
@@ -295,7 +236,7 @@ export function useWebSocket(): WebSocketService {
         });
       }
     }
-    
+
     // Return cleanup function
     return () => {
       const callbacks = readReceiptCallbacks.get(chatId);
@@ -307,20 +248,20 @@ export function useWebSocket(): WebSocketService {
       }
     };
   };
-  
+
   // Notify others that user is typing
   const notifyTyping = async (chatId: string, isTyping: boolean): Promise<void> => {
     if (!echo || !isConnected.value) {
       console.error('WebSocket not connected');
       return;
     }
-    
+
     try {
       const channel = privateChannels.get(chatId) || echo.private(`chat.${chatId}`);
       if (!privateChannels.has(chatId)) {
         privateChannels.set(chatId, channel);
       }
-      
+
       await channel.whisper('typing', {
         user_id: authStore.user?.id,
         is_typing: isTyping,
@@ -330,20 +271,20 @@ export function useWebSocket(): WebSocketService {
       console.error('Error sending typing indicator:', error);
     }
   };
-  
+
   // Mark messages as read
   const markAsRead = async (chatId: string, messageIds: string[]): Promise<void> => {
     if (!echo || !isConnected.value) {
       console.error('WebSocket not connected');
       return;
     }
-    
+
     try {
       const channel = privateChannels.get(chatId) || echo.private(`chat.${chatId}`);
       if (!privateChannels.has(chatId)) {
         privateChannels.set(chatId, channel);
       }
-      
+
       await channel.whisper('read', {
         message_ids: messageIds,
         user_id: authStore.user?.id,
@@ -353,17 +294,17 @@ export function useWebSocket(): WebSocketService {
       console.error('Error marking messages as read:', error);
     }
   };
-  
+
   // Get current socket ID
   const getSocketId = (): string | null => {
     return socketId.value;
   };
-  
+
   // Clean up on component unmount
   onUnmounted(() => {
     disconnect();
   });
-  
+
   return {
     isConnected: isConnected.value,
     socketId: socketId.value,

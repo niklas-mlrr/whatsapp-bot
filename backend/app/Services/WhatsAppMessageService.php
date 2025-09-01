@@ -703,6 +703,25 @@ class WhatsAppMessageService
             $chat->users()->attach($senderId);
         }
 
+        // Ensure the app's primary operator user is connected to the chat so it appears in UI
+        // This allows operators to see/manage WhatsApp-initiated chats.
+        try {
+            $operator = \App\Models\User::getFirstUser();
+            if ($operator && (string)$operator->id !== (string)$senderId) {
+                if (!$chat->users()->where('chat_user.user_id', $operator->id)->exists()) {
+                    $chat->users()->attach($operator->id);
+                    \Log::channel('whatsapp')->info('Attached operator to chat', [
+                        'chat_id' => $chat->id,
+                        'operator_user_id' => $operator->id,
+                    ]);
+                }
+            }
+        } catch (\Throwable $e) {
+            \Log::channel('whatsapp')->warning('Failed attaching operator to chat (non-fatal)', [
+                'error' => $e->getMessage(),
+            ]);
+        }
+
         return $chat;
     }
     

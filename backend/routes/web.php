@@ -28,20 +28,20 @@ Route::get('/csrf-token', function () {
 
 // Custom broadcasting auth endpoint with proper Sanctum authentication
 Route::post('/broadcasting/auth', function (Illuminate\Http\Request $request) {
-    // Get the authenticated user
-    $user = $request->user();
-    
+    // Resolve single app user (use configured first user)
+    $user = $request->user() ?? \App\Models\User::getFirstUser();
+
     if (!$user) {
         return response()->json(['error' => 'Unauthorized'], 401);
     }
-    
+
     $socketId = $request->input('socket_id');
     $channelName = $request->input('channel_name');
-    
+
     if (!$socketId || !$channelName) {
         return response()->json(['error' => 'Missing socket_id or channel_name'], 400);
     }
-    
+
     // Use the Reverb configuration for authorization
     $pusher = new \Pusher\Pusher(
         config('broadcasting.connections.reverb.key'),
@@ -54,26 +54,30 @@ Route::post('/broadcasting/auth', function (Illuminate\Http\Request $request) {
             'useTLS' => config('broadcasting.connections.reverb.options.useTLS'),
         ]
     );
-    
-    // For private channels, include user data
+
+    // Determine channel type and authorize correctly
     if (str_starts_with($channelName, 'private-')) {
-        $userData = [
-            'id' => $user->id,
-            'user_info' => [
-                'id' => $user->id,
-                'name' => $user->name,
-                'email' => $user->email,
-            ],
+        // Private channels: no channel_data should be sent
+        $auth = $pusher->authorizeChannel($channelName, $socketId);
+    } elseif (str_starts_with($channelName, 'presence-')) {
+        // Presence channels: require user_id and user_info
+        $userInfo = [
+            'name' => $user->name,
+            'email' => $user->email,
         ];
-        
-        $auth = $pusher->authorizeChannel($channelName, $socketId, $user->id, $userData);
+        $auth = $pusher->authorizePresenceChannel($channelName, $socketId, (string) $user->id, $userInfo);
     } else {
-        // For public channels
+        // Public channels
         $auth = $pusher->authorizeChannel($channelName, $socketId);
     }
-    
+
     return response($auth, 200, ['Content-Type' => 'application/json']);
-})->middleware('auth:api')->withoutMiddleware([\Illuminate\Foundation\Http\Middleware\VerifyCsrfToken::class]);
+})->withoutMiddleware([\Illuminate\Foundation\Http\Middleware\VerifyCsrfToken::class]);
+
+// Disable web registration routes (single-user setup)
+Route::match(['get', 'post'], '/register', function () {
+    return redirect('/login');
+});
 
 // Include test routes
 $testRoutes = [
@@ -99,4 +103,3 @@ foreach ($testRoutes as $routeFile) {
         require $path;
     }
 }
-

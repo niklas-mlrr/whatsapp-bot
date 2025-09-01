@@ -37,7 +37,7 @@ class Chat extends Model
         'created_by',
         'participants',
     ];
-    
+
     /**
      * The users that belong to the chat.
      */
@@ -55,7 +55,7 @@ class Chat extends Model
      */
     protected $casts = [
         'last_message_at' => 'datetime',
-        'type' => 'string', 
+        'type' => 'string',
         'is_archived' => 'boolean',
         'is_muted' => 'boolean',
         'metadata' => 'array',
@@ -105,7 +105,9 @@ class Chat extends Model
     {
         return $this->hasMany(WhatsAppMessage::class, 'chat', 'id')
             ->whereDoesntHave('readers', function($query) {
-                $query->where('user_id', auth()->id());
+                // Use the single app user id instead of auth()->id()
+                $user = User::getFirstUser();
+                $query->where('user_id', $user->id);
             });
     }
 
@@ -196,7 +198,8 @@ class Chat extends Model
         }
 
         try {
-            $otherUser = $this->users()->where('users.id', '!=', auth()->id())->first();
+            $user = User::getFirstUser();
+            $otherUser = $this->users()->where('users.id', '!=', $user->id)->first();
             return $otherUser ? $otherUser->isOnline() : false;
         } catch (\Exception $e) {
             // If there's an issue with the relationship, return false
@@ -213,7 +216,8 @@ class Chat extends Model
             return null;
         }
         try {
-            return $this->users()->where('users.id', '!=', auth()->id())->first();
+            $user = User::getFirstUser();
+            return $this->users()->where('users.id', '!=', $user->id)->first();
         } catch (\Exception $e) {
             // If there's an issue with the relationship, return null
             return null;
@@ -296,7 +300,7 @@ class Chat extends Model
     {
         $participants = $this->participants;
         $key = array_search($phoneNumber, $participants);
-        
+
         if ($key !== false) {
             unset($participants[$key]);
             $this->participants = array_values($participants);
@@ -311,7 +315,7 @@ class Chat extends Model
     {
         $participants = array_unique([$user1, $user2]);
         sort($participants);
-        
+
         $chat = self::firstOrCreate(
             [
                 'is_group' => false,
@@ -321,7 +325,7 @@ class Chat extends Model
                 'name' => implode('_', $participants),
             ]
         );
-        
+
         return $chat;
     }
 
@@ -336,7 +340,7 @@ class Chat extends Model
             'participants' => $participants,
             'metadata' => $metadata,
         ]);
-        
+
         return $chat;
     }
 }
