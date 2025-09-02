@@ -340,7 +340,7 @@ const formattedTime = computed(() => {
   const isThisYear = d.getFullYear() === now.getFullYear()
   
   if (isToday) {
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
   } else if (isThisYear) {
     return d.toLocaleDateString([], { month: 'short', day: 'numeric' })
   } else {
@@ -394,7 +394,7 @@ const bubbleClass = computed(() => {
     'max-w-full',
     isMe.value 
       ? 'bg-green-100 text-green-900 self-end rounded-tr-none' 
-      : 'bg-white text-gray-900 self-start rounded-tl-none border border-gray-100'
+      : 'bg-white text-gray-900 self-start rounded-tl-none border border-gray-200'
   ]
   
   // Add additional classes based on message state

@@ -4,11 +4,14 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\WhatsAppMessage;
+use App\Models\User;
+use App\Models\Chat;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use App\Http\Resources\WhatsAppMessageResource;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Str;
 
 class WhatsAppMessageController extends Controller
 {
@@ -114,11 +117,67 @@ class WhatsAppMessageController extends Controller
         if (empty($data['sending_time'])) {
             $data['sending_time'] = now();
         }
-        $message = WhatsAppMessage::create($data);
+        // Resolve sender and chat to IDs required by whatsapp_messages schema
+        // 1) Resolve or create user by phone
+        $user = User::firstOrCreate(
+            ['phone' => $data['sender']],
+            [
+                'name' => 'WhatsApp User',
+                'password' => bcrypt(Str::random(32)),
+                'status' => 'offline',
+            ]
+        );
+
+        // 2) Resolve or create chat by WhatsApp JID stored in metadata->whatsapp_id
+        $chat = Chat::where('metadata->whatsapp_id', $data['chat'])->first();
+        if (!$chat) {
+            $chat = Chat::create([
+                'name' => $data['chat'],
+                'is_group' => false,
+                'created_by' => $user->id,
+                'metadata' => [
+                    'whatsapp_id' => $data['chat'],
+                    'created_by' => $user->id,
+                ],
+            ]);
+        }
+
+        // Optional: attach user to chat (ignore if exists)
+        try {
+            if (!$chat->users()->where('chat_user.user_id', $user->id)->exists()) {
+                $chat->users()->attach($user->id);
+            }
+        } catch (\Throwable $e) {
+            // non-fatal
+        }
+
+        // Map media fields to schema (media_url/media_type)
+        $mediaUrl = null;
+        if (!empty($data['media'])) {
+            // If it's already a full URL, keep as-is; otherwise store relative path
+            $mediaUrl = filter_var($data['media'], FILTER_VALIDATE_URL)
+                ? $data['media']
+                : $data['media'];
+        }
+
+        $message = WhatsAppMessage::create([
+            'sender_id' => $user->id,
+            'chat_id' => $chat->id,
+            'type' => $data['type'],
+            'status' => 'sent',
+            'content' => $data['content'] ?? '',
+            'media_url' => $mediaUrl,
+            'media_type' => $data['mimetype'] ?? null,
+            'metadata' => [
+                'sender' => $data['sender'],
+                'chat' => $data['chat'],
+                'sending_time' => (string) $data['sending_time'],
+            ],
+        ]);
 
         // Send to receiver
         try {
-            $receiverUrl = env('RECEIVER_URL', 'http://localhost:3000/send-message');
+            $receiverUrl = env('RECEIVER_URL');
             
             \Log::info('Sending message to receiver', [
                 'receiver_url' => $receiverUrl,
@@ -183,12 +242,20 @@ class WhatsAppMessageController extends Controller
 
             \Log::info('Sending payload to receiver', $sendPayload);
             
-            $response = Http::timeout(30)
+            // Build HTTP client, allow insecure TLS if explicitly enabled for self-signed certs
+            $http = Http::timeout(30)
                 ->withHeaders([
                     'Accept' => 'application/json',
                     'Content-Type' => 'application/json',
-                ])
-                ->post($receiverUrl, $sendPayload);
+                ]);
+
+            $isHttps = str_starts_with(strtolower($receiverUrl), 'https://');
+            $allowInsecure = (bool) env('RECEIVER_TLS_INSECURE', false);
+            if ($isHttps && $allowInsecure) {
+                $http = $http->withoutVerifying();
+            }
+
+            $response = $http->post($receiverUrl, $sendPayload);
             
             if (!$response->successful()) {
                 $errorResponse = [

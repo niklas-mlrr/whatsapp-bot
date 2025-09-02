@@ -145,7 +145,7 @@ async function sendMessageHandler() {
   try {
     let payload: any = {
       sender: 'me',
-      chat: selectedChat.value.id,
+      chat: selectedChat.value.name,
       type: messageImagePath ? 'image' : 'text',
       content: messageContent,
     }

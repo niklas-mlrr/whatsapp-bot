@@ -32,21 +32,34 @@
 
       <!-- Messages list -->
       <template v-if="Array.isArray(sortedMessages) && sortedMessages.length > 0">
-        <div 
-          v-for="message in sortedMessages" 
+        <template 
+          v-for="(message, index) in sortedMessages" 
           :key="message?.id || message?.temp_id || Math.random()"
-          class="message-item"
-          :class="{
-            'justify-end': message && isCurrentUser(message),
-            'justify-start': !message || !isCurrentUser(message)
-          }"
         >
+          <!-- Day separator -->
+          <div v-if="needsDaySeparator(index)" class="flex items-center my-3 select-none">
+            <div class="flex-1 h-px bg-gray-200"></div>
+            <div class="mx-3 text-xs text-gray-500 bg-gray-100 border border-gray-200 rounded-full px-3 py-0.5">
+              {{ formatDayLabel(message.created_at) }}
+            </div>
+            <div class="flex-1 h-px bg-gray-200"></div>
+          </div>
+
+          <!-- Message item -->
+          <div 
+            class="message-item"
+            :class="{
+              'justify-start': message && isCurrentUser(message),
+              'justify-end': !message || !isCurrentUser(message)
+            }"
+          >
           <div 
             v-if="message"
             class="message-bubble"
             :class="{
-              'bg-blue-500 text-white': isCurrentUser(message),
-              'bg-gray-100': !isCurrentUser(message)
+              'bg-green-100 text-green-900': isCurrentUser(message),
+              // Slightly more visible outline for received bubbles
+              'bg-gray-100 border border-gray-200': !isCurrentUser(message)
             }"
           >
             <!-- Sender name for group chats -->
@@ -70,7 +83,7 @@
             <div 
               class="message-meta flex items-center justify-end space-x-1 mt-1 text-xs"
               :class="{
-                'text-blue-100': isCurrentUser(message),
+                'text-green-800': isCurrentUser(message),
                 'text-gray-500': !isCurrentUser(message)
               }"
             >
@@ -100,7 +113,8 @@
               </span>
             </div>
           </div>
-        </div>
+          </div>
+        </template>
       </template>
 
       <!-- Typing indicator -->
@@ -323,7 +337,31 @@ const getSenderName = (message: Message): string => {
 
 const formatTime = (dateString: string): string => {
   const date = new Date(dateString);
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+};
+
+// Day separator helpers
+const isSameDay = (a: Date, b: Date) =>
+  a.getFullYear() === b.getFullYear() &&
+  a.getMonth() === b.getMonth() &&
+  a.getDate() === b.getDate();
+
+const needsDaySeparator = (index: number): boolean => {
+  if (!sortedMessages.value || sortedMessages.value.length === 0) return false;
+  if (index === 0) return true;
+  const prev = new Date(sortedMessages.value[index - 1].created_at);
+  const curr = new Date(sortedMessages.value[index].created_at);
+  return !isSameDay(prev, curr);
+};
+
+const formatDayLabel = (dateString: string): string => {
+  const d = new Date(dateString);
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+  if (isSameDay(d, today)) return 'Today';
+  if (isSameDay(d, yesterday)) return 'Yesterday';
+  return d.toLocaleDateString([], { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' });
 };
 
 // WebSocket event handlers
