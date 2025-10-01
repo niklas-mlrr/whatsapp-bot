@@ -15,6 +15,13 @@ let isConnected = false;
 function setSocketInstance(sock) {
     sockInstance = sock;
     
+    // Check if socket is already connected
+    // The socket is considered connected if it has a user object
+    if (sock && sock.user) {
+        isConnected = true;
+        console.log('Socket already connected and ready.');
+    }
+    
     // Listen for connection updates
     if (sock.ev && sock.ev.on) {
         sock.ev.on('connection.update', (update) => {
@@ -41,6 +48,21 @@ async function start() {
 
     const app = express();
     app.use(bodyParser.json({ limit: '10mb' }));
+
+    // Health check endpoint
+    app.get('/status', (req, res) => {
+        res.json({
+            status: 'running',
+            whatsapp: {
+                initialized: !!sockInstance,
+                connected: isConnected,
+                user: sockInstance?.user ? {
+                    id: sockInstance.user.id,
+                    name: sockInstance.user.name
+                } : null
+            }
+        });
+    });
 
     app.post('/send-message', async (req, res) => {
         console.log('Received send-message request:', {
