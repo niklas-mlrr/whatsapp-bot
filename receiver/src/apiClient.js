@@ -138,11 +138,8 @@ const sendToBackend = async (data, options = {}) => {
  */
 const sendMessage = async (message) => {
     try {
-        const response = await sendToBackend({
-            type: 'message',
-            timestamp: new Date().toISOString(),
-            ...message,
-        });
+        // Send message directly without wrapping - backend expects exact fields
+        const response = await sendToBackend(message);
         
         return response;
     } catch (error) {
@@ -209,7 +206,7 @@ const sendToPHP = async (payload) => {
     logger.debug({ payload: logPayload }, 'Sending message to backend');
     
     try {
-        const response = await sendMessage({
+        const messageData = {
             sender: payload.from,  // Map 'from' to 'sender' for the backend
             chat: payload.from,    // Use the same value for chat as sender for direct messages
             type: payload.type,
@@ -217,9 +214,13 @@ const sendToPHP = async (payload) => {
             sending_time: payload.messageTimestamp 
                 ? new Date(payload.messageTimestamp * 1000).toISOString() 
                 : new Date().toISOString(), // Convert timestamp to ISO string
-            media: payload.media,
-            mimetype: payload.mimetype,
-        });
+            media: payload.media || null,
+            mimetype: payload.mimetype || null,
+        };
+        
+        logger.debug({ messageData: { ...messageData, media: messageData.media ? '[base64 data]' : null } }, 'Sending message data to backend');
+        
+        const response = await sendMessage(messageData);
         
         return true;
     } catch (error) {
