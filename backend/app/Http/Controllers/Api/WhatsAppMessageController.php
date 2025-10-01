@@ -154,10 +154,77 @@ class WhatsAppMessageController extends Controller
         // Map media fields to schema (media_url/media_type)
         $mediaUrl = null;
         if (!empty($data['media'])) {
-            // If it's already a full URL, keep as-is; otherwise store relative path
-            $mediaUrl = filter_var($data['media'], FILTER_VALIDATE_URL)
-                ? $data['media']
-                : $data['media'];
+            // Check if it's base64 data
+            if (preg_match('/^[A-Za-z0-9+\/]+=*$/', $data['media']) && strlen($data['media']) > 100) {
+                // It's base64 data without data URI prefix - decode and save
+                try {
+                    $decodedData = base64_decode($data['media'], true);
+                    if ($decodedData !== false) {
+                        // Generate a unique filename
+                        $extension = match($data['mimetype'] ?? 'image/jpeg') {
+                            'image/png' => 'png',
+                            'image/gif' => 'gif',
+                            'image/webp' => 'webp',
+                            default => 'jpg',
+                        };
+                        $filename = 'uploads/' . \Str::random(40) . '.' . $extension;
+                        
+                        // Save to storage
+                        \Storage::disk('public')->put($filename, $decodedData);
+                        $mediaUrl = $filename;
+                        
+                        \Log::info('Saved base64 image to storage', [
+                            'filename' => $filename,
+                            'size' => strlen($decodedData)
+                        ]);
+                    }
+                } catch (\Exception $e) {
+                    \Log::error('Failed to decode and save base64 image', [
+                        'error' => $e->getMessage(),
+                        'data_length' => strlen($data['media'])
+                    ]);
+                }
+            }
+            // Check if it's a data URI
+            else if (str_starts_with($data['media'], 'data:')) {
+                // Extract base64 data from data URI
+                if (preg_match('/^data:([^;]+);base64,(.+)$/', $data['media'], $matches)) {
+                    try {
+                        $decodedData = base64_decode($matches[2], true);
+                        if ($decodedData !== false) {
+                            // Generate a unique filename
+                            $extension = match($data['mimetype'] ?? $matches[1]) {
+                                'image/png' => 'png',
+                                'image/gif' => 'gif',
+                                'image/webp' => 'webp',
+                                default => 'jpg',
+                            };
+                            $filename = 'uploads/' . \Str::random(40) . '.' . $extension;
+                            
+                            // Save to storage
+                            \Storage::disk('public')->put($filename, $decodedData);
+                            $mediaUrl = $filename;
+                            
+                            \Log::info('Saved data URI image to storage', [
+                                'filename' => $filename,
+                                'size' => strlen($decodedData)
+                            ]);
+                        }
+                    } catch (\Exception $e) {
+                        \Log::error('Failed to decode and save data URI image', [
+                            'error' => $e->getMessage()
+                        ]);
+                    }
+                }
+            }
+            // If it's already a full URL, keep as-is
+            else if (filter_var($data['media'], FILTER_VALIDATE_URL)) {
+                $mediaUrl = $data['media'];
+            }
+            // Otherwise assume it's a path (for messages sent from frontend)
+            else {
+                $mediaUrl = $data['media'];
+            }
         }
 
         $message = WhatsAppMessage::create([
@@ -196,7 +263,7 @@ class WhatsAppMessageController extends Controller
             if ($data['type'] === 'image' && !empty($data['media'])) {
                 \Log::info('Processing image message', [
                     'media' => $data['media'],
-                    'exists' => Storage::exists($data['media'])
+                    'exists' => Storage::disk('public')->exists($data['media'])
                 ]);
                 
                 // If media is a URL, use it directly
@@ -204,9 +271,9 @@ class WhatsAppMessageController extends Controller
                     $sendPayload['media'] = $data['media'];
                 } 
                 // If media is a path, read the file and send as base64
-                else if (Storage::exists($data['media'])) {
+                else if (Storage::disk('public')->exists($data['media'])) {
                     // Get the correct path to the file
-                    $filePath = Storage::path($data['media']);
+                    $filePath = Storage::disk('public')->path($data['media']);
                     
                     \Log::info('Attempting to read file', [
                         'storage_path' => $filePath,
@@ -233,7 +300,7 @@ class WhatsAppMessageController extends Controller
                         'status' => 'error', 
                         'message' => 'Invalid media file',
                         'media_path' => $data['media'],
-                        'storage_exists' => Storage::exists($data['media'])
+                        'storage_exists' => Storage::disk('public')->exists($data['media'])
                     ], 400);
                 }
                 

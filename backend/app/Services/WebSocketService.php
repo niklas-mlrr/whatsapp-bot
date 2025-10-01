@@ -16,9 +16,9 @@ class WebSocketService
     public function newMessage(WhatsAppMessage $message): void
     {
         try {
-            Broadcast::event('chat.' . $message->chat, 'new-message', [
+            Broadcast::event('chat.' . $message->chat_id, 'message.sent', [
                 'message' => new \App\Http\Resources\WhatsAppMessageResource($message),
-                'event' => 'new-message',
+                'event' => 'message.sent',
             ]);
         } catch (\Exception $e) {
             Log::error('Failed to send WebSocket notification', [

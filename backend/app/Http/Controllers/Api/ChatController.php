@@ -186,22 +186,80 @@ class ChatController extends Controller
         ], 501);
     }
 
-    public function messages($chatId, Request $request)
-    {
-        return response()->json([
-            'message' => 'Feature temporarily disabled',
-        ], 501);
-    }
-
-    /**
-     * Get latest messages for a chat
-     */
-    public function latestMessages($chatId, Request $request)
+    public function destroy(Request $request, $chatId)
     {
         try {
-            // Prefer authenticated user; if unavailable or lacks access, fallback to app user (dev convenience)
+            // Access check - ensure user has access to this chat
             $user = $request->user();
+            $hasAccess = false;
+            
+            if ($user) {
+                $chatAccess = DB::select("SELECT 1 FROM chat_user WHERE chat_id = ? AND user_id = ?", [$chatId, $user->id]);
+                $hasAccess = !empty($chatAccess);
+            }
 
+            if (!$hasAccess) {
+                $fallbackUser = \App\Models\User::getFirstUser();
+                if ($fallbackUser) {
+                    $chatAccess = DB::select("SELECT 1 FROM chat_user WHERE chat_id = ? AND user_id = ?", [$chatId, $fallbackUser->id]);
+                    if (!empty($chatAccess)) {
+                        $user = $fallbackUser;
+                        $hasAccess = true;
+                    }
+                }
+            }
+
+            if (!$hasAccess) {
+                return response()->json(['error' => 'Access denied'], 403);
+            }
+
+            // Delete the chat and related data
+            DB::beginTransaction();
+            
+            try {
+                // Delete messages associated with this chat
+                DB::delete("DELETE FROM whatsapp_messages WHERE chat_id = ?", [$chatId]);
+                
+                // Delete chat_user relationships
+                DB::delete("DELETE FROM chat_user WHERE chat_id = ?", [$chatId]);
+                
+                // Delete the chat itself
+                DB::delete("DELETE FROM chats WHERE id = ?", [$chatId]);
+                
+                DB::commit();
+                
+                \Log::info('Chat deleted successfully', [
+                    'chat_id' => $chatId,
+                    'user_id' => $user->id ?? 'unknown'
+                ]);
+                
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Chat deleted successfully'
+                ]);
+            } catch (\Exception $e) {
+                DB::rollBack();
+                throw $e;
+            }
+        } catch (\Exception $e) {
+            \Log::error('Error deleting chat: ' . $e->getMessage(), [
+                'chat_id' => $chatId,
+                'user_id' => $request->user()->id ?? 'unknown',
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'error' => 'Failed to delete chat',
+                'message' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function messages($chatId, Request $request)
+    {
+        try {
+            // Access check (align with latestMessages)
+            $user = $request->user();
             $hasAccess = false;
             if ($user) {
                 $chatAccess = DB::select("SELECT 1 FROM chat_user WHERE chat_id = ? AND user_id = ?", [$chatId, $user->id]);
@@ -213,13 +271,210 @@ class ChatController extends Controller
                 if ($fallbackUser) {
                     $chatAccess = DB::select("SELECT 1 FROM chat_user WHERE chat_id = ? AND user_id = ?", [$chatId, $fallbackUser->id]);
                     if (!empty($chatAccess)) {
-                        $user = $fallbackUser; // use fallback user for dev/testing
+                        $user = $fallbackUser;
                         $hasAccess = true;
                     }
                 }
             }
 
-            // Final dev fallback: find any user who is a member of this chat (align with index() fallback)
+            if (!$hasAccess) {
+                $anyMember = DB::select("SELECT user_id FROM chat_user WHERE chat_id = ? ORDER BY created_at ASC LIMIT 1", [$chatId]);
+                if (!empty($anyMember)) {
+                    $memberUserId = $anyMember[0]->user_id;
+                    $memberUser = \App\Models\User::find($memberUserId);
+                    if ($memberUser) {
+                        $user = $memberUser;
+                        $hasAccess = true;
+                        \Log::warning('Dev fallback: granting messages access using chat member', [
+                            'chat_id' => $chatId,
+                            'member_user_id' => $memberUserId
+                        ]);
+                    }
+                }
+            }
+
+            if (!$hasAccess) {
+                return response()->json(['error' => 'Access denied'], 403);
+            }
+
+            // Validate params
+            $validated = $request->validate([
+                'before' => 'nullable|integer|min:1',
+                'limit' => 'nullable|integer|min:1|max:100',
+            ]);
+
+            $limit = $validated['limit'] ?? 20;
+            $beforeId = $validated['before'] ?? null;
+
+            // Find the user with phone='me' for proper is_from_me comparison
+            $meUser = DB::selectOne("
+                SELECT u.id
+                FROM users u
+                INNER JOIN chat_user cu ON cu.user_id = u.id
+                WHERE cu.chat_id = ? AND u.phone = 'me'
+                LIMIT 1
+            ", [$chatId]);
+            
+            $currentUserId = $meUser ? $meUser->id : $user->id;
+
+            $bindings = [$chatId];
+
+            // Build SQL with optional cursor
+            if ($beforeId) {
+                // Get created_at for the beforeId to create a stable cursor
+                $beforeRow = DB::select("SELECT created_at FROM whatsapp_messages WHERE id = ? AND chat_id = ? LIMIT 1", [$beforeId, $chatId]);
+                if (!empty($beforeRow)) {
+                    $beforeCreatedAt = $beforeRow[0]->created_at;
+                    $sql = "
+                        SELECT 
+                            m.id,
+                            m.content,
+                            m.sender_id,
+                            u.name as sender_name,
+                            u.phone as sender_phone,
+                            m.chat_id,
+                            m.created_at,
+                            m.updated_at,
+                            m.type,
+                            'inbound' as direction,
+                            m.status,
+                            m.media_url,
+                            m.media_type
+                        FROM whatsapp_messages m
+                        LEFT JOIN users u ON m.sender_id = u.id
+                        WHERE m.chat_id = ?
+                          AND (
+                            m.created_at < ? OR (m.created_at = ? AND m.id < ?)
+                          )
+                        ORDER BY m.created_at DESC, m.id DESC
+                        LIMIT ?
+                    ";
+                    $bindings = [$chatId, $beforeCreatedAt, $beforeCreatedAt, $beforeId, $limit];
+                } else {
+                    // If beforeId not found, just return latest page
+                    $sql = "
+                        SELECT 
+                            m.id,
+                            m.content,
+                            m.sender_id,
+                            u.name as sender_name,
+                            u.phone as sender_phone,
+                            m.chat_id,
+                            m.created_at,
+                            m.updated_at,
+                            m.type,
+                            'inbound' as direction,
+                            m.status,
+                            m.media_url,
+                            m.media_type
+                        FROM whatsapp_messages m
+                        LEFT JOIN users u ON m.sender_id = u.id
+                        WHERE m.chat_id = ?
+                        ORDER BY m.created_at DESC, m.id DESC
+                        LIMIT ?
+                    ";
+                    $bindings = [$chatId, $limit];
+                }
+            } else {
+                $sql = "
+                    SELECT 
+                        m.id,
+                        m.content,
+                        m.sender_id,
+                        u.name as sender_name,
+                        u.phone as sender_phone,
+                        m.chat_id,
+                        m.created_at,
+                        m.updated_at,
+                        m.type,
+                        'inbound' as direction,
+                        m.status,
+                        m.media,
+                        m.mimetype
+                    FROM whatsapp_messages m
+                    LEFT JOIN users u ON m.sender_id = u.id
+                    WHERE m.chat_id = ?
+                    ORDER BY m.created_at DESC, m.id DESC
+                    LIMIT ?
+                ";
+                $bindings = [$chatId, $limit];
+            }
+
+        $rows = DB::select($sql, $bindings);
+
+        // Return in chronological order (oldest first) to match frontend expectations
+        $rows = array_reverse($rows);
+
+        $formatted = array_map(function ($m) use ($currentUserId) {
+            return [
+                'id' => (string) $m->id,
+                'content' => $m->content,
+                'sender_id' => (string) $m->sender_id,
+                'sender_name' => $m->sender_name,
+                'sender_phone' => $m->sender_phone ?? null,
+                'chat_id' => (string) $m->chat_id,
+                'created_at' => $m->created_at,
+                'updated_at' => $m->updated_at,
+                'type' => $m->type,
+                'direction' => $m->direction,
+                'status' => $m->status ?? 'sent',
+                'is_from_me' => ((string) $m->sender_id === (string) $currentUserId),
+                'media' => $m->media_url ?? null,
+                'mimetype' => $m->media_type ?? null,
+            ];
+        }, $rows);
+
+        \Log::info('Paginated messages fetched for chat', [
+            'chat_id' => $chatId,
+            'user_id' => $user->id ?? null,
+            'count' => count($formatted),
+            'limit' => $limit,
+            'before' => $beforeId,
+        ]);
+
+        return response()->json([
+            'data' => $formatted,
+            'total' => count($formatted),
+        ]);
+    } catch (\Exception $e) {
+        \Log::error('Error fetching paginated messages: ' . $e->getMessage(), [
+            'chat_id' => $chatId,
+            'user_id' => $request->user()->id ?? 'unknown',
+            'trace' => $e->getTraceAsString()
+        ]);
+
+        return response()->json([
+            'error' => 'Failed to fetch messages',
+            'message' => $e->getMessage()
+        ], 500);
+        }
+    }
+
+    /**
+     * Get latest messages for a chat (simple, no cursor)
+     */
+    public function latestMessages($chatId, Request $request)
+    {
+        try {
+            // Access check (same as messages())
+            $user = $request->user();
+            $hasAccess = false;
+            if ($user) {
+                $chatAccess = DB::select("SELECT 1 FROM chat_user WHERE chat_id = ? AND user_id = ?", [$chatId, $user->id]);
+                $hasAccess = !empty($chatAccess);
+            }
+
+            if (!$hasAccess) {
+                $fallbackUser = \App\Models\User::getFirstUser();
+                if ($fallbackUser) {
+                    $chatAccess = DB::select("SELECT 1 FROM chat_user WHERE chat_id = ? AND user_id = ?", [$chatId, $fallbackUser->id]);
+                    if (!empty($chatAccess)) {
+                        $user = $fallbackUser;
+                        $hasAccess = true;
+                    }
+                }
+            }
+
             if (!$hasAccess) {
                 $anyMember = DB::select("SELECT user_id FROM chat_user WHERE chat_id = ? ORDER BY created_at ASC LIMIT 1", [$chatId]);
                 if (!empty($anyMember)) {
@@ -240,61 +495,120 @@ class ChatController extends Controller
                 return response()->json(['error' => 'Access denied'], 403);
             }
 
-            // Get latest messages from whatsapp_messages table
-            $messages = DB::select("
-                SELECT 
-                    m.id,
-                    m.content,
-                    m.sender_id,
-                    u.name as sender_name,
-                    m.chat_id,
-                    m.created_at,
-                    m.updated_at,
-                    m.type,
-                    'inbound' as direction,
-                    m.status
-                FROM whatsapp_messages m
-                LEFT JOIN users u ON m.sender_id = u.id
-                WHERE m.chat_id = ?
-                ORDER BY m.created_at DESC
-                LIMIT 50
+            $limit = (int) ($request->input('limit', 50));
+            if ($limit <= 0 || $limit > 100) { $limit = 50; }
+            
+            $afterId = $request->input('after');
+
+            // Find the user with phone='me' for proper is_from_me comparison
+            $meUser = DB::selectOne("
+                SELECT u.id
+                FROM users u
+                INNER JOIN chat_user cu ON cu.user_id = u.id
+                WHERE cu.chat_id = ? AND u.phone = 'me'
+                LIMIT 1
             ", [$chatId]);
             
-            // Format messages
-            $formattedMessages = [];
-            foreach ($messages as $message) {
-                $formattedMessages[] = [
-                    'id' => $message->id,
-                    'content' => $message->content,
-                    'sender_id' => $message->sender_id,
-                    'sender_name' => $message->sender_name,
-                    'chat_id' => $message->chat_id,
-                    'created_at' => $message->created_at,
-                    'updated_at' => $message->updated_at,
-                    'type' => $message->type,
-                    'direction' => $message->direction,
-                    'status' => $message->status ?? 'sent'
-                ];
-            }
+            $currentUserId = $meUser ? $meUser->id : $user->id;
             
+            // Build query based on whether we have an 'after' parameter
+            if ($afterId) {
+                // Get messages after a specific message ID
+                $afterRow = DB::selectOne("SELECT created_at FROM whatsapp_messages WHERE id = ? AND chat_id = ? LIMIT 1", [$afterId, $chatId]);
+                
+                if ($afterRow) {
+                    $sql = "
+                        SELECT 
+                            m.id,
+                            m.content,
+                            m.sender_id,
+                            u.name as sender_name,
+                            u.phone as sender_phone,
+                            m.chat_id,
+                            m.created_at,
+                            m.updated_at,
+                            m.type,
+                            'inbound' as direction,
+                            m.status,
+                            m.media_url,
+                            m.media_type
+                        FROM whatsapp_messages m
+                        LEFT JOIN users u ON m.sender_id = u.id
+                        WHERE m.chat_id = ?
+                          AND (m.created_at > ? OR (m.created_at = ? AND m.id > ?))
+                        ORDER BY m.created_at ASC, m.id ASC
+                        LIMIT ?
+                    ";
+                    $rows = DB::select($sql, [$chatId, $afterRow->created_at, $afterRow->created_at, $afterId, $limit]);
+                } else {
+                    // If afterId not found, return empty array
+                    $rows = [];
+                }
+            } else {
+                // No 'after' parameter, return latest messages
+                $sql = "
+                    SELECT 
+                        m.id,
+                        m.content,
+                        m.sender_id,
+                        u.name as sender_name,
+                        u.phone as sender_phone,
+                        m.chat_id,
+                        m.created_at,
+                        m.updated_at,
+                        m.type,
+                        'inbound' as direction,
+                        m.status,
+                        m.media_url,
+                        m.media_type
+                    FROM whatsapp_messages m
+                    LEFT JOIN users u ON m.sender_id = u.id
+                    WHERE m.chat_id = ?
+                    ORDER BY m.created_at DESC, m.id DESC
+                    LIMIT ?
+                ";
+                $rows = DB::select($sql, [$chatId, $limit]);
+                
+                // Return oldest first to match UI
+                $rows = array_reverse($rows);
+            }
+
+            // Format messages (already in correct order)
+            $formattedMessages = array_map(function ($m) use ($currentUserId) {
+                return [
+                    'id' => (string) $m->id,
+                    'content' => $m->content,
+                    'sender_id' => (string) $m->sender_id,
+                    'sender_name' => $m->sender_name,
+                    'sender_phone' => $m->sender_phone ?? null,
+                    'chat_id' => (string) $m->chat_id,
+                    'created_at' => $m->created_at,
+                    'updated_at' => $m->updated_at,
+                    'type' => $m->type,
+                    'direction' => $m->direction,
+                    'status' => $m->status ?? 'sent',
+                    'is_from_me' => ((string) $m->sender_id === (string) $currentUserId),
+                    'media' => $m->media_url ?? null,
+                    'mimetype' => $m->media_type ?? null,
+                ];
+            }, $rows);
+
             \Log::info('Latest messages fetched for chat', [
                 'chat_id' => $chatId,
-                'user_id' => $user->id,
+                'user_id' => $user->id ?? null,
                 'messages_count' => count($formattedMessages)
             ]);
-            
+
             return response()->json([
-                'data' => array_reverse($formattedMessages), // Reverse to get chronological order
+                'data' => $formattedMessages,
                 'total' => count($formattedMessages)
             ]);
-            
         } catch (\Exception $e) {
             \Log::error('Error fetching latest messages: ' . $e->getMessage(), [
                 'chat_id' => $chatId,
                 'user_id' => $request->user()->id ?? 'unknown',
                 'trace' => $e->getTraceAsString()
             ]);
-            
             return response()->json([
                 'error' => 'Failed to fetch messages',
                 'message' => $e->getMessage()

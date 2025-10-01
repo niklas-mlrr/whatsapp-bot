@@ -48,12 +48,14 @@ class WhatsAppMessageResource extends JsonResource
         }
         
         // Determine if the message is from the current user
-        $isFromCurrentUser = $request->user() && $this->sender === $request->user()->phone;
+        $isFromCurrentUser = $request->user() && $this->sender_id === $request->user()->id;
         
         return [
             // Core message data
             'id' => $this->id,
+            'sender_id' => $this->sender_id,
             'sender' => $this->sender,
+            'chat_id' => $this->chat_id,
             'chat' => $this->chat,
             'type' => $this->type,
             'content' => $this->content,

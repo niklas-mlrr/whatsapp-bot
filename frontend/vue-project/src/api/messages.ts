@@ -39,3 +39,6 @@ export const uploadImage = (file: File) => {
     headers: { 'Content-Type': 'multipart/form-data' },
   });
 };
+
+export const deleteChat = (chatId: string | number) =>
+  apiClient.delete(`/chats/${chatId}`);

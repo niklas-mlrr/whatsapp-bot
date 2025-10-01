@@ -286,6 +286,9 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
         // Get latest messages for a chat
         Route::get('/{chat}/messages/latest', [ChatController::class, 'latestMessages']);
+
+        // Delete a chat
+        Route::delete('/{chat}', [ChatController::class, 'destroy']);
     });
 
     // User presence

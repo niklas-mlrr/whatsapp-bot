@@ -7,9 +7,18 @@
         <div v-if="loadingChats" class="text-blue-500 p-4">Loading chats...</div>
         <div v-if="errorChats" class="text-red-500 p-4">{{ errorChats }}</div>
         <ul v-if="!loadingChats && !errorChats">
-          <li v-for="chat in chats" :key="chat.id" @click="selectChat(chat)"
-              :class="['cursor-pointer px-4 py-3 border-b border-gray-100 hover:bg-green-50', selectedChat && selectedChat.id === chat.id ? 'bg-green-100 font-bold' : '']">
-            {{ chat.name }}
+          <li v-for="chat in chats" :key="chat.id" 
+              :class="['cursor-pointer px-4 py-3 border-b border-gray-100 hover:bg-green-50 relative group flex items-center justify-between', selectedChat && selectedChat.id === chat.id ? 'bg-green-100 font-bold' : '']">
+            <span @click="selectChat(chat)" class="flex-1">{{ chat.name }}</span>
+            <button 
+              @click.stop="confirmDeleteChat(chat)"
+              class="opacity-0 group-hover:opacity-100 transition-opacity p-2 hover:bg-red-100 rounded-full"
+              title="Delete chat"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+            </button>
           </li>
         </ul>
       </div>
@@ -33,7 +42,9 @@
           v-if="selectedChat"
           ref="messageListRef" 
           :chat="selectedChat.id"
-          :current-user="currentUser"
+          :current-user="currentUserForChat"
+          :is-group-chat="!!selectedChat.is_group"
+          :members="membersForChat"
         />
         <div v-else class="flex items-center justify-center h-full text-gray-500">
           Select a chat to start messaging
@@ -82,7 +93,7 @@
         <input id="image-upload-input" type="file" accept="image/*" class="hidden" @change="onImageChange" :disabled="!selectedChat" />
         <button
           type="submit"
-          :disabled="(!input && !imagePath) || !selectedChat || isSending"
+          :disabled="!canSend"
           class="bg-green-500 text-white rounded-full px-6 py-2 font-semibold disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center gap-2 min-w-[80px] justify-center"
         >
           <svg v-if="isSending" class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -98,16 +109,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import MessageList from '../components/MessageList.vue'
-import { fetchChats, sendMessage, uploadImage } from '../api/messages'
+import { fetchChats, sendMessage, uploadImage, deleteChat } from '../api/messages'
 
-// Get current user from auth store or local storage
+// Base current user from auth (fallback)
 const currentUser = ref({
-  id: '1', // This should come from your auth system
-  name: 'Current User', // This should come from your auth system
+  id: '1', // Replace with auth user id
+  name: 'Current User',
   email: 'user@example.com',
   avatar: null,
   is_online: true,
@@ -128,17 +139,77 @@ const isSending = ref(false)
 
 const messageListRef = ref<any>(null)
 
+// Watch for changes to input field to debug if image is being cleared
+watch(input, (newVal: string, oldVal: string) => {
+  console.log('Input changed:', { newVal, oldVal, imagePath: imagePath.value, imagePreviewUrl: imagePreviewUrl.value });
+});
+
+// Computed property to determine if we can send a message
+const canSend = computed(() => {
+  const hasText = !!(input.value && input.value.trim().length > 0)
+  const hasImage = !!imagePath.value
+  const hasChat = !!selectedChat.value
+  const notSending = !isSending.value
+  
+  const result = (hasText || hasImage) && hasChat && notSending
+  console.log('canSend check:', { hasText, hasImage, hasChat, notSending, result, inputValue: input.value, imagePathValue: imagePath.value })
+  
+  return result
+})
+
+// Normalized members for the selected chat (id, name, phone)
+type Member = { id: string; name: string; phone?: string }
+const membersForChat = computed<Member[]>(() => {
+  const participants = selectedChat.value?.participants || []
+  return participants.map((p: any) => ({
+    id: p?.id?.toString?.() || String(p?.id ?? ''),
+    name: String(p?.name ?? ''),
+    phone: p?.phone ?? p?.phone_number
+  }))
+})
+
+// Derive current user for this chat: the member with phone === 'me'
+const currentUserForChat = computed(() => {
+  const me = membersForChat.value.find(m => m.phone === 'me')
+  if (me) {
+    return { id: me.id, name: 'You' }
+  }
+  // Fallback to auth currentUser
+  return { id: currentUser.value.id, name: currentUser.value.name }
+})
+
 function selectChat(chat: any) {
   selectedChat.value = chat
+  // Scroll to bottom after chat loads
+  setTimeout(() => {
+    if (messageListRef.value && messageListRef.value.scrollToBottom) {
+      messageListRef.value.scrollToBottom()
+    }
+  }, 300)
 }
 
 async function sendMessageHandler() {
   if ((!input.value && !imagePath.value) || !selectedChat.value || isSending.value) return
   
+  console.log('=== START sendMessageHandler ===');
+  console.log('Current state before storing:', {
+    inputValue: input.value,
+    imagePathValue: imagePath.value,
+    imageMimetypeValue: imageMimetype.value
+  });
+  
   // Store the message content before clearing
   const messageContent = input.value
   const messageImagePath = imagePath.value
   const messageImageMimetype = imageMimetype.value
+  const messageImageFile = imageFile.value
+  const messageImagePreviewUrl = imagePreviewUrl.value
+  
+  console.log('Stored values:', {
+    messageContent,
+    messageImagePath,
+    messageImageMimetype
+  });
   
   isSending.value = true
   
@@ -147,33 +218,20 @@ async function sendMessageHandler() {
       sender: 'me',
       chat: selectedChat.value.name,
       type: messageImagePath ? 'image' : 'text',
-      content: messageContent,
+      content: messageContent || '',  // Ensure content is at least an empty string
     }
     
+    console.log('Payload before adding media:', payload);
+    
     // If we have an image, include the media path and mimetype
+    // The image was already uploaded in onImageChange, so we just use the path
     if (messageImagePath) {
-      // If it's a data URL, we need to upload it first
-      if (messageImagePath.startsWith('data:')) {
-        try {
-          // Convert data URL to blob
-          const response = await fetch(messageImagePath);
-          const blob = await response.blob();
-          const file = new File([blob], 'image.jpg', { type: messageImageMimetype || 'image/jpeg' });
-          
-          // Upload the image
-          const uploadResponse = await uploadImage(file);
-          payload.media = uploadResponse.data.path;
-          payload.mimetype = messageImageMimetype || 'image/jpeg';
-        } catch (e) {
-          console.error('Error uploading image:', e);
-          throw new Error('Failed to upload image');
-        }
-      } else {
-        // It's already a path, just use it directly
-        payload.media = messageImagePath;
-        payload.mimetype = messageImageMimetype;
-      }
+      payload.media = messageImagePath;
+      payload.mimetype = messageImageMimetype || 'image/jpeg';
+      console.log('Added media to payload:', { media: payload.media, mimetype: payload.mimetype });
     }
+    
+    console.log('Final payload to send:', payload);
     
     // Clear input immediately to show responsiveness
     input.value = ''
@@ -189,9 +247,9 @@ async function sendMessageHandler() {
         sender: 'me',
         chat: selectedChat.value.id,
         type: messageImagePath ? 'image' : 'text',
-        content: messageContent,
-        media: messageImagePath,
-        mimetype: messageImageMimetype,
+        content: messageContent || '',  // Empty string if no caption
+        media: messageImagePath || undefined,
+        mimetype: messageImageMimetype || undefined,
         sending_time: new Date().toISOString(),
         created_at: new Date().toISOString(),
         isTemporary: true,
@@ -216,17 +274,19 @@ async function sendMessageHandler() {
         }
       }, 100)
     }
-  } catch (e) {
+  } catch (e: any) {
     console.error('Error sending message:', e);
+    console.error('Error response:', e?.response?.data);
     
     // Restore the input values on error
     input.value = messageContent
     imagePath.value = messageImagePath
     imageMimetype.value = messageImageMimetype
+    imageFile.value = messageImageFile
     
-    // Recreate the preview URL if we had an image
-    if (messageImagePath && messageImagePath.startsWith('data:')) {
-      imagePreviewUrl.value = messageImagePath;
+    // Restore the preview URL if we had an image
+    if (messageImagePath && messageImagePreviewUrl) {
+      imagePreviewUrl.value = messageImagePreviewUrl;
     }
     
     // Remove temporary message on error
@@ -234,7 +294,14 @@ async function sendMessageHandler() {
       messageListRef.value.removeTemporaryMessage()
     }
     
-    alert(e instanceof Error ? e.message : 'Failed to send message')
+    const errorMessage = e?.response?.data?.message || e?.message || 'Failed to send message';
+    const validationErrors = e?.response?.data?.errors;
+    if (validationErrors) {
+      console.error('Validation errors:', validationErrors);
+      alert('Validation error: ' + JSON.stringify(validationErrors));
+    } else {
+      alert(errorMessage);
+    }
   } finally {
     isSending.value = false
   }
@@ -259,6 +326,8 @@ async function onImageChange(e: Event) {
     const file = files[0]
     imageFile.value = file
     
+    console.log('Image selected:', file.name, file.type);
+    
     // Create preview URL
     imagePreviewUrl.value = URL.createObjectURL(file)
     
@@ -267,7 +336,13 @@ async function onImageChange(e: Event) {
       const res = await uploadImage(file)
       imagePath.value = res.data.path
       imageMimetype.value = file.type
+      console.log('Image uploaded successfully:', {
+        path: imagePath.value,
+        mimetype: imageMimetype.value,
+        url: res.data.url
+      });
     } catch (err) {
+      console.error('Image upload error:', err);
       alert('Image upload failed')
       clearImage()
     }
@@ -284,6 +359,31 @@ function selectAddImage() {
   setTimeout(() => {
     document.getElementById('image-upload-input')?.click()
   }, 100)
+}
+
+const confirmDeleteChat = async (chat: any) => {
+  if (!confirm(`Are you sure you want to delete the chat with "${chat.name}"? This action cannot be undone.`)) {
+    return
+  }
+  
+  try {
+    await deleteChat(chat.id)
+    
+    // Remove the chat from the list
+    chats.value = chats.value.filter(c => c.id !== chat.id)
+    
+    // If the deleted chat was selected, clear the selection
+    if (selectedChat.value && selectedChat.value.id === chat.id) {
+      selectedChat.value = null
+      // Select the first available chat if any
+      if (chats.value.length > 0) {
+        selectedChat.value = chats.value[0]
+      }
+    }
+  } catch (e: any) {
+    console.error('Error deleting chat:', e)
+    alert(e?.response?.data?.message || 'Failed to delete chat')
+  }
 }
 
 const checkAuthAndRedirect = async () => {

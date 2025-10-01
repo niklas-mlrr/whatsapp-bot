@@ -34,7 +34,7 @@
       <template v-if="Array.isArray(sortedMessages) && sortedMessages.length > 0">
         <template 
           v-for="(message, index) in sortedMessages" 
-          :key="message?.id || message?.temp_id || Math.random()"
+          :key="message?.id ? `id-${message.id}` : (message?.temp_id ? `tmp-${message.temp_id}` : `idx-${index}`)"
         >
           <!-- Day separator -->
           <div v-if="needsDaySeparator(index)" class="flex items-center my-3 select-none">
@@ -46,74 +46,15 @@
           </div>
 
           <!-- Message item -->
-          <div 
-            class="message-item"
-            :class="{
-              'justify-start': message && isCurrentUser(message),
-              'justify-end': !message || !isCurrentUser(message)
-            }"
-          >
-          <div 
+          <MessageItem 
             v-if="message"
-            class="message-bubble"
-            :class="{
-              'bg-green-100 text-green-900': isCurrentUser(message),
-              // Slightly more visible outline for received bubbles
-              'bg-gray-100 border border-gray-200': !isCurrentUser(message)
+            :message="{
+              ...message,
+              isMe: isMine(message),
+              sender: typeof message.sender === 'string' ? message.sender : (getSenderName(message) || 'Unknown')
             }"
-          >
-            <!-- Sender name for group chats -->
-            <div 
-              v-if="isGroupChat && message && !isCurrentUser(message)" 
-              class="text-xs font-medium mb-1"
-              :class="{
-                'text-blue-100': isCurrentUser(message),
-                'text-gray-600': !isCurrentUser(message)
-              }"
-            >
-              {{ getSenderName(message) }}
-            </div>
-            
-            <!-- Message content -->
-            <div class="message-content">
-              {{ message.content }}
-            </div>
-            
-            <!-- Message metadata -->
-            <div 
-              class="message-meta flex items-center justify-end space-x-1 mt-1 text-xs"
-              :class="{
-                'text-green-800': isCurrentUser(message),
-                'text-gray-500': !isCurrentUser(message)
-              }"
-            >
-              <span class="time">{{ formatTime(message.created_at) }}</span>
-              <span v-if="isCurrentUser(message)" class="status">
-                <template v-if="message.status === 'sending'">
-                  <svg class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                </template>
-                <template v-else-if="message.status === 'sent' || message.status === 'delivered'">
-                  <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
-                  </svg>
-                </template>
-                <template v-else-if="message.status === 'read'">
-                  <svg class="w-3 h-3 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
-                    <path d="M9.707 14.707a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L9 12.586l7.293-7.293a1 1 0 011.414 1.414l-8 8z" />
-                  </svg>
-                </template>
-                <template v-else-if="message.status === 'failed'">
-                  <svg class="w-3 h-3 text-red-500" fill="currentColor" viewBox="0 0 20 20">
-                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
-                  </svg>
-                </template>
-              </span>
-            </div>
-          </div>
-          </div>
+            @open-image-preview="handleOpenImagePreview"
+          />
         </template>
       </template>
 
@@ -150,18 +91,32 @@
         <span class="text-sm text-gray-500">typing...</span>
       </div>
     </div>
+    
+    <!-- Image Preview Modal -->
+    <ImagePreviewModal
+      :is-open="imagePreviewOpen"
+      :image-src="previewImageSrc"
+      :caption="previewImageCaption"
+      :images="imageList"
+      :current-index="currentImageIndex"
+      @close="closeImagePreview"
+      @update-index="updateImageIndex"
+    />
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick, computed, watch } from 'vue';
 import apiClient from '@/services/api';
 import { useWebSocket } from '@/services/websocket';
+import MessageItem from './MessageItem.vue';
+import ImagePreviewModal from './ImagePreviewModal.vue';
 
 // Types
 interface Message {
   id: string;
   content: string;
   sender_id: string;
+  sender_phone?: string;
   sender?: string | { id: string; name: string };
   chat_id: string;
   chat?: string | { id: string; name: string };
@@ -180,6 +135,9 @@ interface Message {
   is_group?: boolean | string | number;
   description?: string;
   avatar_url?: string | null;
+  // Optional backend/client flags for ownership
+  is_from_me?: boolean;
+  is_mine?: boolean;
 }
 
 interface TypingEvent {
@@ -200,6 +158,7 @@ interface ReadReceiptEvent {
 interface ChatMember {
   id: string;
   name: string;
+  phone?: string;
 }
 
 const props = defineProps({
@@ -241,6 +200,14 @@ const pollInterval = ref<number | null>(null);
 const hasNewMessages = ref(false);
 const isTyping = ref(false);
 const error = ref<Error | null>(null);
+const isInitialLoad = ref(true);
+
+// Image preview state
+const imagePreviewOpen = ref(false);
+const previewImageSrc = ref('');
+const previewImageCaption = ref('');
+const currentImageIndex = ref(0);
+const imageList = ref<string[]>([]);
 
 // WebSocket composable
 const { 
@@ -276,17 +243,19 @@ const sortedMessages = computed(() => {
         }
         
         const hasId = Boolean(msg.id || msg.temp_id);
-        const hasContent = Boolean(msg.content || msg.media);
+        const hasContentOrMedia = Boolean(msg.content || msg.media || msg.type === 'image' || msg.mimetype?.startsWith('image/'));
         const hasSender = Boolean(msg.sender_id || msg.sender);
         
-        const isValid = hasId && hasContent && hasSender;
+        const isValid = hasId && hasContentOrMedia && hasSender;
         
         if (!isValid) {
           console.warn('Invalid message found:', {
             message: msg,
             hasId,
-            hasContent,
-            hasSender
+            hasContentOrMedia,
+            hasSender,
+            type: msg.type,
+            mimetype: msg.mimetype
           });
         }
         
@@ -326,7 +295,36 @@ const sortedMessages = computed(() => {
 
 // Helper functions
 const isCurrentUser = (message: Message): boolean => {
-  return message.sender_id === props.currentUser.id;
+  // 1) Trust backend boolean if provided
+  if (typeof (message as any).is_from_me === 'boolean') {
+    console.log(`Message ${message.id} has is_from_me:`, (message as any).is_from_me);
+    return (message as any).is_from_me === true;
+  }
+  // 2) Temp/UI messages may set sender to 'me'
+  if ((message as any).sender === 'me') return true;
+  // 3) Prefer explicit phone marker from backend
+  if ((message as any).sender_phone === 'me') return true;
+  // 4) Resolve via members: sender_id belongs to member with phone === 'me'
+  if (Array.isArray(props.members) && props.members.length > 0) {
+    const m = props.members.find(m => m.id?.toString?.() === message.sender_id?.toString?.());
+    if (m && (m as any).phone === 'me') return true;
+  }
+  // 3) Fallback to id comparison
+  const result = message.sender_id?.toString() === props.currentUser.id?.toString();
+  console.log(`Message ${message.id} sender_id comparison:`, {
+    sender_id: message.sender_id,
+    current_user_id: props.currentUser.id,
+    result
+  });
+  return result;
+};
+
+// Unified helper used in template
+const isMine = (message: Message): boolean => {
+  if (typeof (message as any).is_mine === 'boolean') return (message as any).is_mine;
+  const result = isCurrentUser(message);
+  console.log(`isMine for message ${message.id}:`, result);
+  return result;
 };
 
 const getSenderName = (message: Message): string => {
@@ -491,14 +489,20 @@ const loadMoreMessages = async () => {
     });
     
     const newMessages = response.data.data || [];
-    
-    if (newMessages.length > 0) {
+
+    // De-duplicate against existing messages and normalize
+    const existingIds = new Set((messages.value || []).map(m => m?.id).filter(Boolean));
+    const uniqueNewMessages = (newMessages || []).filter((m: any) => m && m.id && !existingIds.has(m.id));
+    const normalizedNew = uniqueNewMessages.map(normalizeMessage);
+
+    if (normalizedNew.length > 0) {
       // Add new messages to the beginning of the array
-      messages.value = [...newMessages, ...messages.value];
-      lastMessageId.value = newMessages[0].id;
+      messages.value = [...normalizedNew, ...messages.value];
+      // Update cursor to the oldest loaded message id
+      lastMessageId.value = normalizedNew[0].id;
       
       // Check if there are more messages to load
-      hasMoreMessages.value = newMessages.length === 20;
+      hasMoreMessages.value = normalizedNew.length === 20;
       
       // Wait for DOM to update with new messages
       await nextTick();
@@ -555,8 +559,8 @@ const scrollToBottom = (options?: ScrollToOptions) => {
 // Mark visible messages as read
 const markVisibleMessagesAsRead = () => {
   const unreadMessages = messages.value.filter(
-    msg => !msg.read_by?.includes(props.currentUser.id) && 
-           msg.sender_id !== props.currentUser.id
+    msg => !msg.read_by?.includes(props.currentUser.id) &&
+           !isMine(msg)
   );
   
   if (unreadMessages.length > 0) {
@@ -579,15 +583,34 @@ const startPolling = () => {
     if (document.visibilityState === 'visible') {
       fetchLatestMessages();
     }
-  }, 5000); // Poll every 5 seconds
+  }, 2000); // Poll every 2 seconds
 };
 
 // Process and normalize message data to ensure required fields exist
 const normalizeMessage = (msg: any): Message => {
+  // Safely interpret is_from_me from various backend types
+  const parseIsFromMe = (val: unknown): boolean | undefined => {
+    if (val === undefined || val === null) return undefined;
+    if (typeof val === 'boolean') return val;
+    if (typeof val === 'number') return val === 1;
+    if (typeof val === 'string') {
+      const lower = val.trim().toLowerCase();
+      if (lower === 'true' || lower === '1' || lower === 'yes') return true;
+      if (lower === 'false' || lower === '0' || lower === 'no') return false;
+    }
+    return undefined;
+  };
+
+  const normalizedIsFromMe = parseIsFromMe((msg as any).is_from_me);
+  const fallbackMine = ((msg as any).sender === 'me')
+    || (msg?.sender_id?.toString?.() === props.currentUser.id?.toString());
+  const normalizedIsMine = (typeof normalizedIsFromMe === 'boolean') ? normalizedIsFromMe : !!fallbackMine;
+
   return {
     id: msg.id?.toString() || '',
     content: msg.content || '',
     sender_id: msg.sender_id || msg.sender || 'unknown',
+    sender_phone: msg.sender_phone || undefined,
     chat_id: msg.chat_id || msg.chat || 'unknown',
     type: msg.type || 'text',
     direction: msg.direction || 'incoming',
@@ -599,7 +622,10 @@ const normalizeMessage = (msg: any): Message => {
     mimetype: msg.mimetype || null,
     reactions: msg.reactions || {},
     metadata: msg.metadata || {},
-    // Add any other fields with default values as needed
+    // Preserve backend flag for alignment/styling using safe boolean parsing
+    ...(normalizedIsFromMe !== undefined ? { is_from_me: normalizedIsFromMe } : {}),
+    // Stable flag the template can rely on
+    is_mine: normalizedIsMine,
   };
 };
 
@@ -613,7 +639,10 @@ const fetchLatestMessages = async () => {
   }
   
   try {
-    loading.value = true;
+    // Only show loading spinner on initial load, not during polling
+    if (isInitialLoad.value) {
+      loading.value = true;
+    }
     console.log('Fetching latest messages for chat:', props.chat);
     console.log('Current messages length:', messages.value?.length);
     console.log('Last message ID:', messages.value?.[messages.value?.length - 1]?.id);
@@ -625,11 +654,39 @@ const fetchLatestMessages = async () => {
     });
     
     console.log('API response:', response);
+    console.log('Raw messages from API:', response?.data?.data);
+    
+    // Log each raw message to see is_from_me
+    response?.data?.data?.forEach((msg: any, i: number) => {
+      console.log(`Raw message ${i}:`, {
+        id: msg.id,
+        sender_id: msg.sender_id,
+        is_from_me: msg.is_from_me,
+        content: msg.content?.substring(0, 30),
+        type: msg.type,
+        media: msg.media,
+        mimetype: msg.mimetype
+      });
+    });
     
     // Process and normalize the messages
     const newMessages = Array.isArray(response?.data?.data) 
       ? response.data.data.map(normalizeMessage) 
       : [];
+    
+    console.log('Normalized messages:', newMessages);
+    console.log('Current user ID:', props.currentUser?.id);
+    
+    // Log each normalized message
+    newMessages.forEach((msg: any, i: number) => {
+      console.log(`Normalized message ${i}:`, {
+        id: msg.id,
+        sender_id: msg.sender_id,
+        is_from_me: msg.is_from_me,
+        is_mine: msg.is_mine,
+        content: msg.content?.substring(0, 30)
+      });
+    });
     
     if (newMessages.length > 0) {
       // Store the current scroll position
@@ -653,6 +710,11 @@ const fetchLatestMessages = async () => {
           const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
           return dateA - dateB; // Oldest first (newest at bottom)
         });
+
+        // Maintain a correct 'before' cursor (oldest loaded message)
+        if (messages.value.length > 0) {
+          lastMessageId.value = messages.value[0]?.id || lastMessageId.value;
+        }
         
         // If user was scrolled to bottom or it's a new message, scroll to bottom
         nextTick(() => {
@@ -670,7 +732,7 @@ const fetchLatestMessages = async () => {
             (msg: Message) => 
               // Only mark as unread if it's not from the current user
               // and doesn't have the current user in read_by array
-              msg.sender_id !== currentUserId.toString() &&
+              !isMine(msg) &&
               !(Array.isArray(msg.read_by) && msg.read_by.includes(currentUserId))
           );
           
@@ -694,7 +756,10 @@ const fetchLatestMessages = async () => {
     }
     pollInterval.value = window.setTimeout(fetchLatestMessages, 10000); // Retry after 10 seconds
   } finally {
-    loading.value = false;
+    if (isInitialLoad.value) {
+      loading.value = false;
+      isInitialLoad.value = false;
+    }
   }
 };
 
@@ -721,6 +786,52 @@ const markMessagesAsRead = async (messageIds: string[]) => {
     emit('message-read', messageIds);
   } catch (error) {
     console.error('Error marking messages as read:', error);
+  }
+};
+
+// Image preview handlers
+const handleOpenImagePreview = (payload: { src: string; caption?: string }) => {
+  // Collect all images from the current chat
+  const allImages = messages.value
+    .filter(msg => msg.type === 'image' || msg.mimetype?.startsWith('image/'))
+    .map(msg => {
+      if (msg.media) {
+        return /^https?:\/\//.test(msg.media) ? msg.media : `/storage/${msg.media}`;
+      }
+      return '';
+    })
+    .filter(Boolean);
+  
+  imageList.value = allImages;
+  previewImageSrc.value = payload.src;
+  previewImageCaption.value = payload.caption || '';
+  currentImageIndex.value = allImages.indexOf(payload.src);
+  
+  if (currentImageIndex.value === -1) {
+    currentImageIndex.value = 0;
+  }
+  
+  imagePreviewOpen.value = true;
+};
+
+const closeImagePreview = () => {
+  imagePreviewOpen.value = false;
+};
+
+const updateImageIndex = (index: number) => {
+  if (index >= 0 && index < imageList.value.length) {
+    currentImageIndex.value = index;
+    previewImageSrc.value = imageList.value[index];
+    
+    // Find the message with this image to get its caption
+    const message = messages.value.find(msg => {
+      const mediaSrc = msg.media 
+        ? (/^https?:\/\//.test(msg.media) ? msg.media : `/storage/${msg.media}`)
+        : '';
+      return mediaSrc === previewImageSrc.value;
+    });
+    
+    previewImageCaption.value = message?.content || '';
   }
 };
 
@@ -753,17 +864,15 @@ onMounted(async () => {
     console.log('Initializing WebSocket connection...');
     const webSocketInitialized = await initWebSocket();
     
-    // If WebSocket initialization failed, fall back to polling
-    if (!webSocketInitialized) {
-      console.warn('WebSocket initialization failed, falling back to polling');
-      loading.value = true;
-      console.log('Fetching latest messages via polling...');
-      await fetchLatestMessages();
-      console.log('Starting polling interval...');
-      startPolling();
-    } else {
+    if (webSocketInitialized) {
       console.log('WebSocket initialized successfully');
+    } else {
+      console.warn('WebSocket initialization failed');
     }
+    
+    // Always start polling as a fallback mechanism
+    console.log('Starting polling for new messages...');
+    startPolling();
     
     loading.value = false;
     console.log('Component initialization completed');
@@ -791,6 +900,33 @@ onMounted(async () => {
     console.groupEnd();
   }
 });
+
+// Watch for chat changes and scroll to bottom when messages load
+watch(() => props.chat, async (newChatId, oldChatId) => {
+  if (newChatId && newChatId !== oldChatId) {
+    console.log('Chat changed, waiting for messages to load...');
+    // Reset messages first
+    messages.value = [];
+    // Wait for messages to be fetched
+    await nextTick();
+    // Give more time for the DOM to update and render all messages
+    setTimeout(() => {
+      console.log('Scrolling to bottom after chat change');
+      scrollToBottom({ behavior: 'auto' });
+    }, 800);
+  }
+});
+
+// Watch for messages being loaded initially and scroll to bottom
+watch(messages, (newMessages, oldMessages) => {
+  // Only scroll if we're going from no messages to having messages (initial load)
+  if (oldMessages.length === 0 && newMessages.length > 0) {
+    console.log('Initial messages loaded, scrolling to bottom');
+    nextTick(() => {
+      scrollToBottom({ behavior: 'auto' });
+    });
+  }
+}, { deep: true });
 
 // Clean up on unmount
 onUnmounted(() => {
@@ -859,7 +995,7 @@ const setupWebSocketListeners = () => {
   try {
     // Listen for new messages
     console.log('5. Setting up new message listener');
-    const newMessageUnsubscribe = listenForNewMessages(props.chat, (message: any) => {
+    const newMessageUnsubscribe = listenForNewMessages(props.chat.toString(), (message: any) => {
       console.group('New WebSocket Message');
       console.log('5.1 Raw message received:', message);
       console.log('5.2 Current messages value before processing:', messages.value);
@@ -901,7 +1037,7 @@ const setupWebSocketListeners = () => {
           }
           
           // Mark as read if it's not from the current user
-          if (normalizedMessage.sender_id !== props.currentUser?.id) {
+          if (!isMine(normalizedMessage)) {
             markMessagesAsRead([normalizedMessage.id || normalizedMessage.temp_id].filter(Boolean) as string[]);
           }
         }
@@ -920,7 +1056,7 @@ const setupWebSocketListeners = () => {
     });
     
     // Listen for typing indicators
-    const typingUnsubscribe = listenForTyping(props.chat, (event: any) => {
+    const typingUnsubscribe = listenForTyping(props.chat.toString(), (event: any) => {
       console.group('Typing Event');
       console.log('Raw typing event:', JSON.parse(JSON.stringify(event)));
       
@@ -956,7 +1092,7 @@ const setupWebSocketListeners = () => {
     });
     
     // Listen for read receipts
-    const readReceiptUnsubscribe = listenForReadReceipts(props.chat, (event: any) => {
+    const readReceiptUnsubscribe = listenForReadReceipts(props.chat.toString(), (event: any) => {
       console.group('Read Receipt');
       console.log('Raw read receipt:', JSON.parse(JSON.stringify(event)));
       
@@ -1058,6 +1194,18 @@ const fetchMessages = async (params: { chatId: string; limit: number; before?: s
     throw errorObj;
   }
 };
+
+// Expose methods to parent component
+defineExpose({
+  scrollToBottom,
+  reload: fetchLatestMessages,
+  addTemporaryMessage: (msg: any) => {
+    messages.value.push(msg);
+  },
+  removeTemporaryMessage: () => {
+    messages.value = messages.value.filter(m => !(m as any).isTemporary);
+  }
+});
 
 </script>
 

@@ -286,8 +286,8 @@ const props = defineProps<{
     sending_time?: string
     created_at?: string
     updated_at?: string
-    media?: string
-    mimetype?: string
+    media?: string | null
+    mimetype?: string | null
     filename?: string
     size?: number
     thumbnail?: string
@@ -304,6 +304,10 @@ const props = defineProps<{
     }
     [key: string]: any
   } 
+}>()
+
+const emit = defineEmits<{
+  'open-image-preview': [payload: { src: string; caption?: string }]
 }>()
 
 // Refs
@@ -495,8 +499,10 @@ function handleImageError() {
 }
 
 function openMediaViewer(event: Event) {
-  // TODO: Implement media viewer modal
-  console.log('Open media viewer for:', imageSrc.value)
+  emit('open-image-preview', {
+    src: imageSrc.value,
+    caption: props.message.content
+  })
 }
 
 // Lifecycle
