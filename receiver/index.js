@@ -1,4 +1,4 @@
-const { connectToWhatsApp } = require('./src/whatsappClient');
+const { connectToWhatsApp, setReconnectCallback } = require('./src/whatsappClient');
 const express = require('express');
 const bodyParser = require('body-parser');
 const axios = require('axios');
@@ -20,26 +20,22 @@ function setSocketInstance(sock) {
         sock.ev.on('connection.update', (update) => {
             if (update.connection === 'open') {
                 isConnected = true;
-                console.log('Socket reconnected and updated.');
+                console.log('Socket connected and ready.');
             } else if (update.connection === 'close') {
                 isConnected = false;
                 console.log('Socket connection closed.');
-                // Try to reconnect and update the socket instance
-                setTimeout(async () => {
-                    try {
-                        console.log('Attempting to refresh socket instance...');
-                        const newSock = await connectToWhatsApp();
-                        setSocketInstance(newSock);
-                    } catch (err) {
-                        console.error('Failed to reconnect socket:', err);
-                    }
-                }, 6000);
+                // Reconnection is handled in whatsappClient.js
             }
         });
     }
 }
 
 async function start() {
+    // Set up the reconnect callback before initial connection
+    setReconnectCallback((newSock) => {
+        setSocketInstance(newSock);
+    });
+    
     const sock = await connectToWhatsApp();
     setSocketInstance(sock);
 

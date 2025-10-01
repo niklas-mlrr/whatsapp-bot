@@ -5,12 +5,31 @@ const config = require('./config');
 const { logger } = require('./logger');
 const { handleMessages } = require('./messageHandler');
 
+let isReconnecting = false;
+let currentSocket = null;
+let reconnectCallback = null;
+
+/**
+ * Set a callback to be called when the socket reconnects
+ * @param {Function} callback - Function to call with the new socket instance
+ */
+function setReconnectCallback(callback) {
+    reconnectCallback = callback;
+}
+
 /**
  * Establishes a connection to the WhatsApp Web service.
  * @returns {Promise<object>} The WhatsApp socket instance.
  */
 async function connectToWhatsApp() {
+    // Prevent multiple simultaneous connection attempts
+    if (isReconnecting) {
+        logger.warn('Connection attempt already in progress, skipping...');
+        return currentSocket;
+    }
+
     try {
+        isReconnecting = true;
         logger.info('Initializing WhatsApp client...');
         
         // Use file-based authentication state
@@ -74,25 +93,47 @@ async function connectToWhatsApp() {
             }
 
             if (connection === 'close') {
-                const shouldReconnect = (lastDisconnect.error instanceof Boom)
+                const shouldReconnect = (lastDisconnect?.error instanceof Boom)
                     ? lastDisconnect.error.output.statusCode !== DisconnectReason.loggedOut
-                    : false;
+                    : true;
 
                 logger.warn({
                     error: lastDisconnect?.error,
                     shouldReconnect
                 }, 'Connection closed');
 
-                // Reconnect if not logged out
-                if (shouldReconnect) {
-                    logger.info('Reconnecting to WhatsApp...');
-                    setTimeout(connectToWhatsApp, 5000); // Add delay before reconnecting
-                } else if ((lastDisconnect.error instanceof Boom)?.output?.statusCode === DisconnectReason.loggedOut) {
+                // Clean up the current socket reference
+                currentSocket = null;
+                isReconnecting = false;
+
+                // Check for specific error types
+                const statusCode = (lastDisconnect?.error instanceof Boom) 
+                    ? lastDisconnect.error.output.statusCode 
+                    : null;
+
+                if (statusCode === DisconnectReason.loggedOut) {
                     logger.fatal('Device logged out. Please delete the auth directory and restart.');
                     process.exit(1);
+                } else if (shouldReconnect) {
+                    // Use exponential backoff for reconnection
+                    const retryDelay = statusCode === 440 ? 10000 : 5000; // 10s for conflict, 5s for others
+                    logger.info(`Reconnecting to WhatsApp in ${retryDelay/1000} seconds...`);
+                    setTimeout(async () => {
+                        try {
+                            const newSock = await connectToWhatsApp();
+                            // Notify the callback about the new socket
+                            if (reconnectCallback && newSock) {
+                                reconnectCallback(newSock);
+                            }
+                        } catch (err) {
+                            logger.error({ err }, 'Reconnection failed');
+                            isReconnecting = false;
+                        }
+                    }, retryDelay);
                 }
             } else if (connection === 'open') {
                 logger.info('Successfully connected to WhatsApp');
+                isReconnecting = false;
             }
         });
 
@@ -104,11 +145,14 @@ async function connectToWhatsApp() {
             handleMessages(sock, m);
         });
 
+        // Store the current socket
+        currentSocket = sock;
         return sock;
     } catch (error) {
         logger.error({ error }, 'Failed to initialize WhatsApp client');
+        isReconnecting = false;
         throw error; // Re-throw to allow retry logic to handle it
     }
 }
 
-module.exports = { connectToWhatsApp };
+module.exports = { connectToWhatsApp, setReconnectCallback };
