@@ -3,7 +3,6 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const axios = require('axios');
 const fs = require('fs');
-const path = require('path');
 const { promisify } = require('util');
 const stream = require('stream');
 
@@ -12,21 +11,37 @@ const pipeline = promisify(stream.pipeline);
 let sockInstance = null;
 let isConnected = false;
 
-async function start() {
-    sockInstance = await connectToWhatsApp();
-
-    // Listen for connection updates and always use the latest socket instance
-    if (sockInstance.ev && sockInstance.ev.on) {
-        sockInstance.ev.on('connection.update', (update) => {
+// Function to set the socket instance
+function setSocketInstance(sock) {
+    sockInstance = sock;
+    
+    // Listen for connection updates
+    if (sock.ev && sock.ev.on) {
+        sock.ev.on('connection.update', (update) => {
             if (update.connection === 'open') {
                 isConnected = true;
                 console.log('Socket reconnected and updated.');
             } else if (update.connection === 'close') {
                 isConnected = false;
                 console.log('Socket connection closed.');
+                // Try to reconnect and update the socket instance
+                setTimeout(async () => {
+                    try {
+                        console.log('Attempting to refresh socket instance...');
+                        const newSock = await connectToWhatsApp();
+                        setSocketInstance(newSock);
+                    } catch (err) {
+                        console.error('Failed to reconnect socket:', err);
+                    }
+                }, 6000);
             }
         });
     }
+}
+
+async function start() {
+    const sock = await connectToWhatsApp();
+    setSocketInstance(sock);
 
     const app = express();
     app.use(bodyParser.json({ limit: '10mb' }));

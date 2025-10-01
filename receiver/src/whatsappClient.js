@@ -41,10 +41,27 @@ async function connectToWhatsApp() {
             printQRInTerminal: true,
             markOnlineOnConnect: true,
             generateHighQualityLinkPreview: true,
+            keepAliveIntervalMs: 30000, // Send keepalive every 30 seconds
+            connectTimeoutMs: 60000, // 60 second timeout for initial connection
+            defaultQueryTimeoutMs: undefined, // Disable query timeout to prevent premature disconnects
             getMessage: async (key) => {
                 logger.debug({ key }, 'Getting message from key');
                 return null; // Return null to let Baileys handle message fetching
             },
+        });
+
+        // Handle ping/pong to keep connection alive
+        sock.ws.on('CB:iq,type:get,xmlns:urn:xmpp:ping', async (node) => {
+            logger.debug('Received ping from WhatsApp server, sending pong');
+            // Send pong response
+            await sock.query({
+                tag: 'iq',
+                attrs: {
+                    to: '@s.whatsapp.net',
+                    type: 'result',
+                    id: node.attrs.id
+                }
+            });
         });
 
         // Event listener for connection updates
