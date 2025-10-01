@@ -210,7 +210,7 @@ const sendToPHP = async (payload) => {
             sender: payload.from,  // Map 'from' to 'sender' for the backend
             chat: payload.from,    // Use the same value for chat as sender for direct messages
             type: payload.type,
-            content: payload.body || '', // Use 'content' instead of 'body' to match backend, ensure it's a string
+            content: payload.body !== undefined ? String(payload.body) : '', // Use 'content' instead of 'body' to match backend, ensure it's always a string
             sending_time: payload.messageTimestamp 
                 ? new Date(payload.messageTimestamp * 1000).toISOString() 
                 : new Date().toISOString(), // Convert timestamp to ISO string

@@ -18,47 +18,81 @@ async function handleMessages(sock, m) {
                 const remoteJid = msg.key.remoteJid;
                 const isGroup = remoteJid?.endsWith('@g.us');
                 
+                // Extract actual message content if wrapped in messageContextInfo
+                let actualMessage = msg.message;
+                if (msg.message?.messageContextInfo) {
+                    // Check if there's an actual message within messageContextInfo
+                    const contextKeys = Object.keys(msg.message);
+                    const nonContextKey = contextKeys.find(key => 
+                        key !== 'messageContextInfo' && 
+                        key !== 'deviceListMetadata' && 
+                        key !== 'deviceListMetadataVersion'
+                    );
+                    
+                    if (nonContextKey) {
+                        // Use the non-context key as the actual message
+                        actualMessage = { [nonContextKey]: msg.message[nonContextKey] };
+                        logger.debug({ actualMessageType: nonContextKey }, 'Extracted message from messageContextInfo wrapper');
+                    } else {
+                        logger.info('messageContextInfo without actual message content');
+                        continue; // Skip this message
+                    }
+                }
+                
                 logger.info({
                     from: remoteJid,
                     isGroup,
                     messageId: msg.key.id,
-                    messageType: Object.keys(msg.message || {})[0]
+                    messageType: Object.keys(actualMessage || {})[0]
                 }, 'New message received');
 
                 // Handle different message types
                 try {
                     // 1. Simple text messages
-                    if (msg.message?.conversation) {
-                        await handleTextMessage(remoteJid, msg.message.conversation);
+                    if (actualMessage?.conversation) {
+                        await handleTextMessage(remoteJid, actualMessage.conversation);
                     }
                     // 2. Extended text messages (e.g., with context)
-                    else if (msg.message?.extendedTextMessage) {
-                        const { text, contextInfo } = msg.message.extendedTextMessage;
+                    else if (actualMessage?.extendedTextMessage) {
+                        const { text, contextInfo } = actualMessage.extendedTextMessage;
                         await handleTextMessage(remoteJid, text, contextInfo);
                     }
                     // 3. Image messages
-                    else if (msg.message?.imageMessage) {
+                    else if (actualMessage?.imageMessage) {
+                        // Update msg.message to use the extracted message
+                        if (actualMessage !== msg.message) {
+                            msg.message = actualMessage;
+                        }
                         await handleImageMessage(sock, msg, remoteJid);
                     }
                     // 4. Video messages
-                    else if (msg.message?.videoMessage) {
+                    else if (actualMessage?.videoMessage) {
+                        if (actualMessage !== msg.message) {
+                            msg.message = actualMessage;
+                        }
                         await handleVideoMessage(sock, msg, remoteJid);
                     }
                     // 5. Document messages
-                    else if (msg.message?.documentMessage) {
+                    else if (actualMessage?.documentMessage) {
+                        if (actualMessage !== msg.message) {
+                            msg.message = actualMessage;
+                        }
                         await handleDocumentMessage(sock, msg, remoteJid);
                     }
                     // 6. Audio messages
-                    else if (msg.message?.audioMessage) {
+                    else if (actualMessage?.audioMessage) {
+                        if (actualMessage !== msg.message) {
+                            msg.message = actualMessage;
+                        }
                         await handleAudioMessage(sock, msg, remoteJid);
                     }
                     // 7. Location messages
-                    else if (msg.message?.locationMessage) {
+                    else if (actualMessage?.locationMessage) {
                         await handleLocationMessage(msg, remoteJid);
                     }
                     // 8. Unsupported message types
                     else {
-                        const messageType = Object.keys(msg.message || {})[0];
+                        const messageType = Object.keys(actualMessage || {})[0];
                         logger.info({ messageType }, 'Unhandled message type');
                     }
                 } catch (error) {
@@ -283,6 +317,7 @@ async function handleAudioMessage(sock, msg, remoteJid) {
         await sendToPHP({
             from: remoteJid,
             type: 'audio',
+            body: '', // Audio messages don't have captions, but backend expects a content field
             media: base64Audio,
             mimetype: mimetype,
             messageTimestamp: msg.messageTimestamp,
@@ -313,6 +348,7 @@ async function handleLocationMessage(msg, remoteJid) {
         await sendToPHP({
             from: remoteJid,
             type: 'location',
+            body: location.name || 'Shared Location',
             latitude: location.degreesLatitude,
             longitude: location.degreesLongitude,
             name: location.name || 'Shared Location',
