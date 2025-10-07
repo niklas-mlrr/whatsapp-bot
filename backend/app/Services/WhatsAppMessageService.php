@@ -184,7 +184,7 @@ class WhatsAppMessageService
                 'metadata' => [
                     'original_mimetype' => $data->mimetype,
                     'file_size' => Storage::disk('public')->size($filename),
-                    'thumbnail' => $thumbnailPath,
+                    'thumbnail_path' => $thumbnailPath,
                     'dimensions' => $this->getImageDimensions($imageData),
                 ],
             ]);
@@ -240,7 +240,7 @@ class WhatsAppMessageService
                 'metadata' => [
                     'original_mimetype' => $data->mimetype,
                     'file_size' => Storage::disk('public')->size($filename),
-                    'thumbnail' => $thumbnailPath,
+                    'thumbnail_path' => $thumbnailPath,
                     'duration' => $this->getVideoDuration(storage_path('app/public/' . $filename)),
                 ],
             ]);
@@ -557,14 +557,14 @@ class WhatsAppMessageService
     private function getImageDimensions(string $imageData): ?array
     {
         try {
-            $image = imagecreatefromstring($imageData);
+            $image = \imagecreatefromstring($imageData);
             if ($image === false) {
                 return null;
             }
             
             return [
-                'width' => imagesx($image),
-                'height' => imagesy($image),
+                'width' => \imagesx($image),
+                'height' => \imagesy($image),
             ];
             
         } catch (\Exception $e) {

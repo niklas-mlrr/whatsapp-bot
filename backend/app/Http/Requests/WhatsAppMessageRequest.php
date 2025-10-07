@@ -35,8 +35,8 @@ class WhatsAppMessageRequest extends FormRequest
         // Prepare the rules
         $rules = [
             'type' => ['required', 'string', 'max:50'],
-            'body' => ['sometimes', 'string'],
-            'content' => ['sometimes', 'string'],
+            'body' => ['nullable', 'string'],
+            'content' => ['nullable', 'string'],
             'sender' => ['sometimes', 'string', 'max:255'],
             'from' => ['sometimes', 'string', 'max:255'],
             'chat' => ['sometimes', 'string', 'max:255'],

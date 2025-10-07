@@ -339,48 +339,50 @@ const formattedTime = computed(() => {
   if (!timeStr) return ''
   
   const d = new Date(timeStr)
-  const now = new Date()
-  const isToday = d.toDateString() === now.toDateString()
-  const isThisYear = d.getFullYear() === now.getFullYear()
-  
-  if (isToday) {
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
-  } else if (isThisYear) {
-    return d.toLocaleDateString([], { month: 'short', day: 'numeric' })
-  } else {
-    return d.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' })
-  }
+  // Always show the send time (HH:MM) for every message, including past days
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
 })
 
 const mediaUrl = computed(() => {
-  if (!props.message.media) return ''
-  
-  // If it's already a full URL, return as is
-  if (/^https?:\/\//.test(props.message.media)) {
-    return props.message.media
+  if (!props.message.media) return '';
+
+  if (typeof props.message.media === 'object' && props.message.media.url) {
+    return props.message.media.url;
   }
   
-  // Otherwise, assume it's a path that needs the storage prefix
-  return `/storage/${props.message.media}`
-})
+  if (typeof props.message.media === 'string') {
+    // If it's already a full URL, return as is
+    if (/^https?:\/\//.test(props.message.media)) {
+      return props.message.media;
+    }
+    // Otherwise, assume it's a path that needs the storage prefix
+    return `/storage/${props.message.media}`;
+  }
+
+  return '';
+});
 
 const imageSrc = computed(() => {
-  // For image messages, use the media URL or content as fallback
-  if (props.message.media) {
-    return mediaUrl.value
+  // Use thumbnail if available
+  if (props.message.media?.thumbnail_url) {
+    return props.message.media.thumbnail_url;
   }
-  
-  // For other message types that might have a thumbnail
-  if (props.message.thumbnail) {
-    if (/^https?:\/\//.test(props.message.thumbnail)) {
-      return props.message.thumbnail
+
+  // Fallback to full image URL from media object
+  if (props.message.media?.url) {
+    return props.message.media.url;
+  }
+
+  // Fallback for older message structures or if media object is just a string path
+  if (typeof props.message.media === 'string') {
+    if (/^https?:\/\//.test(props.message.media)) {
+      return props.message.media;
     }
-    return `/storage/${props.message.thumbnail}`
+    return `/storage/${props.message.media}`;
   }
   
-  // If no media or thumbnail, return empty
-  return ''
-})
+  return '';
+});
 
 const documentUrl = computed(() => {
   if (!props.message.media && !props.message.content) return '#'

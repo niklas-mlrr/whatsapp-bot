@@ -8,6 +8,7 @@ const { handleMessages } = require('./messageHandler');
 let isReconnecting = false;
 let currentSocket = null;
 let reconnectCallback = null;
+let reconnectTimeout = null;
 
 /**
  * Set a callback to be called when the socket reconnects
@@ -25,6 +26,12 @@ async function connectToWhatsApp() {
     // Prevent multiple simultaneous connection attempts
     if (isReconnecting) {
         logger.warn('Connection attempt already in progress, skipping...');
+        return currentSocket;
+    }
+
+    // If we already have an active socket, reuse it instead of opening a new one
+    if (currentSocket?.ws?.readyState === 1) { // 1 === WebSocket.OPEN
+        logger.debug('Existing WhatsApp socket is active, reusing current instance');
         return currentSocket;
     }
 
@@ -118,7 +125,13 @@ async function connectToWhatsApp() {
                     // Use exponential backoff for reconnection
                     const retryDelay = statusCode === 440 ? 10000 : 5000; // 10s for conflict, 5s for others
                     logger.info(`Reconnecting to WhatsApp in ${retryDelay/1000} seconds...`);
-                    setTimeout(async () => {
+                    if (reconnectTimeout) {
+                        logger.warn('Reconnect already scheduled, skipping duplicate schedule');
+                        return;
+                    }
+
+                    reconnectTimeout = setTimeout(async () => {
+                        reconnectTimeout = null;
                         try {
                             const newSock = await connectToWhatsApp();
                             // Notify the callback about the new socket
@@ -134,6 +147,10 @@ async function connectToWhatsApp() {
             } else if (connection === 'open') {
                 logger.info('Successfully connected to WhatsApp');
                 isReconnecting = false;
+                if (reconnectTimeout) {
+                    clearTimeout(reconnectTimeout);
+                    reconnectTimeout = null;
+                }
             }
         });
 
