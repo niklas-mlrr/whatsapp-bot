@@ -29,6 +29,17 @@ type ReadReceiptEvent = {
   chat_id: string;
 };
 
+type ReactionEvent = {
+  message_id: string;
+  user: {
+    id: string;
+    name: string;
+  };
+  reaction: string;
+  added: boolean;
+  chat_id: string;
+};
+
 // Extended Window interface for Pusher and Echo
 declare global {
   interface Window {
@@ -47,6 +58,7 @@ if (!window.Pusher) {
 const messageCallbacks: Map<string, Set<(message: MessageEvent) => void>> = new Map();
 const typingCallbacks: Map<string, Set<(event: TypingEvent) => void>> = new Map();
 const readReceiptCallbacks: Map<string, Set<(event: ReadReceiptEvent) => void>> = new Map();
+const reactionCallbacks: Map<string, Set<(event: ReactionEvent) => void>> = new Map();
 
 // Cache for private channels per chat to avoid re-subscribing
 const privateChannels: Map<string, any> = new Map();
@@ -60,6 +72,7 @@ export interface WebSocketService {
   listenForNewMessages(chatId: string, callback: (message: MessageEvent) => void): () => void;
   listenForTyping(chatId: string, callback: (event: TypingEvent) => void): () => void;
   listenForReadReceipts(chatId: string, callback: (event: ReadReceiptEvent) => void): () => void;
+  listenForReactionUpdates(chatId: string, callback: (event: ReactionEvent) => void): () => void;
   notifyTyping(chatId: string, isTyping: boolean): Promise<void>;
   markAsRead(chatId: string, messageIds: string[]): Promise<void>;
   getSocketId(): string | null;
@@ -295,6 +308,45 @@ export function useWebSocket() {
     }
   };
 
+  // Listen for reaction updates in a chat
+  const listenForReactionUpdates = (
+    chatId: string,
+    callback: (event: ReactionEvent) => void
+  ): (() => void) => {
+    if (!reactionCallbacks.has(chatId)) {
+      reactionCallbacks.set(chatId, new Set());
+    }
+
+    const callbacks = reactionCallbacks.get(chatId)!;
+    callbacks.add(callback);
+
+    // Set up the channel if not already done
+    if (!privateChannels.has(chatId)) {
+      const channel = echo?.private(`chat.${chatId}`);
+      if (channel) {
+        privateChannels.set(chatId, channel);
+
+        channel.listen('.message.reaction', (data: any) => {
+          const callbacks = reactionCallbacks.get(chatId);
+          if (callbacks) {
+            callbacks.forEach(cb => cb(data));
+          }
+        });
+      }
+    }
+
+    // Return cleanup function
+    return () => {
+      const callbacks = reactionCallbacks.get(chatId);
+      if (callbacks) {
+        callbacks.delete(callback);
+        if (callbacks.size === 0) {
+          reactionCallbacks.delete(chatId);
+        }
+      }
+    };
+  };
+
   // Get current socket ID
   const getSocketId = (): string | null => {
     return socketId.value;
@@ -313,6 +365,7 @@ export function useWebSocket() {
     listenForNewMessages,
     listenForTyping,
     listenForReadReceipts,
+    listenForReactionUpdates,
     notifyTyping,
     markAsRead,
     getSocketId

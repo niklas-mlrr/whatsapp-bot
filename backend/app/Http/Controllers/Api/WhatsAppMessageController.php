@@ -184,7 +184,16 @@ class WhatsAppMessageController extends Controller
             'sending_time' => 'nullable|date',
             'filename' => 'nullable|string',
             'size' => 'nullable|integer',
+            // Reaction-specific fields
+            'reactedMessageId' => 'nullable|string',
+            'emoji' => 'nullable|string',
+            'senderJid' => 'nullable|string',
         ]);
+        
+        // Handle reaction messages separately
+        if ($data['type'] === 'reaction') {
+            return $this->handleReaction($data);
+        }
         if (empty($data['sending_time'])) {
             $data['sending_time'] = now();
         }
@@ -569,6 +578,105 @@ class WhatsAppMessageController extends Controller
             return response()->json([
                 'status' => 'error',
                 'message' => 'Failed to upload image',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+    
+    /**
+     * Handle incoming reaction messages
+     * 
+     * @param array $data
+     * @return JsonResponse
+     */
+    private function handleReaction(array $data): JsonResponse
+    {
+        try {
+            \Log::info('Processing reaction', [
+                'reactedMessageId' => $data['reactedMessageId'] ?? null,
+                'emoji' => $data['emoji'] ?? null,
+                'sender' => $data['sender'] ?? null,
+            ]);
+            
+            // Find the message by WhatsApp message ID stored in metadata
+            $message = WhatsAppMessage::where('metadata->message_id', $data['reactedMessageId'])
+                ->orWhere('id', $data['reactedMessageId'])
+                ->first();
+            
+            if (!$message) {
+                \Log::warning('Message not found for reaction', [
+                    'reactedMessageId' => $data['reactedMessageId']
+                ]);
+                
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Message not found'
+                ], 404);
+            }
+            
+            // Get or create user
+            $senderPhone = $data['senderJid'] ?? $data['sender'];
+            $user = User::firstOrCreate(
+                ['phone' => $senderPhone],
+                [
+                    'name' => 'WhatsApp User',
+                    'password' => bcrypt(Str::random(32)),
+                    'status' => 'offline',
+                ]
+            );
+            
+            // Get current reactions
+            $reactions = $message->reactions ?? [];
+            
+            // If emoji is empty, remove the reaction
+            if (empty($data['emoji'])) {
+                unset($reactions[$user->id]);
+                \Log::info('Removed reaction', [
+                    'message_id' => $message->id,
+                    'user_id' => $user->id
+                ]);
+            } else {
+                // Add or update reaction
+                $reactions[$user->id] = $data['emoji'];
+                \Log::info('Added/updated reaction', [
+                    'message_id' => $message->id,
+                    'user_id' => $user->id,
+                    'emoji' => $data['emoji']
+                ]);
+            }
+            
+            // Update message with new reactions
+            $message->update([
+                'reactions' => empty($reactions) ? null : $reactions
+            ]);
+            
+            // Broadcast the reaction update via WebSocket
+            broadcast(new \App\Events\MessageReaction(
+                $message,
+                $user,
+                $data['emoji'] ?? '',
+                !empty($data['emoji'])
+            ))->toOthers();
+            
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Reaction processed',
+                'data' => [
+                    'message_id' => $message->id,
+                    'reactions' => $reactions,
+                ]
+            ]);
+            
+        } catch (\Exception $e) {
+            \Log::error('Error processing reaction', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'data' => $data
+            ]);
+            
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to process reaction',
                 'error' => $e->getMessage()
             ], 500);
         }

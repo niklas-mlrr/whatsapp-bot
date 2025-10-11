@@ -90,7 +90,11 @@ async function handleMessages(sock, m) {
                     else if (actualMessage?.locationMessage) {
                         await handleLocationMessage(msg, remoteJid);
                     }
-                    // 8. Unsupported message types
+                    // 8. Reaction messages
+                    else if (actualMessage?.reactionMessage) {
+                        await handleReactionMessage(msg, remoteJid);
+                    }
+                    // 9. Unsupported message types
                     else {
                         const messageType = Object.keys(actualMessage || {})[0];
                         logger.info({ messageType }, 'Unhandled message type');
@@ -368,6 +372,46 @@ async function handleLocationMessage(msg, remoteJid) {
     }
 }
 
+/**
+ * Handles reaction messages.
+ * @param {object} msg - The message object.
+ * @param {string} remoteJid - The sender's JID.
+ */
+async function handleReactionMessage(msg, remoteJid) {
+    try {
+        const reaction = msg.message.reactionMessage;
+        logger.debug({ remoteJid, reaction }, 'Processing reaction message');
+
+        // Extract the message ID that was reacted to
+        const reactedMessageId = reaction.key?.id;
+        const emoji = reaction.text || ''; // Empty string means reaction removed
+        const senderJid = reaction.key?.participant || remoteJid;
+
+        if (!reactedMessageId) {
+            logger.warn({ remoteJid }, 'Reaction message missing target message ID');
+            return;
+        }
+
+        await sendToPHP({
+            from: remoteJid,
+            type: 'reaction',
+            reactedMessageId: reactedMessageId,
+            emoji: emoji,
+            senderJid: senderJid,
+            messageTimestamp: msg.messageTimestamp,
+            messageId: msg.key.id
+        });
+    } catch (error) {
+        logger.error({ 
+            error: error.message, 
+            stack: error.stack,
+            remoteJid,
+            messageId: msg.key.id 
+        }, 'Error processing reaction message');
+        throw error;
+    }
+}
+
 module.exports = { 
     handleMessages, 
     handleTextMessage, 
@@ -375,5 +419,6 @@ module.exports = {
     handleVideoMessage, 
     handleDocumentMessage, 
     handleAudioMessage, 
-    handleLocationMessage 
+    handleLocationMessage,
+    handleReactionMessage
 };

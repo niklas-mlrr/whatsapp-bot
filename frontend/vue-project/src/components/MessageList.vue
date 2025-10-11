@@ -54,6 +54,8 @@
               sender: typeof message.sender === 'string' ? message.sender : (getSenderName(message) || 'Unknown')
             }"
             @open-image-preview="handleOpenImagePreview"
+            @add-reaction="handleAddReaction"
+            @remove-reaction="handleRemoveReaction"
           />
         </template>
       </template>
@@ -227,6 +229,7 @@ const {
   listenForNewMessages, 
   listenForTyping, 
   listenForReadReceipts,
+  listenForReactionUpdates,
   notifyTyping,
   markAsRead
 } = useWebSocket();
@@ -813,6 +816,46 @@ const markMessagesAsRead = async (messageIds: string[]) => {
   }
 };
 
+// Reaction handlers
+const handleAddReaction = async (payload: { messageId: string | number; emoji: string }) => {
+  try {
+    console.log('Adding reaction:', payload);
+    
+    const response = await apiClient.post(`/messages/${payload.messageId}/reactions`, {
+      user_id: props.currentUser.id,
+      reaction: payload.emoji
+    });
+    
+    if (response.data.status === 'success') {
+      // Update local message with new reactions
+      const message = messages.value.find(m => m.id === payload.messageId);
+      if (message) {
+        message.reactions = response.data.data.reactions;
+      }
+    }
+  } catch (error) {
+    console.error('Error adding reaction:', error);
+  }
+};
+
+const handleRemoveReaction = async (payload: { messageId: string | number }) => {
+  try {
+    console.log('Removing reaction:', payload);
+    
+    const response = await apiClient.delete(`/messages/${payload.messageId}/reactions/${props.currentUser.id}`);
+    
+    if (response.data.status === 'success') {
+      // Update local message with new reactions
+      const message = messages.value.find(m => m.id === payload.messageId);
+      if (message) {
+        message.reactions = response.data.data.reactions;
+      }
+    }
+  } catch (error) {
+    console.error('Error removing reaction:', error);
+  }
+};
+
 // Image preview handlers
 const handleOpenImagePreview = (payload: { src: string; caption?: string }) => {
   // Collect all images from the current chat
@@ -1180,11 +1223,48 @@ const setupWebSocketListeners = () => {
       console.groupEnd();
     });
     
+    // Listen for reaction updates
+    const reactionUnsubscribe = listenForReactionUpdates(props.chat.toString(), (event: any) => {
+      console.group('Reaction Event');
+      console.log('Raw reaction event:', JSON.parse(JSON.stringify(event)));
+      
+      if (!event || !event.message_id) {
+        console.error('Invalid reaction event received:', event);
+        console.groupEnd();
+        return;
+      }
+      
+      console.log(`Reaction ${event.added ? 'added' : 'removed'} on message ${event.message_id}`);
+      
+      // Update the message with new reactions
+      const message = messages.value.find(m => m.id === event.message_id);
+      if (message) {
+        if (event.added) {
+          // Add or update reaction
+          if (!message.reactions || typeof message.reactions === 'string') {
+            message.reactions = {};
+          }
+          if (typeof message.reactions === 'object') {
+            message.reactions[event.user.id] = event.reaction;
+          }
+        } else {
+          // Remove reaction
+          if (message.reactions && typeof message.reactions === 'object') {
+            delete message.reactions[event.user.id];
+          }
+        }
+        console.log('Updated message reactions:', message.reactions);
+      }
+      
+      console.groupEnd();
+    });
+    
     // Store unsubscribe functions
     const unsubscribeFunctions = {
       newMessage: newMessageUnsubscribe,
       typing: typingUnsubscribe,
-      readReceipt: readReceiptUnsubscribe
+      readReceipt: readReceiptUnsubscribe,
+      reaction: reactionUnsubscribe
     };
     
     console.log('6. WebSocket listeners setup completed successfully');

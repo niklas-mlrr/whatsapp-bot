@@ -28,11 +28,13 @@ class WhatsAppMessage extends Model
         'media_size',
         'read_at',
         'metadata',
+        'reactions',
     ];
 
     protected $casts = [
         'read_at' => 'datetime',
         'metadata' => 'array',
+        'reactions' => 'array',
         'is_read' => 'boolean',
     ];
     

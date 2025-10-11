@@ -245,17 +245,60 @@
         </div>
       </div>
       
-      <!-- Message reactions (future feature) -->
-      <!-- <div v-if="message.reactions?.length" class="flex flex-wrap gap-1 mt-1">
-        <span 
-          v-for="(reaction, index) in message.reactions" 
-          :key="index"
-          class="text-xs bg-gray-100 rounded-full px-2 py-0.5"
+      <!-- Message reactions -->
+      <div v-if="hasReactions" class="flex flex-wrap gap-1 mt-1 px-1">
+        <button 
+          v-for="(emoji, userId) in message.reactions" 
+          :key="userId"
+          @click="handleReactionClick(emoji)"
+          class="text-sm bg-gray-100 hover:bg-gray-200 rounded-full px-2 py-0.5 transition-colors cursor-pointer border border-gray-200 flex items-center gap-1"
+          :class="{ 'bg-blue-100 border-blue-300': isMyReaction(userId) }"
+          :title="getReactionTooltip(userId)"
         >
-          {{ reaction.emoji }} {{ reaction.count > 1 ? reaction.count : '' }}
-        </span>
-      </div> -->
+          <span>{{ emoji }}</span>
+          <span v-if="getReactionCount(emoji) > 1" class="text-xs text-gray-600">
+            {{ getReactionCount(emoji) }}
+          </span>
+        </button>
+        <button 
+          @click="toggleReactionPicker"
+          class="text-sm bg-gray-50 hover:bg-gray-100 rounded-full px-2 py-0.5 transition-colors cursor-pointer border border-gray-200"
+          title="Add reaction"
+        >
+          <span class="text-gray-400">+</span>
+        </button>
+      </div>
+      
+      <!-- Reaction picker -->
+      <div 
+        v-if="showReactionPicker" 
+        class="absolute z-10 bg-white rounded-lg shadow-lg border border-gray-200 p-2 flex gap-1"
+        :class="isMe ? 'right-0' : 'left-0'"
+        style="bottom: 100%; margin-bottom: 4px;"
+      >
+        <button
+          v-for="emoji in quickReactions"
+          :key="emoji"
+          @click="addReaction(emoji)"
+          class="text-2xl hover:bg-gray-100 rounded p-1 transition-colors"
+          :title="emoji"
+        >
+          {{ emoji }}
+        </button>
+      </div>
     </div>
+    
+    <!-- Add reaction button (shown on hover) -->
+    <button
+      v-if="!hasReactions"
+      @click="toggleReactionPicker"
+      class="opacity-0 group-hover:opacity-100 transition-opacity ml-1 text-gray-400 hover:text-gray-600"
+      title="Add reaction"
+    >
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+      </svg>
+    </button>
     
     <!-- Sender avatar (right side for sent messages) -->
     <div 
@@ -333,6 +376,8 @@ if (props.message.type === 'document') {
 
 const emit = defineEmits<{
   'open-image-preview': [payload: { src: string; caption?: string }]
+  'add-reaction': [payload: { messageId: string | number; emoji: string }]
+  'remove-reaction': [payload: { messageId: string | number }]
 }>()
 
 // Refs
@@ -343,6 +388,10 @@ const currentAudioTime = ref(0)
 const audioDuration = ref(0)
 const isVideoPlaying = ref(false)
 const isImageLoading = ref(true)
+const showReactionPicker = ref(false)
+
+// Quick reactions (most commonly used emojis)
+const quickReactions = ['👍', '❤️', '😂', '😮', '😢', '🙏']
 
 // Computed properties
 const isMe = computed(() => props.message.sender === 'me' || props.message.isMe)
@@ -483,7 +532,53 @@ const bubbleClass = computed(() => {
   return baseClasses.join(' ')
 })
 
+// Reaction computed properties
+const hasReactions = computed(() => {
+  return props.message.reactions && Object.keys(props.message.reactions).length > 0
+})
+
 // Methods
+// Reaction methods
+function toggleReactionPicker() {
+  showReactionPicker.value = !showReactionPicker.value
+}
+
+function addReaction(emoji: string) {
+  emit('add-reaction', { messageId: props.message.id, emoji })
+  showReactionPicker.value = false
+}
+
+function handleReactionClick(emoji: string) {
+  // If it's my reaction, remove it; otherwise, add it
+  const currentUserId = getCurrentUserId()
+  if (currentUserId && props.message.reactions && props.message.reactions[currentUserId] === emoji) {
+    emit('remove-reaction', { messageId: props.message.id })
+  } else {
+    emit('add-reaction', { messageId: props.message.id, emoji })
+  }
+}
+
+function isMyReaction(userId: string | number): boolean {
+  const currentUserId = getCurrentUserId()
+  return currentUserId !== null && String(userId) === String(currentUserId)
+}
+
+function getReactionTooltip(userId: string | number): string {
+  // In a real app, you'd look up the user's name
+  return isMyReaction(userId) ? 'You reacted' : `User ${userId} reacted`
+}
+
+function getReactionCount(emoji: string): number {
+  if (!props.message.reactions) return 0
+  return Object.values(props.message.reactions).filter(e => e === emoji).length
+}
+
+function getCurrentUserId(): string | number | null {
+  // This should be replaced with actual current user ID from your auth system
+  // For now, we'll try to get it from the message context
+  return props.message.sender_id || null
+}
+
 function formatFileSize(bytes: number = 0) {
   if (bytes === 0) return '0 Bytes'
   
