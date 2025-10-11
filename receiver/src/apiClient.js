@@ -216,6 +216,12 @@ const sendToPHP = async (payload) => {
                 : new Date().toISOString(), // Convert timestamp to ISO string
             media: payload.media || null,
             mimetype: payload.mimetype || null,
+            messageId: payload.messageId || null,
+            fileName: payload.fileName || null,
+            mediaSize: payload.mediaSize || null,
+            reactedMessageId: payload.reactedMessageId || null,
+            emoji: payload.emoji || null,
+            senderJid: payload.senderJid || null,
         };
         
         logger.debug({ messageData: { ...messageData, media: messageData.media ? '[base64 data]' : null } }, 'Sending message data to backend');
