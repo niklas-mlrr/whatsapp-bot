@@ -133,6 +133,7 @@ class WhatsAppMessageService
             'metadata' => [
                 'original_content' => $data->content,
                 'content_length' => mb_strlen($data->content),
+                'message_id' => $data->messageId,
             ],
         ]);
     }
@@ -189,6 +190,7 @@ class WhatsAppMessageService
                     'thumbnail_path' => $thumbnailPath,
                     'media_path' => $filename,
                     'dimensions' => $this->getImageDimensions($imageData),
+                    'message_id' => $data->messageId,
                 ],
             ]);
 
@@ -250,6 +252,7 @@ class WhatsAppMessageService
                     'media_path' => $filename,
                     'duration' => $this->getVideoDuration(storage_path('app/public/' . $filename)),
                     'filename' => $data->fileName,
+                    'message_id' => $data->messageId,
                 ],
             ]);
 
@@ -307,6 +310,7 @@ class WhatsAppMessageService
                     'media_path' => $filename,
                     'duration' => $this->getAudioDuration(storage_path('app/public/' . $filename)),
                     'filename' => $data->fileName,
+                    'message_id' => $data->messageId,
                 ],
             ]);
 
@@ -364,6 +368,8 @@ class WhatsAppMessageService
                     'media_path' => $filename,
                     'extension' => $extension,
                     'filename' => $data->fileName ?? 'document.' . $extension,
+                    'original_name' => $data->fileName ?? 'document.' . $extension,
+                    'message_id' => $data->messageId,
                 ],
             ]);
 
@@ -405,6 +411,7 @@ class WhatsAppMessageService
                     'name' => $locationData['name'] ?? null,
                     'address' => $locationData['address'] ?? null,
                     'url' => $locationData['url'] ?? null,
+                    'message_id' => $data->messageId,
                 ],
             ]);
 
@@ -447,6 +454,7 @@ class WhatsAppMessageService
                     'email' => $contactData['email'] ?? null,
                     'organization' => $contactData['organization'] ?? null,
                     'title' => $contactData['title'] ?? null,
+                    'message_id' => $data->messageId,
                 ],
             ]);
 
@@ -482,6 +490,7 @@ class WhatsAppMessageService
             'metadata' => [
                 'original_type' => $data->type,
                 'content_type' => gettype($data->content),
+                'message_id' => $data->messageId,
             ],
         ]);
     }

@@ -50,12 +50,12 @@ async function handleMessages(sock, m) {
                 try {
                     // 1. Simple text messages
                     if (actualMessage?.conversation) {
-                        await handleTextMessage(remoteJid, actualMessage.conversation);
+                        await handleTextMessage(remoteJid, actualMessage.conversation, {}, msg.key.id);
                     }
                     // 2. Extended text messages (e.g., with context)
                     else if (actualMessage?.extendedTextMessage) {
                         const { text, contextInfo } = actualMessage.extendedTextMessage;
-                        await handleTextMessage(remoteJid, text, contextInfo);
+                        await handleTextMessage(remoteJid, text, contextInfo, msg.key.id);
                     }
                     // 3. Image messages
                     else if (actualMessage?.imageMessage) {
@@ -120,13 +120,14 @@ async function handleMessages(sock, m) {
  * @param {string} text - The message text.
  * @param {object} [contextInfo] - Additional context information.
  */
-async function handleTextMessage(remoteJid, text, contextInfo = {}) {
-    logger.debug({ remoteJid, textLength: text.length, hasContext: !!contextInfo }, 'Processing text message');
+async function handleTextMessage(remoteJid, text, contextInfo = {}, messageId = null) {
+    logger.debug({ remoteJid, textLength: text.length, hasContext: !!contextInfo, messageId }, 'Processing text message');
     
     await sendToPHP({
         from: remoteJid,
         type: 'text',
         body: text,
+        messageId: messageId,
         contextInfo: contextInfo || undefined
     });
 }
