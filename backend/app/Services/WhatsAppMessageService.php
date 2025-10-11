@@ -231,7 +231,9 @@ class WhatsAppMessageService
 
             return WhatsAppMessage::create([
                 'sender' => $data->sender,
+                'sender_id' => $data->sender_id,
                 'chat' => $data->chat,
+                'chat_id' => $data->chat_id,
                 'type' => 'video',
                 'direction' => 'incoming',
                 'status' => 'delivered',
@@ -242,10 +244,11 @@ class WhatsAppMessageService
                 'sending_time' => $data->sending_time ?? now(),
                 'metadata' => [
                     'original_mimetype' => $data->mimetype,
-                    'file_size' => Storage::disk('public')->size($filename),
+                    'file_size' => $data->mediaSize ?? Storage::disk('public')->size($filename),
                     'thumbnail_path' => $thumbnailPath,
                     'media_path' => $filename,
                     'duration' => $this->getVideoDuration(storage_path('app/public/' . $filename)),
+                    'filename' => $data->fileName,
                 ],
             ]);
 
@@ -286,7 +289,9 @@ class WhatsAppMessageService
 
             return WhatsAppMessage::create([
                 'sender' => $data->sender,
+                'sender_id' => $data->sender_id,
                 'chat' => $data->chat,
+                'chat_id' => $data->chat_id,
                 'type' => 'audio',
                 'direction' => 'incoming',
                 'status' => 'delivered',
@@ -297,9 +302,10 @@ class WhatsAppMessageService
                 'sending_time' => $data->sending_time ?? now(),
                 'metadata' => [
                     'original_mimetype' => $data->mimetype,
-                    'file_size' => Storage::disk('public')->size($filename),
+                    'file_size' => $data->mediaSize ?? Storage::disk('public')->size($filename),
                     'media_path' => $filename,
                     'duration' => $this->getAudioDuration(storage_path('app/public/' . $filename)),
+                    'filename' => $data->fileName,
                 ],
             ]);
 
@@ -346,16 +352,17 @@ class WhatsAppMessageService
                 'type' => 'document',
                 'direction' => 'incoming',
                 'status' => 'delivered',
-                'content' => $data->content ?? '', // Original filename or description
+                'content' => $data->content ?? '', // Caption or description
                 'media' => $filename,
                 'media_url' => $filename,
                 'mimetype' => $data->mimetype,
                 'sending_time' => $data->sending_time ?? now(),
                 'metadata' => [
                     'original_mimetype' => $data->mimetype,
-                    'file_size' => Storage::disk('public')->size($filename),
+                    'file_size' => $data->mediaSize ?? Storage::disk('public')->size($filename),
                     'media_path' => $filename,
                     'extension' => $extension,
+                    'filename' => $data->fileName ?? 'document.' . $extension,
                 ],
             ]);
 

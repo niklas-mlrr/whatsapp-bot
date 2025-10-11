@@ -531,7 +531,8 @@ class ChatController extends Controller
                             'inbound' as direction,
                             m.status,
                             m.media_url,
-                            m.media_type
+                            m.media_type,
+                            m.metadata
                         FROM whatsapp_messages m
                         LEFT JOIN users u ON m.sender_id = u.id
                         WHERE m.chat_id = ?
@@ -560,7 +561,8 @@ class ChatController extends Controller
                         'inbound' as direction,
                         m.status,
                         m.media_url,
-                        m.media_type
+                        m.media_type,
+                        m.metadata
                     FROM whatsapp_messages m
                     LEFT JOIN users u ON m.sender_id = u.id
                     WHERE m.chat_id = ?
@@ -575,6 +577,19 @@ class ChatController extends Controller
 
             // Format messages (already in correct order)
             $formattedMessages = array_map(function ($m) use ($currentUserId) {
+                // Decode metadata if it's a JSON string
+                $metadata = is_string($m->metadata) ? json_decode($m->metadata, true) : [];
+                if (!is_array($metadata)) {
+                    $metadata = [];
+                }
+                
+                // Extract filename and size from metadata
+                $filename = $metadata['filename'] ?? $metadata['original_name'] ?? null;
+                $fileSize = $metadata['file_size'] ?? $metadata['size'] ?? null;
+                
+                // Extract mimetype - fallback to metadata if media_type is null
+                $mimetype = $m->media_type ?? $metadata['original_mimetype'] ?? $metadata['mimetype'] ?? null;
+                
                 return [
                     'id' => (string) $m->id,
                     'content' => $m->content,
@@ -589,7 +604,9 @@ class ChatController extends Controller
                     'status' => $m->status ?? 'sent',
                     'is_from_me' => ((string) $m->sender_id === (string) $currentUserId),
                     'media' => $m->media_url ?? null,
-                    'mimetype' => $m->media_type ?? null,
+                    'mimetype' => $mimetype,
+                    'filename' => $filename,
+                    'size' => $fileSize,
                 ];
             }, $rows);
 

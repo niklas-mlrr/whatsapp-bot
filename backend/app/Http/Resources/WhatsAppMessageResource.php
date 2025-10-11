@@ -31,10 +31,13 @@ class WhatsAppMessageResource extends JsonResource
             }
         }
         
+        // Ensure metadata is an array (it should be cast automatically, but be explicit)
+        $metadata = is_array($this->metadata) ? $this->metadata : [];
+        
         // Generate thumbnail URL if available
         $thumbnailUrl = null;
-        if (!empty($this->metadata['thumbnail_path'])) {
-            $thumbnailPath = $this->metadata['thumbnail_path'];
+        if (!empty($metadata['thumbnail_path'])) {
+            $thumbnailPath = $metadata['thumbnail_path'];
             if (filter_var($thumbnailPath, FILTER_VALIDATE_URL)) {
                 $thumbnailUrl = $thumbnailPath;
             } else if (Storage::disk('public')->exists($thumbnailPath)) {
@@ -46,12 +49,32 @@ class WhatsAppMessageResource extends JsonResource
         
         // Extract media metadata
         $mediaMetadata = [];
-        if (!empty($this->metadata['media_metadata'])) {
-            $mediaMetadata = $this->metadata['media_metadata'];
+        if (!empty($metadata['media_metadata'])) {
+            $mediaMetadata = $metadata['media_metadata'];
         }
         
         // Determine if the message is from the current user
         $isFromCurrentUser = $request->user() && $this->sender_id === $request->user()->id;
+        
+        // Extract filename from metadata
+        $filename = $metadata['filename'] ?? $metadata['original_name'] ?? null;
+        $fileSize = $metadata['file_size'] ?? $metadata['size'] ?? $this->media_size ?? null;
+        
+        // Extract mimetype - fallback to metadata if media_type column is null
+        $mimetype = $this->media_type ?? $metadata['original_mimetype'] ?? $metadata['mimetype'] ?? null;
+        
+        // Log for debugging
+        if ($this->type === 'document' || $this->type === 'video' || $this->type === 'audio') {
+            \Log::debug('WhatsAppMessageResource: Processing file message', [
+                'message_id' => $this->id,
+                'type' => $this->type,
+                'metadata' => $this->metadata,
+                'extracted_filename' => $filename,
+                'extracted_size' => $fileSize,
+                'media_type_column' => $this->media_type,
+                'extracted_mimetype' => $mimetype
+            ]);
+        }
         
         return [
             // Core message data
@@ -62,7 +85,7 @@ class WhatsAppMessageResource extends JsonResource
             'chat' => $this->chat,
             'type' => $this->type,
             'content' => $this->content,
-            'mimetype' => $this->mimetype,
+            'mimetype' => $mimetype,
             'sending_time' => $this->sending_time?->toIso8601String(),
             'created_at' => $this->created_at?->toIso8601String(),
             'updated_at' => $this->updated_at?->toIso8601String(),
@@ -73,6 +96,10 @@ class WhatsAppMessageResource extends JsonResource
             'read_at' => $this->read_at?->toIso8601String(),
             'is_read' => (bool) $this->read_at,
             'is_from_me' => $isFromCurrentUser,
+            
+            // File information (for documents, videos, audio)
+            'filename' => $filename,
+            'size' => $fileSize,
             
             // Media information
             'media' => $this->when($mediaPath || $mediaUrl || $thumbnailUrl, [

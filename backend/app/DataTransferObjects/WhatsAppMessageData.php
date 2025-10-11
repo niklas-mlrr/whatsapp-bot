@@ -16,7 +16,9 @@ class WhatsAppMessageData
         public readonly ?string $mimetype = null,
         public readonly ?array $contextInfo = null,
         public readonly ?string $messageId = null,
-        public readonly ?bool $isGroup = false
+        public readonly ?bool $isGroup = false,
+        public readonly ?string $fileName = null,
+        public readonly ?int $mediaSize = null
     ) {
     }
 
@@ -55,7 +57,9 @@ class WhatsAppMessageData
             mimetype: $validated['mimetype'] ?? null,
             contextInfo: $validated['contextInfo'] ?? null,
             messageId: $validated['messageId'] ?? $validated['id'] ?? null,
-            isGroup: (bool)($validated['isGroup'] ?? false)
+            isGroup: (bool)($validated['isGroup'] ?? false),
+            fileName: $validated['fileName'] ?? null,
+            mediaSize: $validated['mediaSize'] ?? null
         );
     }
 }

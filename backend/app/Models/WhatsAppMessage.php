@@ -40,6 +40,10 @@ class WhatsAppMessage extends Model
         'is_read', 
         'sender_name',
         'sender_avatar',
+        'sending_time',
+        'sender',
+        'chat',
+        'direction',
     ];
 
     protected static function boot()
@@ -158,7 +162,7 @@ class WhatsAppMessage extends Model
     /**
      * Get the chat this message belongs to.
      */
-    public function chat(): BelongsTo
+    public function chatRelation(): BelongsTo
     {
         return $this->belongsTo(Chat::class, 'chat_id');
     }
@@ -221,6 +225,45 @@ class WhatsAppMessage extends Model
     public function getMediaMetadataAttribute(): array
     {
         return $this->metadata['media_metadata'] ?? [];
+    }
+    
+    /**
+     * Get the sending time (from metadata or created_at).
+     */
+    public function getSendingTimeAttribute()
+    {
+        if (isset($this->metadata['sending_time'])) {
+            return \Carbon\Carbon::parse($this->metadata['sending_time']);
+        }
+        return $this->created_at;
+    }
+    
+    /**
+     * Get the sender identifier (phone number from metadata).
+     */
+    public function getSenderAttribute(): ?string
+    {
+        return $this->metadata['sender'] ?? $this->senderUser?->phone ?? null;
+    }
+    
+    /**
+     * Get the chat identifier (WhatsApp JID from metadata).
+     */
+    public function getChatAttribute(): ?string
+    {
+        return $this->metadata['chat'] ?? $this->chatRelation?->metadata['whatsapp_id'] ?? null;
+    }
+    
+    /**
+     * Get the message direction (incoming/outgoing).
+     */
+    public function getDirectionAttribute(): string
+    {
+        // If the sender is the authenticated user, it's outgoing
+        if ($this->senderUser && auth()->check() && $this->sender_id === auth()->id()) {
+            return 'outgoing';
+        }
+        return 'incoming';
     }
     
     // Helper Methods

@@ -136,7 +136,10 @@ interface Message {
   type?: 'text' | 'image' | 'video' | 'audio' | 'document' | 'location' | 'contact' | 'sticker' | 'unsupported' | string;
   direction?: 'incoming' | 'outgoing' | string;
   media?: string | MediaObject | null;
+  media_url?: string;
   mimetype?: string | null;
+  filename?: string;
+  size?: number;
   reactions?: Record<string, any> | string | null;
   metadata?: Record<string, any> | string | null;
   sending_time?: string;
@@ -614,6 +617,17 @@ const normalizeMessage = (msg: any): Message => {
     || (msg?.sender_id?.toString?.() === props.currentUser.id?.toString());
   const normalizedIsMine = (typeof normalizedIsFromMe === 'boolean') ? normalizedIsFromMe : !!fallbackMine;
 
+  // Debug logging for document messages
+  if (msg.type === 'document') {
+    console.log('normalizeMessage - Document message:', {
+      id: msg.id,
+      filename: msg.filename,
+      size: msg.size,
+      mimetype: msg.mimetype,
+      raw_msg: msg
+    });
+  }
+
   return {
     id: msg.id?.toString() || '',
     content: msg.content || '',
@@ -628,6 +642,8 @@ const normalizeMessage = (msg: any): Message => {
     read_by: Array.isArray(msg.read_by) ? msg.read_by : [],
     media: msg.media || null,
     mimetype: msg.mimetype || null,
+    filename: msg.filename || undefined,
+    size: msg.size || undefined,
     reactions: msg.reactions || {},
     metadata: msg.metadata || {},
     // Preserve backend flag for alignment/styling using safe boolean parsing

@@ -305,6 +305,12 @@ class WhatsAppMessageController extends Controller
         if (!empty($data['size'])) {
             $metadata['file_size'] = $data['size'];
         }
+        
+        \Log::info('Message metadata prepared', [
+            'metadata' => $metadata,
+            'has_filename' => !empty($data['filename']),
+            'filename_value' => $data['filename'] ?? 'not set'
+        ]);
 
         // Send to receiver
         try {
@@ -423,6 +429,13 @@ class WhatsAppMessageController extends Controller
                 'media_type' => $data['mimetype'] ?? null,
                 'metadata' => $metadata,
             ]);
+            
+            \Log::info('Message created successfully', [
+                'message_id' => $message->id,
+                'metadata' => $message->metadata,
+                'has_filename_in_metadata' => isset($message->metadata['filename'])
+            ]);
+            
             return response()->json([
                 'status' => 'success',
                 'message' => 'Message sent successfully',

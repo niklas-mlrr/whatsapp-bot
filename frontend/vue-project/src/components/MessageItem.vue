@@ -56,63 +56,69 @@
         
         <!-- Document message -->
         <template v-else-if="message.type === 'document' || (message.mimetype && !message.mimetype.startsWith('image/') && !message.mimetype.startsWith('audio/') && !message.mimetype.startsWith('video/'))">
-          <a 
-            :href="documentUrl" 
-            target="_blank" 
-            class="flex items-center p-2 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
-          >
-            <div class="p-2 bg-gray-200 rounded-lg mr-3">
-              <svg class="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+          <div>
+            <a 
+              :href="documentUrl" 
+              target="_blank" 
+              class="flex items-center p-2 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+            >
+              <div class="p-2 bg-gray-200 rounded-lg mr-3">
+                <svg class="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                </svg>
+              </div>
+              <div class="flex-1 min-w-0">
+                <p class="text-sm font-medium text-gray-900 truncate">
+                  {{ message.filename || 'Attachment' }}
+                </p>
+                <p class="text-xs text-gray-500">
+                  <span v-if="message.size">{{ formatFileSize(message.size) }}</span>
+                  <span v-if="message.size && message.mimetype"> • </span>
+                  <span>{{ message.mimetype || 'File' }}</span>
+                </p>
+              </div>
+              <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
               </svg>
-            </div>
-            <div class="flex-1 min-w-0">
-              <p class="text-sm font-medium text-gray-900 truncate">
-                {{ message.filename || message.content || 'Attachment' }}
-              </p>
-              <p class="text-xs text-gray-500">
-                <span v-if="message.size">{{ formatFileSize(message.size) }}</span>
-                <span v-if="message.size && message.mimetype"> • </span>
-                <span>{{ message.mimetype || 'File' }}</span>
-              </p>
-            </div>
-            <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
-            </svg>
-          </a>
+            </a>
+            <span v-if="message.content" class="block mt-2 whitespace-pre-line">{{ message.content }}</span>
+          </div>
         </template>
         
         <!-- Audio message -->
         <template v-else-if="message.type === 'audio' || message.mimetype?.startsWith('audio/')">
-          <div class="flex items-center p-2 bg-gray-100 rounded-lg">
-            <button 
-              @click="toggleAudioPlayback"
-              class="p-2 bg-gray-200 rounded-full mr-3 focus:outline-none hover:bg-gray-300 transition-colors"
-            >
-              <svg v-if="!isPlayingAudio" class="w-6 h-6 text-gray-700" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
-                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"></path>
-              </svg>
-              <svg v-else class="w-6 h-6 text-gray-700" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
-                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"></path>
-              </svg>
-            </button>
-            <div class="flex-1">
-              <div class="w-full bg-gray-200 rounded-full h-1.5 mb-1">
-                <div class="bg-blue-600 h-1.5 rounded-full" :style="{ width: audioProgress + '%' }"></div>
-              </div>
-              <div class="flex justify-between text-xs text-gray-500">
-                <span>{{ formatAudioTime(currentAudioTime) }}</span>
-                <span>{{ formatAudioTime(audioDuration) }}</span>
+          <div>
+            <div class="flex items-center p-2 bg-gray-100 rounded-lg">
+              <button 
+                @click="toggleAudioPlayback"
+                class="p-2 bg-gray-200 rounded-full mr-3 focus:outline-none hover:bg-gray-300 transition-colors"
+              >
+                <svg v-if="!isPlayingAudio" class="w-6 h-6 text-gray-700" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+                  <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"></path>
+                </svg>
+                <svg v-else class="w-6 h-6 text-gray-700" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+                  <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"></path>
+                </svg>
+              </button>
+              <div class="flex-1">
+                <div class="w-full bg-gray-200 rounded-full h-1.5 mb-1">
+                  <div class="bg-blue-600 h-1.5 rounded-full" :style="{ width: audioProgress + '%' }"></div>
+                </div>
+                <div class="flex justify-between text-xs text-gray-500">
+                  <span>{{ formatAudioTime(currentAudioTime) }}</span>
+                  <span>{{ formatAudioTime(audioDuration) }}</span>
+                </div>
               </div>
             </div>
+            <audio 
+              ref="audioPlayer" 
+              :src="mediaUrl" 
+              @timeupdate="updateAudioProgress"
+              @loadedmetadata="setAudioDuration"
+              @ended="onAudioEnded"
+            ></audio>
+            <span v-if="message.content" class="block mt-2 whitespace-pre-line">{{ message.content }}</span>
           </div>
-          <audio 
-            ref="audioPlayer" 
-            :src="mediaUrl" 
-            @timeupdate="updateAudioProgress"
-            @loadedmetadata="setAudioDuration"
-            @ended="onAudioEnded"
-          ></audio>
         </template>
         
         <!-- Video message -->
@@ -288,7 +294,12 @@ const props = defineProps<{
     sending_time?: string
     created_at?: string
     updated_at?: string
-    media?: string | null
+    media?: string | {
+      url?: string | null
+      path?: string | null
+      thumbnail_url?: string | null
+      [key: string]: any
+    } | null
     mimetype?: string | null
     filename?: string
     size?: number
@@ -307,6 +318,18 @@ const props = defineProps<{
     [key: string]: any
   } 
 }>()
+
+// Debug logging for document messages
+if (props.message.type === 'document') {
+  console.log('MessageItem - Document message:', {
+    id: props.message.id,
+    filename: props.message.filename,
+    size: props.message.size,
+    content: props.message.content,
+    mimetype: props.message.mimetype,
+    fullMessage: props.message
+  })
+}
 
 const emit = defineEmits<{
   'open-image-preview': [payload: { src: string; caption?: string }]
@@ -365,22 +388,27 @@ const mediaUrl = computed(() => {
 });
 
 const imageSrc = computed(() => {
-  // Use thumbnail if available
-  if (props.message.media?.thumbnail_url) {
-    return props.message.media.thumbnail_url;
-  }
-
-  // Use media path when explicit url is missing
-  if (props.message.media?.path) {
-    const path = props.message.media.path;
-    if (path) {
-      return /^https?:\/\//.test(path) ? path : `/storage/${path}`;
+  const media = props.message.media;
+  
+  // Handle object media
+  if (media && typeof media === 'object') {
+    // Use thumbnail if available
+    if (media.thumbnail_url) {
+      return media.thumbnail_url;
     }
-  }
 
-  // Fallback to full image URL from media object
-  if (props.message.media?.url) {
-    return props.message.media.url;
+    // Use media path when explicit url is missing
+    if (media.path) {
+      const path = media.path;
+      if (path) {
+        return /^https?:\/\//.test(path) ? path : `/storage/${path}`;
+      }
+    }
+
+    // Fallback to full image URL from media object
+    if (media.url) {
+      return media.url;
+    }
   }
 
   // Fallback for older message structures or if media object is just a string path
