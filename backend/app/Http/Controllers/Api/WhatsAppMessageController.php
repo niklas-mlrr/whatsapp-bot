@@ -15,6 +15,75 @@ use Illuminate\Support\Str;
 
 class WhatsAppMessageController extends Controller
 {
+    /**
+     * Get file extension from mimetype
+     */
+    private function getExtensionFromMimetype(string $mimetype): string
+    {
+        return match($mimetype) {
+            // Images
+            'image/png' => 'png',
+            'image/gif' => 'gif',
+            'image/webp' => 'webp',
+            'image/jpeg' => 'jpg',
+            'image/jpg' => 'jpg',
+            'image/svg+xml' => 'svg',
+            'image/bmp' => 'bmp',
+            // Documents
+            'application/pdf' => 'pdf',
+            'application/msword' => 'doc',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document' => 'docx',
+            'application/vnd.ms-excel' => 'xls',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' => 'xlsx',
+            'application/vnd.ms-powerpoint' => 'ppt',
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation' => 'pptx',
+            'application/zip' => 'zip',
+            'application/x-rar-compressed' => 'rar',
+            'application/x-7z-compressed' => '7z',
+            'text/plain' => 'txt',
+            'text/csv' => 'csv',
+            'application/json' => 'json',
+            'application/xml' => 'xml',
+            'text/xml' => 'xml',
+            // Videos
+            'video/mp4' => 'mp4',
+            'video/mpeg' => 'mpeg',
+            'video/quicktime' => 'mov',
+            'video/x-msvideo' => 'avi',
+            'video/x-matroska' => 'mkv',
+            'video/webm' => 'webm',
+            // Audio
+            'audio/mpeg' => 'mp3',
+            'audio/ogg' => 'ogg',
+            'audio/wav' => 'wav',
+            'audio/webm' => 'webm',
+            'audio/aac' => 'aac',
+            'audio/x-m4a' => 'm4a',
+            // Default
+            default => $this->extractExtensionFromMimetype($mimetype)
+        };
+    }
+    
+    /**
+     * Extract extension from mimetype string (e.g., "application/pdf" -> "pdf")
+     */
+    private function extractExtensionFromMimetype(string $mimetype): string
+    {
+        if (str_contains($mimetype, '/')) {
+            $parts = explode('/', $mimetype);
+            $extension = end($parts);
+            // Remove any additional parameters (e.g., "vnd.ms-excel" -> "excel")
+            $extension = preg_replace('/^(x-|vnd\.)/', '', $extension);
+            // Take only the last part if there are dots
+            if (str_contains($extension, '.')) {
+                $parts = explode('.', $extension);
+                $extension = end($parts);
+            }
+            return $extension;
+        }
+        return 'bin';
+    }
+    
     // GET /api/messages
     public function index(Request $request): JsonResponse
     {
@@ -113,6 +182,8 @@ class WhatsAppMessageController extends Controller
             'media' => 'nullable|string',
             'mimetype' => 'nullable|string',
             'sending_time' => 'nullable|date',
+            'filename' => 'nullable|string',
+            'size' => 'nullable|integer',
         ]);
         if (empty($data['sending_time'])) {
             $data['sending_time'] = now();
@@ -161,12 +232,7 @@ class WhatsAppMessageController extends Controller
                     $decodedData = base64_decode($data['media'], true);
                     if ($decodedData !== false) {
                         // Generate a unique filename
-                        $extension = match($data['mimetype'] ?? 'image/jpeg') {
-                            'image/png' => 'png',
-                            'image/gif' => 'gif',
-                            'image/webp' => 'webp',
-                            default => 'jpg',
-                        };
+                        $extension = $this->getExtensionFromMimetype($data['mimetype'] ?? 'application/octet-stream');
                         $filename = 'uploads/' . \Str::random(40) . '.' . $extension;
                         
                         // Save to storage
@@ -193,12 +259,7 @@ class WhatsAppMessageController extends Controller
                         $decodedData = base64_decode($matches[2], true);
                         if ($decodedData !== false) {
                             // Generate a unique filename
-                            $extension = match($data['mimetype'] ?? $matches[1]) {
-                                'image/png' => 'png',
-                                'image/gif' => 'gif',
-                                'image/webp' => 'webp',
-                                default => 'jpg',
-                            };
+                            $extension = $this->getExtensionFromMimetype($data['mimetype'] ?? $matches[1]);
                             $filename = 'uploads/' . \Str::random(40) . '.' . $extension;
                             
                             // Save to storage
@@ -227,20 +288,23 @@ class WhatsAppMessageController extends Controller
             }
         }
 
-        $message = WhatsAppMessage::create([
-            'sender_id' => $user->id,
-            'chat_id' => $chat->id,
-            'type' => $data['type'],
-            'status' => 'sent',
-            'content' => $data['content'] ?? '',
-            'media_url' => $mediaUrl,
-            'media_type' => $data['mimetype'] ?? null,
-            'metadata' => [
-                'sender' => $data['sender'],
-                'chat' => $data['chat'],
-                'sending_time' => (string) $data['sending_time'],
-            ],
-        ]);
+        $metadata = [
+            'sender' => $data['sender'],
+            'chat' => $data['chat'],
+            'sending_time' => (string) $data['sending_time'],
+        ];
+
+        if ($mediaUrl) {
+            $metadata['media_path'] = $mediaUrl;
+        }
+
+        if (!empty($data['filename'])) {
+            $metadata['filename'] = $data['filename'];
+        }
+
+        if (!empty($data['size'])) {
+            $metadata['file_size'] = $data['size'];
+        }
 
         // Send to receiver
         try {
@@ -259,52 +323,61 @@ class WhatsAppMessageController extends Controller
                 'mimetype' => $data['mimetype'] ?? null,
             ];
 
+            if (!empty($data['filename'])) {
+                $sendPayload['filename'] = $data['filename'];
+            }
+
+            if (!empty($data['size'])) {
+                $sendPayload['size'] = $data['size'];
+            }
+
             // If this is an image message, include the full path to the media
-            if ($data['type'] === 'image' && !empty($data['media'])) {
-                \Log::info('Processing image message', [
+            $requiresMediaBase64 = in_array($data['type'], ['image', 'document', 'video', 'audio']);
+
+            if ($requiresMediaBase64 && !empty($data['media'])) {
+                \Log::info('Processing media for outbound message', [
+                    'type' => $data['type'],
                     'media' => $data['media'],
                     'exists' => Storage::disk('public')->exists($data['media'])
                 ]);
-                
-                // If media is a URL, use it directly
+
                 if (filter_var($data['media'], FILTER_VALIDATE_URL)) {
                     $sendPayload['media'] = $data['media'];
-                } 
-                // If media is a path, read the file and send as base64
-                else if (Storage::disk('public')->exists($data['media'])) {
-                    // Get the correct path to the file
+                } elseif (Storage::disk('public')->exists($data['media'])) {
                     $filePath = Storage::disk('public')->path($data['media']);
-                    
+
                     \Log::info('Attempting to read file', [
                         'storage_path' => $filePath,
                         'relative_path' => $data['media']
                     ]);
-                    
-                    if (file_exists($filePath)) {
-                        $fileContents = file_get_contents($filePath);
-                        $base64 = base64_encode($fileContents);
-                        $sendPayload['media'] = 'data:' . ($data['mimetype'] ?? 'image/jpeg') . ';base64,' . $base64;
-                        \Log::info('Converted local file to base64', [
-                            'size' => strlen($base64) . ' bytes',
-                            'file' => basename($filePath)
-                        ]);
-                    } else {
+
+                    if (!file_exists($filePath)) {
                         \Log::error('File does not exist at path', ['path' => $filePath]);
                         throw new \Exception('File does not exist at path: ' . $filePath);
                     }
+
+                    $fileContents = file_get_contents($filePath);
+                    $base64 = base64_encode($fileContents);
+                    $mimeType = $data['mimetype'] ?? mime_content_type($filePath) ?? 'application/octet-stream';
+                    $sendPayload['media'] = 'data:' . $mimeType . ';base64,' . $base64;
+
+                    \Log::info('Converted local file to base64', [
+                        'encoded_size' => strlen($base64),
+                        'file' => basename($filePath),
+                        'mime' => $mimeType,
+                    ]);
                 }
-                
-                // Ensure we have a valid media URL
+
                 if (empty($sendPayload['media'])) {
                     return response()->json([
-                        'status' => 'error', 
+                        'status' => 'error',
                         'message' => 'Invalid media file',
                         'media_path' => $data['media'],
                         'storage_exists' => Storage::disk('public')->exists($data['media'])
                     ], 400);
                 }
-                
-                \Log::info('Processed media URL', ['url' => $sendPayload['media']]);
+
+                \Log::info('Prepared outbound media', ['type' => $data['type']]);
             }
 
             \Log::info('Sending payload to receiver', $sendPayload);
@@ -340,7 +413,16 @@ class WhatsAppMessageController extends Controller
             }
             
             // If we get here, the message was sent successfully
-            $message = WhatsAppMessage::findOrFail($message->id);
+            $message = WhatsAppMessage::create([
+                'sender_id' => $user->id,
+                'chat_id' => $chat->id,
+                'type' => $data['type'],
+                'status' => 'sent',
+                'content' => $data['content'] ?? '',
+                'media_url' => $mediaUrl,
+                'media_type' => $data['mimetype'] ?? null,
+                'metadata' => $metadata,
+            ]);
             return response()->json([
                 'status' => 'success',
                 'message' => 'Message sent successfully',
@@ -432,25 +514,37 @@ class WhatsAppMessageController extends Controller
     {
         try {
             $request->validate([
-                'file' => 'required|file|image|max:10240', // max 10MB
+                'file' => 'required|file|max:51200', // max 50MB
             ]);
-            
-            // Ensure the uploads directory exists
-            $path = $request->file('file')->store('uploads', 'public');
-            
-            // Get the full URL to the uploaded file
+
+            $uploadedFile = $request->file('file');
+
+            $mimeType = $uploadedFile->getMimeType();
+            $originalName = $uploadedFile->getClientOriginalName();
+            $size = $uploadedFile->getSize();
+
+            $directory = match (true) {
+                str_starts_with((string) $mimeType, 'image/') => 'uploads/images',
+                str_starts_with((string) $mimeType, 'video/') => 'uploads/videos',
+                str_starts_with((string) $mimeType, 'audio/') => 'uploads/audio',
+                default => 'uploads/files',
+            };
+
+            $path = $uploadedFile->store($directory, 'public');
+
             $url = url(Storage::url($path));
-            
-            // Make sure the URL is absolute
+
             if (strpos($url, 'http') !== 0) {
                 $url = url($url);
             }
-            
+
             return response()->json([
                 'status' => 'success',
                 'path' => $path,
                 'url' => $url,
-                'mimetype' => $request->file('file')->getMimeType()
+                'mimetype' => $mimeType,
+                'original_name' => $originalName,
+                'size' => $size,
             ]);
             
         } catch (\Exception $e) {

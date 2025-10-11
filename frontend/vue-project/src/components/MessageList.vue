@@ -112,6 +112,14 @@ import MessageItem from './MessageItem.vue';
 import ImagePreviewModal from './ImagePreviewModal.vue';
 
 // Types
+interface MediaObject {
+  path?: string | null;
+  url?: string | null;
+  thumbnail_url?: string | null;
+  metadata?: Record<string, any>;
+  [key: string]: any;
+}
+
 interface Message {
   id: string;
   content: string;
@@ -127,7 +135,7 @@ interface Message {
   status?: 'sending' | 'sent' | 'delivered' | 'read' | 'failed' | string;
   type?: 'text' | 'image' | 'video' | 'audio' | 'document' | 'location' | 'contact' | 'sticker' | 'unsupported' | string;
   direction?: 'incoming' | 'outgoing' | string;
-  media?: string | null;
+  media?: string | MediaObject | null;
   mimetype?: string | null;
   reactions?: Record<string, any> | string | null;
   metadata?: Record<string, any> | string | null;
@@ -794,21 +802,16 @@ const handleOpenImagePreview = (payload: { src: string; caption?: string }) => {
   // Collect all images from the current chat
   const allImages = messages.value
     .filter(msg => msg.type === 'image' || msg.mimetype?.startsWith('image/'))
-    .map(msg => {
-      if (msg.media) {
-        return /^https?:\/\//.test(msg.media) ? msg.media : `/storage/${msg.media}`;
-      }
-      return '';
-    })
-    .filter(Boolean);
+    .map(resolveMessageImageSrc)
+    .filter((src): src is string => Boolean(src));
   
   imageList.value = allImages;
   previewImageSrc.value = payload.src;
   previewImageCaption.value = payload.caption || '';
   currentImageIndex.value = allImages.indexOf(payload.src);
-  
+
   if (currentImageIndex.value === -1) {
-    currentImageIndex.value = 0;
+    currentImageIndex.value = Math.max(allImages.indexOf(previewImageSrc.value), 0);
   }
   
   imagePreviewOpen.value = true;
@@ -822,17 +825,59 @@ const updateImageIndex = (index: number) => {
   if (index >= 0 && index < imageList.value.length) {
     currentImageIndex.value = index;
     previewImageSrc.value = imageList.value[index];
-    
+
     // Find the message with this image to get its caption
-    const message = messages.value.find(msg => {
-      const mediaSrc = msg.media 
-        ? (/^https?:\/\//.test(msg.media) ? msg.media : `/storage/${msg.media}`)
-        : '';
-      return mediaSrc === previewImageSrc.value;
-    });
-    
+    const message = messages.value.find(msg => resolveMessageImageSrc(msg) === previewImageSrc.value);
     previewImageCaption.value = message?.content || '';
   }
+};
+
+const resolveMessageImageSrc = (message: Message): string => {
+  const media = message.media as MediaObject | string | null | undefined;
+
+  const normalizePath = (value?: string | null): string => {
+    if (!value || typeof value !== 'string') return '';
+    return /^https?:\/\//.test(value) ? value : `/storage/${value}`;
+  };
+
+  if (typeof media === 'string' && media.length > 0) {
+    return normalizePath(media);
+  }
+
+  if (media && typeof media === 'object') {
+    const candidates = [media.thumbnail_url, media.path, media.url];
+    for (const candidate of candidates) {
+      const normalized = normalizePath(candidate);
+      if (normalized) {
+        return normalized;
+      }
+    }
+  }
+
+  if (typeof message.media_url === 'string' && message.media_url.length > 0) {
+    return normalizePath(message.media_url);
+  }
+
+  const metadataMediaPath = (() => {
+    const metadata = message.metadata as MediaObject | string | null | undefined;
+    if (!metadata) return null;
+    if (typeof metadata === 'string') {
+      try {
+        const parsed = JSON.parse(metadata);
+        return parsed?.media_path ?? null;
+      } catch (error) {
+        console.error('Failed to parse metadata JSON:', error);
+        return null;
+      }
+    }
+    return metadata?.media_path ?? null;
+  })();
+
+  if (typeof metadataMediaPath === 'string' && metadataMediaPath.length > 0) {
+    return normalizePath(metadataMediaPath);
+  }
+
+  return '';
 };
 
 // Lifecycle hooks

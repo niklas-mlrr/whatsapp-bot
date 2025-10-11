@@ -5,6 +5,7 @@ const axios = require('axios');
 const fs = require('fs');
 const { promisify } = require('util');
 const stream = require('stream');
+const path = require('path');
 
 const pipeline = promisify(stream.pipeline);
 
@@ -64,13 +65,63 @@ async function start() {
         });
     });
 
+    async function loadMediaBuffer(media, mimetype, defaultMime = 'application/octet-stream') {
+        if (!media) {
+            throw new Error('Media payload missing');
+        }
+
+        if (media.startsWith('http')) {
+            console.log('Downloading media from URL:', media);
+            const response = await axios({
+                method: 'GET',
+                url: media,
+                responseType: 'arraybuffer',
+                timeout: 30000,
+                validateStatus: status => status < 500
+            });
+
+            if (response.status !== 200) {
+                throw new Error(`Failed to download media: ${response.status} ${response.statusText}`);
+            }
+
+            return {
+                buffer: Buffer.from(response.data),
+                mimetype: mimetype || response.headers['content-type'] || defaultMime
+            };
+        }
+
+        if (fs.existsSync(media)) {
+            console.log('Reading local media file:', media);
+            const fileData = fs.readFileSync(media);
+            return {
+                buffer: Buffer.from(fileData),
+                mimetype: mimetype || defaultMime
+            };
+        }
+
+        if (media.startsWith('data:')) {
+            const matches = media.match(/^data:([^;]+);base64,(.+)$/);
+            if (!matches || matches.length !== 3) {
+                throw new Error('Invalid base64 media data');
+            }
+
+            return {
+                buffer: Buffer.from(matches[2], 'base64'),
+                mimetype: mimetype || matches[1] || defaultMime
+            };
+        }
+
+        throw new Error('Unsupported media format. Must be a URL, local file path, or data URI');
+    }
+
     app.post('/send-message', async (req, res) => {
         console.log('Received send-message request:', {
             chat: req.body.chat,
             type: req.body.type,
             contentLength: req.body.content?.length,
             mediaType: req.body.media ? 'present' : 'missing',
-            mimetype: req.body.mimetype
+            mimetype: req.body.mimetype,
+            filename: req.body.filename
         });
 
         if (!sockInstance) {
@@ -85,7 +136,7 @@ async function start() {
             return res.status(500).json({ error });
         }
 
-        const { chat, type, content, media, mimetype } = req.body;
+        const { chat, type, content, media, mimetype, filename } = req.body;
         
         // Validate required fields
         if (!chat || !type) {
@@ -194,8 +245,110 @@ async function start() {
                     });
                     throw new Error(`Failed to process image: ${error.message}`);
                 }
+            } else if (type === 'document' && media) {
+                console.log('Processing document message for', chat);
+                try {
+                    const { buffer, mimetype: actualMimetype } = await loadMediaBuffer(media, mimetype, 'application/octet-stream');
+                    
+                    // Determine file extension from mimetype or filename
+                    let fileExtension = '';
+                    if (filename) {
+                        const extMatch = filename.match(/\.([^.]+)$/);
+                        if (extMatch) {
+                            fileExtension = extMatch[0];
+                        }
+                    }
+                    if (!fileExtension && actualMimetype && actualMimetype.includes('/')) {
+                        fileExtension = '.' + actualMimetype.split('/')[1].split('+')[0];
+                    }
+                    
+                    const resolvedFilename = filename || `document${fileExtension}`;
+
+                    console.log('Sending document to WhatsApp:', {
+                        filename: resolvedFilename,
+                        mimetype: actualMimetype,
+                        size: buffer.length
+                    });
+
+                    const documentMessage = {
+                        document: buffer,
+                        mimetype: actualMimetype,
+                        fileName: resolvedFilename
+                    };
+
+                    if (content && content.trim().length > 0) {
+                        documentMessage.caption = content;
+                    }
+
+                    await sockInstance.sendMessage(chat, documentMessage, { quoted: null });
+                } catch (error) {
+                    console.error('Error processing document:', {
+                        error: error.message,
+                        stack: error.stack,
+                        mediaType: typeof media,
+                        mediaLength: media?.length,
+                        mediaStart: media?.substring(0, 100)
+                    });
+                    throw new Error(`Failed to process document: ${error.message}`);
+                }
+            } else if (type === 'video' && media) {
+                console.log('Processing video message for', chat);
+                try {
+                    const { buffer, mimetype: actualMimetype } = await loadMediaBuffer(media, mimetype, 'video/mp4');
+                    
+                    console.log('Sending video to WhatsApp:', {
+                        mimetype: actualMimetype,
+                        size: buffer.length
+                    });
+
+                    const videoMessage = {
+                        video: buffer,
+                        mimetype: actualMimetype
+                    };
+
+                    if (content && content.trim().length > 0) {
+                        videoMessage.caption = content;
+                    }
+
+                    await sockInstance.sendMessage(chat, videoMessage, { quoted: null });
+                } catch (error) {
+                    console.error('Error processing video:', {
+                        error: error.message,
+                        stack: error.stack,
+                        mediaType: typeof media,
+                        mediaLength: media?.length,
+                        mediaStart: media?.substring(0, 100)
+                    });
+                    throw new Error(`Failed to process video: ${error.message}`);
+                }
+            } else if (type === 'audio' && media) {
+                console.log('Processing audio message for', chat);
+                try {
+                    const { buffer, mimetype: actualMimetype } = await loadMediaBuffer(media, mimetype, 'audio/ogg; codecs=opus');
+                    
+                    console.log('Sending audio to WhatsApp:', {
+                        mimetype: actualMimetype,
+                        size: buffer.length
+                    });
+
+                    const audioMessage = {
+                        audio: buffer,
+                        mimetype: actualMimetype
+                    };
+
+                    await sockInstance.sendMessage(chat, audioMessage, { quoted: null });
+                } catch (error) {
+                    console.error('Error processing audio:', {
+                        error: error.message,
+                        stack: error.stack,
+                        mediaType: typeof media,
+                        mediaLength: media?.length,
+                        mediaStart: media?.substring(0, 100)
+                    });
+                    throw new Error(`Failed to process audio: ${error.message}`);
+                }
             } else {
-                const error = 'Unsupported message type or missing media for image type';
+                const error = `Unsupported message type '${type}' or missing media`;
                 console.error(error);
                 return res.status(400).json({ error });
             }

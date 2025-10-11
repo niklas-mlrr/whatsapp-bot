@@ -55,7 +55,7 @@
         </template>
         
         <!-- Document message -->
-        <template v-else-if="message.type === 'document' || message.mimetype">
+        <template v-else-if="message.type === 'document' || (message.mimetype && !message.mimetype.startsWith('image/') && !message.mimetype.startsWith('audio/') && !message.mimetype.startsWith('video/'))">
           <a 
             :href="documentUrl" 
             target="_blank" 
@@ -68,10 +68,12 @@
             </div>
             <div class="flex-1 min-w-0">
               <p class="text-sm font-medium text-gray-900 truncate">
-                {{ message.filename || 'Document' }}
+                {{ message.filename || message.content || 'Attachment' }}
               </p>
               <p class="text-xs text-gray-500">
-                {{ formatFileSize(message.size) }} • {{ message.mimetype || 'File' }}
+                <span v-if="message.size">{{ formatFileSize(message.size) }}</span>
+                <span v-if="message.size && message.mimetype"> • </span>
+                <span>{{ message.mimetype || 'File' }}</span>
               </p>
             </div>
             <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -368,6 +370,14 @@ const imageSrc = computed(() => {
     return props.message.media.thumbnail_url;
   }
 
+  // Use media path when explicit url is missing
+  if (props.message.media?.path) {
+    const path = props.message.media.path;
+    if (path) {
+      return /^https?:\/\//.test(path) ? path : `/storage/${path}`;
+    }
+  }
+
   // Fallback to full image URL from media object
   if (props.message.media?.url) {
     return props.message.media.url;
@@ -379,6 +389,36 @@ const imageSrc = computed(() => {
       return props.message.media;
     }
     return `/storage/${props.message.media}`;
+  }
+
+  // Check direct media_url field
+  if (typeof props.message.media_url === 'string') {
+    if (/^https?:\/\//.test(props.message.media_url)) {
+      return props.message.media_url;
+    }
+    return `/storage/${props.message.media_url}`;
+  }
+
+  // Check metadata for media_path
+  const metadataMediaPath = (() => {
+    const metadata = props.message.metadata;
+    if (!metadata) return null;
+    if (typeof metadata === 'string') {
+      try {
+        const parsed = JSON.parse(metadata);
+        return parsed?.media_path ?? null;
+      } catch (error) {
+        console.error('Failed to parse metadata JSON:', error);
+        return null;
+      }
+    }
+    return metadata.media_path ?? null;
+  })();
+
+  if (typeof metadataMediaPath === 'string' && metadataMediaPath.length > 0) {
+    return /^https?:\/\//.test(metadataMediaPath)
+      ? metadataMediaPath
+      : `/storage/${metadataMediaPath}`;
   }
   
   return '';

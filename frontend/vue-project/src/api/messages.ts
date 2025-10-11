@@ -29,13 +29,15 @@ export const sendMessage = (data: {
   media?: string;
   mimetype?: string;
   sending_time?: string;
+  filename?: string;
+  size?: number;
 }) =>
   apiClient.post('/messages', data);
 
-export const uploadImage = (file: File) => {
+export const uploadFile = (file: File) => {
   const formData = new FormData();
   formData.append('file', file);
-  return apiClient.post<{ path: string; url: string }>('/upload', formData, {
+  return apiClient.post<{ path: string; url: string; mimetype: string; original_name: string; size: number }>('/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   });
 };

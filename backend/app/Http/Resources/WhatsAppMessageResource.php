@@ -15,16 +15,19 @@ class WhatsAppMessageResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
+        $mediaPath = $this->media
+            ?? $this->media_url
+            ?? ($this->metadata['media_path'] ?? null);
+
         $mediaUrl = null;
-        
-        // Generate media URL based on storage type
-        if ($this->media) {
-            if (filter_var($this->media, FILTER_VALIDATE_URL)) {
-                $mediaUrl = $this->media; // Already a full URL
-            } else if (Storage::disk('public')->exists($this->media)) {
-                $mediaUrl = asset('storage/' . $this->media);
-            } else if (Storage::disk('s3')->exists($this->media)) {
-                $mediaUrl = Storage::disk('s3')->url($this->media);
+
+        if ($mediaPath) {
+            if (filter_var($mediaPath, FILTER_VALIDATE_URL)) {
+                $mediaUrl = $mediaPath;
+            } elseif (Storage::disk('public')->exists($mediaPath)) {
+                $mediaUrl = asset('storage/' . $mediaPath);
+            } elseif (Storage::disk('s3')->exists($mediaPath)) {
+                $mediaUrl = Storage::disk('s3')->url($mediaPath);
             }
         }
         
@@ -72,8 +75,8 @@ class WhatsAppMessageResource extends JsonResource
             'is_from_me' => $isFromCurrentUser,
             
             // Media information
-            'media' => $this->when($this->media, [
-                'path' => $this->media,
+            'media' => $this->when($mediaPath || $mediaUrl || $thumbnailUrl, [
+                'path' => $mediaPath,
                 'url' => $mediaUrl,
                 'thumbnail_url' => $thumbnailUrl,
                 'metadata' => $mediaMetadata,

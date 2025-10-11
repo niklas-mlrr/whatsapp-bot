@@ -53,15 +53,43 @@
       
       <!-- Message input -->
       <div class="sticky bottom-0 bg-white border-t border-gray-200 z-10">
-        <!-- Image preview -->
-        <div v-if="imagePreviewUrl" class="relative bg-gray-50 p-2 border-b border-gray-200">
-          <div class="max-w-[200px] relative">
-            <img :src="imagePreviewUrl" alt="Preview" class="max-h-32 rounded-lg" />
-            <button 
-              type="button" 
-              @click="clearImage"
-              class="absolute -right-2 -top-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center hover:bg-red-600 transition-colors"
-              title="Remove image"
+        <!-- Attachment preview -->
+        <div v-if="attachmentPreviewVisible" class="relative bg-gray-50 p-3 border-b border-gray-200">
+          <div v-if="isImageAttachment" class="max-w-[220px] relative">
+            <img :src="attachmentPreviewUrl || undefined" alt="Preview" class="max-h-36 rounded-lg" />
+            <button
+              type="button"
+              @click="clearAttachment"
+              class="absolute -right-2 -top-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center hover:bg-red-600 transition-colors"
+              title="Remove attachment"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+            <div v-if="isUploadingAttachment" class="absolute inset-x-0 bottom-2 flex justify-center">
+              <span class="text-xs bg-black bg-opacity-60 text-white px-2 py-0.5 rounded-full">Uploading...</span>
+            </div>
+          </div>
+          <div v-else class="relative flex items-start gap-3 bg-white border border-gray-200 rounded-lg p-4 pr-12 max-w-lg">
+            <div class="p-2 bg-gray-100 rounded-full">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 10l5 5m0 0l5-5m-5 5V6" />
+              </svg>
+            </div>
+            <div class="min-w-0">
+              <p class="text-sm font-semibold text-gray-800 truncate">{{ attachmentDisplayName }}</p>
+              <p class="text-xs text-gray-500">
+                {{ formattedAttachmentSize }}
+                <span v-if="attachmentDisplayMimetype"> • {{ attachmentDisplayMimetype }}</span>
+              </p>
+              <p v-if="isUploadingAttachment" class="text-xs text-blue-500 mt-1">Uploading...</p>
+            </div>
+            <button
+              type="button"
+              @click="clearAttachment"
+              class="absolute top-2 right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center hover:bg-red-600 transition-colors"
+              title="Remove attachment"
             >
               <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
@@ -83,14 +111,16 @@
             class="inline-block w-10 h-10 bg-green-500 rounded-full flex items-center justify-center text-white ml-2 focus:outline-none disabled:bg-gray-200">
             <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" /></svg>
           </button>
-          <div v-if="showMenu" class="absolute left-0 bottom-12 z-10 bg-white border border-gray-200 rounded shadow-lg min-w-[140px]">
+          <div v-if="showMenu" class="absolute left-0 bottom-12 z-10 bg-white border border-gray-200 rounded shadow-lg min-w-[160px]">
             <ul>
               <li @click="selectAddImage" class="px-4 py-2 hover:bg-green-50 cursor-pointer">Add image</li>
+              <li @click="selectAddFile" class="px-4 py-2 hover:bg-green-50 cursor-pointer">Add file</li>
               <!-- Future: <li class='px-4 py-2 hover:bg-green-50 cursor-pointer'>Create poll</li> -->
             </ul>
           </div>
         </div>
-        <input id="image-upload-input" type="file" accept="image/*" class="hidden" @change="onImageChange" :disabled="!selectedChat" />
+        <input id="image-upload-input" type="file" accept="image/*" class="hidden" @change="onAttachmentChange" :disabled="!selectedChat" />
+        <input id="file-upload-input" type="file" class="hidden" @change="onAttachmentChange" :disabled="!selectedChat" />
         <button
           type="submit"
           :disabled="!canSend"
@@ -113,7 +143,7 @@ import { ref, onMounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import MessageList from '../components/MessageList.vue'
-import { fetchChats, sendMessage, uploadImage, deleteChat } from '../api/messages'
+import { fetchChats, sendMessage, uploadFile, deleteChat } from '../api/messages'
 
 // Base current user from auth (fallback)
 const currentUser = ref({
@@ -130,10 +160,13 @@ const loadingChats = ref(false)
 const errorChats = ref<string | null>(null)
 const selectedChat = ref<any | null>(null)
 const input = ref('')
-const imageFile = ref<File | null>(null)
-const imagePath = ref<string | null>(null)
-const imageMimetype = ref<string | null>(null)
-const imagePreviewUrl = ref<string | null>(null)
+const attachmentFile = ref<File | null>(null)
+const attachmentPath = ref<string | null>(null)
+const attachmentMimetype = ref<string | null>(null)
+const attachmentPreviewUrl = ref<string | null>(null)
+const attachmentName = ref<string | null>(null)
+const attachmentSize = ref<number | null>(null)
+const isUploadingAttachment = ref(false)
 const showMenu = ref(false)
 const isSending = ref(false)
 
@@ -141,19 +174,61 @@ const messageListRef = ref<any>(null)
 
 // Watch for changes to input field to debug if image is being cleared
 watch(input, (newVal: string, oldVal: string) => {
-  console.log('Input changed:', { newVal, oldVal, imagePath: imagePath.value, imagePreviewUrl: imagePreviewUrl.value });
-});
+  console.log('Input changed:', {
+    newVal,
+    oldVal,
+    attachmentPath: attachmentPath.value,
+    attachmentPreviewUrl: attachmentPreviewUrl.value,
+    attachmentMimetype: attachmentMimetype.value
+  })
+})
+
+const isImageAttachment = computed(() => {
+  const mime = attachmentMimetype.value || attachmentFile.value?.type || ''
+  return mime.startsWith('image/')
+})
+
+const attachmentPreviewVisible = computed(() => !!attachmentFile.value || !!attachmentPath.value || isUploadingAttachment.value)
+
+const attachmentDisplayName = computed(() => attachmentName.value || attachmentFile.value?.name || 'Attachment')
+
+const attachmentDisplayMimetype = computed(() => attachmentMimetype.value || attachmentFile.value?.type || '')
+
+const formattedAttachmentSize = computed(() => {
+  const fallbackSize = attachmentFile.value?.size
+  const size = typeof attachmentSize.value === 'number' && !Number.isNaN(attachmentSize.value)
+    ? attachmentSize.value
+    : (typeof fallbackSize === 'number' ? fallbackSize : null)
+
+  if (size === null) return 'Unknown size'
+  if (size === 0) return '0 Bytes'
+  const units = ['Bytes', 'KB', 'MB', 'GB', 'TB']
+  const index = Math.min(Math.floor(Math.log(size) / Math.log(1024)), units.length - 1)
+  const value = size / Math.pow(1024, index)
+  const formatted = value >= 10 ? value.toFixed(0) : value.toFixed(1)
+  return `${formatted} ${units[index]}`
+})
 
 // Computed property to determine if we can send a message
 const canSend = computed(() => {
   const hasText = !!(input.value && input.value.trim().length > 0)
-  const hasImage = !!imagePath.value
+  const hasAttachment = !!attachmentPath.value
   const hasChat = !!selectedChat.value
   const notSending = !isSending.value
-  
-  const result = (hasText || hasImage) && hasChat && notSending
-  console.log('canSend check:', { hasText, hasImage, hasChat, notSending, result, inputValue: input.value, imagePathValue: imagePath.value })
-  
+  const notUploading = !isUploadingAttachment.value
+
+  const result = (hasText || hasAttachment) && hasChat && notSending && notUploading
+  console.log('canSend check:', {
+    hasText,
+    hasAttachment,
+    hasChat,
+    notSending,
+    notUploading,
+    result,
+    inputValue: input.value,
+    attachmentPathValue: attachmentPath.value
+  })
+
   return result
 })
 
@@ -189,35 +264,55 @@ function selectChat(chat: any) {
 }
 
 async function sendMessageHandler() {
-  if ((!input.value && !imagePath.value) || !selectedChat.value || isSending.value) return
-  
+  if ((!input.value && !attachmentPath.value) || !selectedChat.value || isSending.value) return
+
   console.log('=== START sendMessageHandler ===');
   console.log('Current state before storing:', {
     inputValue: input.value,
-    imagePathValue: imagePath.value,
-    imageMimetypeValue: imageMimetype.value
+    attachmentPathValue: attachmentPath.value,
+    attachmentMimetypeValue: attachmentMimetype.value,
+    attachmentNameValue: attachmentName.value,
+    attachmentSizeValue: attachmentSize.value
   });
   
   // Store the message content before clearing
   const messageContent = input.value
-  const messageImagePath = imagePath.value
-  const messageImageMimetype = imageMimetype.value
-  const messageImageFile = imageFile.value
-  const messageImagePreviewUrl = imagePreviewUrl.value
+  const messageAttachmentPath = attachmentPath.value
+  const messageAttachmentMimetype = attachmentMimetype.value
+  const messageAttachmentFile = attachmentFile.value
+  const messageAttachmentPreviewUrl = attachmentPreviewUrl.value
+  const messageAttachmentName = attachmentName.value
+  const messageAttachmentSize = attachmentSize.value
   
   console.log('Stored values:', {
     messageContent,
-    messageImagePath,
-    messageImageMimetype
+    messageAttachmentPath,
+    messageAttachmentMimetype,
+    messageAttachmentName,
+    messageAttachmentSize
   });
   
   isSending.value = true
   
   try {
+    // Determine message type based on mimetype
+    let messageType = 'text';
+    if (messageAttachmentPath && messageAttachmentMimetype) {
+      if (messageAttachmentMimetype.startsWith('image/')) {
+        messageType = 'image';
+      } else if (messageAttachmentMimetype.startsWith('video/')) {
+        messageType = 'video';
+      } else if (messageAttachmentMimetype.startsWith('audio/')) {
+        messageType = 'audio';
+      } else {
+        messageType = 'document';
+      }
+    }
+    
     let payload: any = {
       sender: 'me',
       chat: selectedChat.value.name,
-      type: messageImagePath ? 'image' : 'text',
+      type: messageType,
       content: messageContent || '',  // Ensure content is at least an empty string
     }
     
@@ -225,20 +320,19 @@ async function sendMessageHandler() {
     
     // If we have an image, include the media path and mimetype
     // The image was already uploaded in onImageChange, so we just use the path
-    if (messageImagePath) {
-      payload.media = messageImagePath;
-      payload.mimetype = messageImageMimetype || 'image/jpeg';
-      console.log('Added media to payload:', { media: payload.media, mimetype: payload.mimetype });
+    if (messageAttachmentPath) {
+      payload.media = messageAttachmentPath;
+      payload.mimetype = messageAttachmentMimetype || undefined;
+      payload.filename = messageAttachmentName || undefined;
+      payload.size = typeof messageAttachmentSize === 'number' ? messageAttachmentSize : undefined;
+      console.log('Added attachment to payload:', { media: payload.media, mimetype: payload.mimetype, filename: payload.filename, size: payload.size });
     }
     
     console.log('Final payload to send:', payload);
     
     // Clear input immediately to show responsiveness
     input.value = ''
-    imageFile.value = null
-    imagePath.value = null
-    imageMimetype.value = null
-    imagePreviewUrl.value = null
+    clearAttachmentState()
     
     // Add temporary "sending" message to the chat
     if (messageListRef.value && messageListRef.value.addTemporaryMessage) {
@@ -246,10 +340,12 @@ async function sendMessageHandler() {
         id: 'temp-' + Date.now(),
         sender: 'me',
         chat: selectedChat.value.id,
-        type: messageImagePath ? 'image' : 'text',
+        type: messageType,
         content: messageContent || '',  // Empty string if no caption
-        media: messageImagePath || undefined,
-        mimetype: messageImageMimetype || undefined,
+        media: messageAttachmentPath || undefined,
+        mimetype: messageAttachmentMimetype || undefined,
+        filename: messageAttachmentName || undefined,
+        size: typeof messageAttachmentSize === 'number' ? messageAttachmentSize : undefined,
         sending_time: new Date().toISOString(),
         created_at: new Date().toISOString(),
         isTemporary: true,
@@ -280,13 +376,15 @@ async function sendMessageHandler() {
     
     // Restore the input values on error
     input.value = messageContent
-    imagePath.value = messageImagePath
-    imageMimetype.value = messageImageMimetype
-    imageFile.value = messageImageFile
+    attachmentPath.value = messageAttachmentPath
+    attachmentMimetype.value = messageAttachmentMimetype
+    attachmentFile.value = messageAttachmentFile
+    attachmentName.value = messageAttachmentName
+    attachmentSize.value = messageAttachmentSize
     
     // Restore the preview URL if we had an image
-    if (messageImagePath && messageImagePreviewUrl) {
-      imagePreviewUrl.value = messageImagePreviewUrl;
+    if (messageAttachmentPath && messageAttachmentPreviewUrl) {
+      attachmentPreviewUrl.value = messageAttachmentPreviewUrl;
     }
     
     // Remove temporary message on error
@@ -307,46 +405,70 @@ async function sendMessageHandler() {
   }
 }
 
-function clearImage() {
-  imageFile.value = null
-  imagePath.value = null
-  imageMimetype.value = null
-  imagePreviewUrl.value = null
-  
-  // Reset the file input
-  const fileInput = document.getElementById('image-upload-input') as HTMLInputElement
+function clearAttachmentState() {
+  attachmentFile.value = null
+  attachmentPath.value = null
+  attachmentMimetype.value = null
+  attachmentPreviewUrl.value = null
+  attachmentName.value = null
+  attachmentSize.value = null
+
+  const imageInput = document.getElementById('image-upload-input') as HTMLInputElement | null
+  if (imageInput) {
+    imageInput.value = ''
+  }
+
+  const fileInput = document.getElementById('file-upload-input') as HTMLInputElement | null
   if (fileInput) {
     fileInput.value = ''
   }
 }
 
-async function onImageChange(e: Event) {
-  const files = (e.target as HTMLInputElement).files
-  if (files && files[0]) {
-    const file = files[0]
-    imageFile.value = file
-    
-    console.log('Image selected:', file.name, file.type);
-    
-    // Create preview URL
-    imagePreviewUrl.value = URL.createObjectURL(file)
-    
-    // Upload the image immediately
-    try {
-      const res = await uploadImage(file)
-      imagePath.value = res.data.path
-      imageMimetype.value = file.type
-      console.log('Image uploaded successfully:', {
-        path: imagePath.value,
-        mimetype: imageMimetype.value,
-        url: res.data.url
-      });
-    } catch (err) {
-      console.error('Image upload error:', err);
-      alert('Image upload failed')
-      clearImage()
-    }
+function clearAttachment() {
+  clearAttachmentState()
+}
+
+async function uploadAttachment(file: File) {
+  console.log('Uploading attachment:', {
+    name: file.name,
+    type: file.type,
+    size: file.size
+  })
+
+  isUploadingAttachment.value = true
+
+  try {
+    const response = await uploadFile(file)
+    attachmentPath.value = response.data.path
+    attachmentMimetype.value = response.data.mimetype || file.type || null
+    attachmentName.value = response.data.original_name || file.name
+    attachmentSize.value = response.data.size ?? file.size
+    console.log('Attachment uploaded successfully:', {
+      path: attachmentPath.value,
+      mimetype: attachmentMimetype.value,
+      name: attachmentName.value,
+      size: attachmentSize.value
+    })
+  } catch (error) {
+    console.error('Attachment upload error:', error)
+    alert('File upload failed')
+    clearAttachmentState()
+  } finally {
+    isUploadingAttachment.value = false
   }
+}
+
+async function onAttachmentChange(e: Event) {
+  const files = (e.target as HTMLInputElement).files
+  if (!files || !files[0]) {
+    return
+  }
+
+  const file = files[0]
+  attachmentFile.value = file
+  attachmentPreviewUrl.value = file.type.startsWith('image/') ? URL.createObjectURL(file) : null
+
+  await uploadAttachment(file)
 }
 
 function openMenu() {
@@ -358,6 +480,13 @@ function selectAddImage() {
   // Small delay to ensure the click event from the menu is handled first
   setTimeout(() => {
     document.getElementById('image-upload-input')?.click()
+  }, 100)
+}
+
+function selectAddFile() {
+  showMenu.value = false
+  setTimeout(() => {
+    document.getElementById('file-upload-input')?.click()
   }, 100)
 }
 

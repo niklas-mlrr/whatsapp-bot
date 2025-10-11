@@ -179,12 +179,14 @@ class WhatsAppMessageService
                 'status' => 'delivered',
                 'content' => $data->content ?? '', // Caption if any
                 'media' => $filename,
+                'media_url' => $filename,
                 'mimetype' => $data->mimetype,
                 'sending_time' => $data->sending_time ?? now(),
                 'metadata' => [
                     'original_mimetype' => $data->mimetype,
                     'file_size' => Storage::disk('public')->size($filename),
                     'thumbnail_path' => $thumbnailPath,
+                    'media_path' => $filename,
                     'dimensions' => $this->getImageDimensions($imageData),
                 ],
             ]);
@@ -235,12 +237,14 @@ class WhatsAppMessageService
                 'status' => 'delivered',
                 'content' => $data->content ?? '', // Caption if any
                 'media' => $filename,
+                'media_url' => $filename,
                 'mimetype' => $data->mimetype,
                 'sending_time' => $data->sending_time ?? now(),
                 'metadata' => [
                     'original_mimetype' => $data->mimetype,
                     'file_size' => Storage::disk('public')->size($filename),
                     'thumbnail_path' => $thumbnailPath,
+                    'media_path' => $filename,
                     'duration' => $this->getVideoDuration(storage_path('app/public/' . $filename)),
                 ],
             ]);
@@ -288,11 +292,13 @@ class WhatsAppMessageService
                 'status' => 'delivered',
                 'content' => $data->content ?? '',
                 'media' => $filename,
+                'media_url' => $filename,
                 'mimetype' => $data->mimetype,
                 'sending_time' => $data->sending_time ?? now(),
                 'metadata' => [
                     'original_mimetype' => $data->mimetype,
                     'file_size' => Storage::disk('public')->size($filename),
+                    'media_path' => $filename,
                     'duration' => $this->getAudioDuration(storage_path('app/public/' . $filename)),
                 ],
             ]);
@@ -342,11 +348,13 @@ class WhatsAppMessageService
                 'status' => 'delivered',
                 'content' => $data->content ?? '', // Original filename or description
                 'media' => $filename,
+                'media_url' => $filename,
                 'mimetype' => $data->mimetype,
                 'sending_time' => $data->sending_time ?? now(),
                 'metadata' => [
                     'original_mimetype' => $data->mimetype,
                     'file_size' => Storage::disk('public')->size($filename),
+                    'media_path' => $filename,
                     'extension' => $extension,
                 ],
             ]);
