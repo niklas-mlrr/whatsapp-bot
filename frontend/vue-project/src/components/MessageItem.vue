@@ -14,7 +14,7 @@
     </div>
 
     <!-- Message content -->
-    <div class="flex flex-col max-w-[80%]" :class="{ 'items-end': isMe, 'items-start': !isMe }">
+    <div class="flex flex-col max-w-[80%] relative" :class="{ 'items-end': isMe, 'items-start': !isMe }">
       <!-- Sender name (for group chats) -->
       <div v-if="showSenderName" class="text-xs text-gray-500 mb-0.5 px-2">
         {{ message.sender }}
@@ -262,6 +262,7 @@
         </button>
         <button 
           @click="toggleReactionPicker"
+          data-reaction-button
           class="text-sm bg-gray-50 hover:bg-gray-100 rounded-full px-2 py-0.5 transition-colors cursor-pointer border border-gray-200"
           title="Add reaction"
         >
@@ -269,12 +270,13 @@
         </button>
       </div>
       
+      
       <!-- Reaction picker -->
       <div 
         v-if="showReactionPicker" 
-        class="absolute z-10 bg-white rounded-lg shadow-lg border border-gray-200 p-2 flex gap-1"
+        class="reaction-picker absolute z-50 bg-white rounded-lg shadow-xl border border-gray-200 p-2 flex gap-1"
         :class="isMe ? 'right-0' : 'left-0'"
-        style="bottom: 100%; margin-bottom: 4px;"
+        style="bottom: calc(100% + 4px);"
       >
         <button
           v-for="emoji in quickReactions"
@@ -290,8 +292,8 @@
     
     <!-- Add reaction button (shown on hover) -->
     <button
-      v-if="!hasReactions"
       @click="toggleReactionPicker"
+      data-reaction-button
       class="opacity-0 group-hover:opacity-100 transition-opacity ml-1 text-gray-400 hover:text-gray-600"
       title="Add reaction"
     >
@@ -670,8 +672,19 @@ function openMediaViewer(event: Event) {
   })
 }
 
+// Close reaction picker when clicking outside
+function handleClickOutside(event: MouseEvent) {
+  if (showReactionPicker.value) {
+    const target = event.target as HTMLElement
+    if (!target.closest('.reaction-picker') && !target.closest('[data-reaction-button]')) {
+      showReactionPicker.value = false
+    }
+  }
+}
+
 // Lifecycle
 onMounted(() => {
+  document.addEventListener('click', handleClickOutside)
   // Initialize audio duration if available
   if (audioPlayer.value && audioPlayer.value.readyState > 0) {
     setAudioDuration()
@@ -679,6 +692,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  document.removeEventListener('click', handleClickOutside)
   // Clean up audio player
   if (audioPlayer.value) {
     audioPlayer.value.pause()

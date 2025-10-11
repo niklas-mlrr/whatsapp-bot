@@ -71,6 +71,7 @@ class WhatsAppMessageService
                     'document' => $this->handleDocumentMessage($data),
                     'location' => $this->handleLocationMessage($data),
                     'contact' => $this->handleContactMessage($data),
+                    'reaction' => $this->handleReactionMessage($data),
                     default => $this->handleUnknownMessage($data),
                 };
 
@@ -786,6 +787,69 @@ class WhatsAppMessageService
             // If we still can't find the user, rethrow the exception
             throw $e;
         }
+    }
+    
+    /**
+     * Handle reaction messages
+     */
+    private function handleReactionMessage(WhatsAppMessageData $data): ?WhatsAppMessage
+    {
+        Log::channel('whatsapp')->info('Processing reaction message', [
+            'reactedMessageId' => $data->reactedMessageId ?? null,
+            'emoji' => $data->emoji ?? null,
+            'sender' => $data->sender,
+        ]);
+        
+        // Find the message that was reacted to
+        $message = WhatsAppMessage::where('metadata->message_id', $data->reactedMessageId)
+            ->orWhere('id', $data->reactedMessageId)
+            ->first();
+        
+        if (!$message) {
+            Log::channel('whatsapp')->warning('Message not found for reaction', [
+                'reactedMessageId' => $data->reactedMessageId
+            ]);
+            return null;
+        }
+        
+        // Get current reactions
+        $reactions = $message->reactions ?? [];
+        
+        // If emoji is empty, remove the reaction
+        if (empty($data->emoji)) {
+            unset($reactions[$data->sender_id]);
+            Log::channel('whatsapp')->info('Removed reaction', [
+                'message_id' => $message->id,
+                'user_id' => $data->sender_id
+            ]);
+        } else {
+            // Add or update reaction
+            $reactions[$data->sender_id] = $data->emoji;
+            Log::channel('whatsapp')->info('Added/updated reaction', [
+                'message_id' => $message->id,
+                'user_id' => $data->sender_id,
+                'emoji' => $data->emoji
+            ]);
+        }
+        
+        // Update message with new reactions
+        $message->update([
+            'reactions' => empty($reactions) ? null : $reactions
+        ]);
+        
+        // Broadcast the reaction update
+        $user = User::find($data->sender_id);
+        if ($user) {
+            broadcast(new \App\Events\MessageReaction(
+                $message,
+                $user,
+                $data->emoji ?? '',
+                !empty($data->emoji)
+            ))->toOthers();
+        }
+        
+        // Return null because reactions don't create new messages
+        return null;
     }
     
     /**

@@ -373,6 +373,56 @@ async function start() {
         }
     });
 
+    // Send reaction endpoint
+    app.post('/send-reaction', async (req, res) => {
+        console.log('Received send-reaction request:', req.body);
+        
+        const { chat, messageId, emoji } = req.body;
+        
+        if (!sockInstance || !isConnected) {
+            console.error('WhatsApp not connected');
+            return res.status(503).json({ error: 'WhatsApp not connected' });
+        }
+        
+        if (!chat || !messageId) {
+            console.error('Missing required fields:', { chat, messageId });
+            return res.status(400).json({ error: 'Missing chat or messageId' });
+        }
+        
+        try {
+            // Send reaction to WhatsApp
+            const reactionMessage = {
+                react: {
+                    text: emoji || '', // Empty string removes the reaction
+                    key: {
+                        remoteJid: chat,
+                        id: messageId,
+                        fromMe: false
+                    }
+                }
+            };
+            
+            console.log('Sending reaction to WhatsApp:', reactionMessage);
+            await sockInstance.sendMessage(chat, reactionMessage);
+            
+            console.log('Reaction sent successfully');
+            res.json({ status: 'sent' });
+            
+        } catch (err) {
+            console.error('Failed to send reaction:', {
+                error: err.message,
+                stack: err.stack,
+                chat,
+                messageId,
+                emoji
+            });
+            res.status(500).json({ 
+                error: 'Failed to send reaction', 
+                details: err.message
+            });
+        }
+    });
+
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, () => {
         console.log(`Express server listening on port ${PORT}`);

@@ -18,7 +18,12 @@ class WhatsAppMessageData
         public readonly ?string $messageId = null,
         public readonly ?bool $isGroup = false,
         public readonly ?string $fileName = null,
-        public readonly ?int $mediaSize = null
+        public readonly ?int $mediaSize = null,
+        public readonly ?string $reactedMessageId = null,
+        public readonly ?string $emoji = null,
+        public readonly ?string $senderJid = null,
+        public ?int $sender_id = null,
+        public ?int $chat_id = null
     ) {
     }
 
@@ -59,7 +64,10 @@ class WhatsAppMessageData
             messageId: $validated['messageId'] ?? $validated['id'] ?? null,
             isGroup: (bool)($validated['isGroup'] ?? false),
             fileName: $validated['fileName'] ?? null,
-            mediaSize: $validated['mediaSize'] ?? null
+            mediaSize: $validated['mediaSize'] ?? null,
+            reactedMessageId: $validated['reactedMessageId'] ?? null,
+            emoji: $validated['emoji'] ?? null,
+            senderJid: $validated['senderJid'] ?? null
         );
     }
 }

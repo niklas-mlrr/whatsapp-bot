@@ -248,6 +248,9 @@ class MessageStatusController extends Controller
             // Update the message with the new reactions
             $message->update(['reactions' => $reactions]);
 
+            // Send reaction to WhatsApp via receiver
+            $this->sendReactionToWhatsApp($message, $reaction);
+
             // Notify via WebSocket
             $this->webSocketService->messageReactionUpdated($message, $userId, $reaction);
 
@@ -305,6 +308,9 @@ class MessageStatusController extends Controller
                 'reactions' => !empty($reactions) ? $reactions : null,
             ]);
 
+            // Send reaction removal to WhatsApp via receiver
+            $this->sendReactionToWhatsApp($message, '');
+
             // Notify via WebSocket (null reaction indicates removal)
             $this->webSocketService->messageReactionUpdated($message, $userId, null);
 
@@ -330,6 +336,80 @@ class MessageStatusController extends Controller
                 'message' => 'Failed to remove reaction',
                 'error' => $e->getMessage(),
             ], 500);
+        }
+    }
+
+    /**
+     * Send reaction to WhatsApp via receiver
+     */
+    private function sendReactionToWhatsApp(WhatsAppMessage $message, string $emoji): void
+    {
+        try {
+            // Get the original WhatsApp message ID from metadata
+            $metadata = $message->metadata ?? [];
+            $whatsappMessageId = $metadata['message_id'] ?? null;
+            
+            if (!$whatsappMessageId) {
+                Log::channel('whatsapp')->warning('Cannot send reaction: WhatsApp message ID not found', [
+                    'message_id' => $message->id
+                ]);
+                return;
+            }
+
+            // Get the chat (phone number with @s.whatsapp.net)
+            $chat = $message->chat;
+            if (!$chat) {
+                Log::channel('whatsapp')->warning('Cannot send reaction: Chat not found', [
+                    'message_id' => $message->id
+                ]);
+                return;
+            }
+
+            // Get chat model to find the WhatsApp JID
+            $chatModel = \App\Models\Chat::find($message->chat_id);
+            if (!$chatModel) {
+                Log::channel('whatsapp')->warning('Cannot send reaction: Chat model not found', [
+                    'message_id' => $message->id,
+                    'chat_id' => $message->chat_id
+                ]);
+                return;
+            }
+
+            // Use the chat name which should be the WhatsApp JID
+            $chatJid = $chatModel->name;
+
+            $receiverUrl = env('WHATSAPP_RECEIVER_URL', 'http://localhost:3000');
+            
+            $response = \Illuminate\Support\Facades\Http::timeout(10)->post("{$receiverUrl}/send-reaction", [
+                'chat' => $chatJid,
+                'messageId' => $whatsappMessageId,
+                'emoji' => $emoji
+            ]);
+
+            if (!$response->successful()) {
+                Log::channel('whatsapp')->error('Failed to send reaction to WhatsApp', [
+                    'message_id' => $message->id,
+                    'whatsapp_message_id' => $whatsappMessageId,
+                    'chat' => $chatJid,
+                    'emoji' => $emoji,
+                    'status' => $response->status(),
+                    'response' => $response->body()
+                ]);
+            } else {
+                Log::channel('whatsapp')->info('Reaction sent to WhatsApp', [
+                    'message_id' => $message->id,
+                    'whatsapp_message_id' => $whatsappMessageId,
+                    'chat' => $chatJid,
+                    'emoji' => $emoji
+                ]);
+            }
+        } catch (\Exception $e) {
+            Log::channel('whatsapp')->error('Exception sending reaction to WhatsApp', [
+                'message_id' => $message->id,
+                'emoji' => $emoji,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
         }
     }
 }

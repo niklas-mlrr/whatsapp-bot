@@ -339,7 +339,9 @@ class ChatController extends Controller
                             'inbound' as direction,
                             m.status,
                             m.media_url,
-                            m.media_type
+                            m.media_type,
+                            m.metadata,
+                            m.reactions
                         FROM whatsapp_messages m
                         LEFT JOIN users u ON m.sender_id = u.id
                         WHERE m.chat_id = ?
@@ -366,7 +368,9 @@ class ChatController extends Controller
                             'inbound' as direction,
                             m.status,
                             m.media_url,
-                            m.media_type
+                            m.media_type,
+                            m.metadata,
+                            m.reactions
                         FROM whatsapp_messages m
                         LEFT JOIN users u ON m.sender_id = u.id
                         WHERE m.chat_id = ?
@@ -389,8 +393,10 @@ class ChatController extends Controller
                         m.type,
                         'inbound' as direction,
                         m.status,
-                        m.media,
-                        m.mimetype
+                        m.media_url,
+                        m.media_type,
+                        m.metadata,
+                        m.reactions
                     FROM whatsapp_messages m
                     LEFT JOIN users u ON m.sender_id = u.id
                     WHERE m.chat_id = ?
@@ -406,6 +412,25 @@ class ChatController extends Controller
         $rows = array_reverse($rows);
 
         $formatted = array_map(function ($m) use ($currentUserId) {
+            // Decode metadata if it's a JSON string
+            $metadata = isset($m->metadata) && is_string($m->metadata) ? json_decode($m->metadata, true) : [];
+            if (!is_array($metadata)) {
+                $metadata = [];
+            }
+            
+            // Decode reactions if it's a JSON string
+            $reactions = null;
+            if (isset($m->reactions)) {
+                $reactions = is_string($m->reactions) ? json_decode($m->reactions, true) : $m->reactions;
+                if (!is_array($reactions)) {
+                    $reactions = null;
+                }
+            }
+            
+            // Extract filename and size from metadata
+            $filename = $metadata['filename'] ?? $metadata['original_name'] ?? null;
+            $fileSize = $metadata['file_size'] ?? $metadata['size'] ?? null;
+            
             return [
                 'id' => (string) $m->id,
                 'content' => $m->content,
@@ -421,6 +446,9 @@ class ChatController extends Controller
                 'is_from_me' => ((string) $m->sender_id === (string) $currentUserId),
                 'media' => $m->media_url ?? null,
                 'mimetype' => $m->media_type ?? null,
+                'filename' => $filename,
+                'size' => $fileSize,
+                'reactions' => $reactions,
             ];
         }, $rows);
 
@@ -532,7 +560,8 @@ class ChatController extends Controller
                             m.status,
                             m.media_url,
                             m.media_type,
-                            m.metadata
+                            m.metadata,
+                            m.reactions
                         FROM whatsapp_messages m
                         LEFT JOIN users u ON m.sender_id = u.id
                         WHERE m.chat_id = ?
@@ -562,7 +591,8 @@ class ChatController extends Controller
                         m.status,
                         m.media_url,
                         m.media_type,
-                        m.metadata
+                        m.metadata,
+                        m.reactions
                     FROM whatsapp_messages m
                     LEFT JOIN users u ON m.sender_id = u.id
                     WHERE m.chat_id = ?
@@ -581,6 +611,15 @@ class ChatController extends Controller
                 $metadata = is_string($m->metadata) ? json_decode($m->metadata, true) : [];
                 if (!is_array($metadata)) {
                     $metadata = [];
+                }
+                
+                // Decode reactions if it's a JSON string
+                $reactions = null;
+                if (isset($m->reactions)) {
+                    $reactions = is_string($m->reactions) ? json_decode($m->reactions, true) : $m->reactions;
+                    if (!is_array($reactions)) {
+                        $reactions = null;
+                    }
                 }
                 
                 // Extract filename and size from metadata
@@ -607,6 +646,7 @@ class ChatController extends Controller
                     'mimetype' => $mimetype,
                     'filename' => $filename,
                     'size' => $fileSize,
+                    'reactions' => $reactions,
                 ];
             }, $rows);
 

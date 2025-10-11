@@ -826,11 +826,20 @@ const handleAddReaction = async (payload: { messageId: string | number; emoji: s
       reaction: payload.emoji
     });
     
+    console.log('Add reaction response:', response.data);
+    
     if (response.data.status === 'success') {
       // Update local message with new reactions
-      const message = messages.value.find(m => m.id === payload.messageId);
-      if (message) {
-        message.reactions = response.data.data.reactions;
+      const messageIndex = messages.value.findIndex(m => m.id === payload.messageId);
+      console.log('Found message at index:', messageIndex);
+      if (messageIndex !== -1) {
+        console.log('Setting reactions to:', response.data.data.reactions);
+        // Use Vue's reactivity by creating a new object
+        messages.value[messageIndex] = {
+          ...messages.value[messageIndex],
+          reactions: response.data.data.reactions
+        };
+        console.log('Message reactions after update:', messages.value[messageIndex].reactions);
       }
     }
   } catch (error) {
@@ -844,11 +853,17 @@ const handleRemoveReaction = async (payload: { messageId: string | number }) => 
     
     const response = await apiClient.delete(`/messages/${payload.messageId}/reactions/${props.currentUser.id}`);
     
+    console.log('Remove reaction response:', response.data);
+    
     if (response.data.status === 'success') {
       // Update local message with new reactions
-      const message = messages.value.find(m => m.id === payload.messageId);
-      if (message) {
-        message.reactions = response.data.data.reactions;
+      const messageIndex = messages.value.findIndex(m => m.id === payload.messageId);
+      if (messageIndex !== -1) {
+        // Use Vue's reactivity by creating a new object
+        messages.value[messageIndex] = {
+          ...messages.value[messageIndex],
+          reactions: response.data.data.reactions
+        };
       }
     }
   } catch (error) {
@@ -1237,23 +1252,34 @@ const setupWebSocketListeners = () => {
       console.log(`Reaction ${event.added ? 'added' : 'removed'} on message ${event.message_id}`);
       
       // Update the message with new reactions
-      const message = messages.value.find(m => m.id === event.message_id);
-      if (message) {
+      const messageIndex = messages.value.findIndex(m => m.id === event.message_id);
+      if (messageIndex !== -1) {
+        const message = messages.value[messageIndex];
+        let updatedReactions = message.reactions || {};
+        
+        if (typeof updatedReactions === 'string') {
+          updatedReactions = {};
+        }
+        
         if (event.added) {
           // Add or update reaction
-          if (!message.reactions || typeof message.reactions === 'string') {
-            message.reactions = {};
-          }
-          if (typeof message.reactions === 'object') {
-            message.reactions[event.user.id] = event.reaction;
-          }
+          updatedReactions = {
+            ...updatedReactions,
+            [event.user.id]: event.reaction
+          };
         } else {
           // Remove reaction
-          if (message.reactions && typeof message.reactions === 'object') {
-            delete message.reactions[event.user.id];
-          }
+          updatedReactions = { ...updatedReactions };
+          delete updatedReactions[event.user.id];
         }
-        console.log('Updated message reactions:', message.reactions);
+        
+        // Use Vue's reactivity by creating a new object
+        messages.value[messageIndex] = {
+          ...message,
+          reactions: updatedReactions
+        };
+        
+        console.log('Updated message reactions:', messages.value[messageIndex].reactions);
       }
       
       console.groupEnd();

@@ -55,7 +55,7 @@ class MessageReaction implements ShouldBroadcast
      */
     public function __construct(WhatsAppMessage $message, User $user, string $reaction, bool $added = true)
     {
-        $this->message = $message->load('chat');
+        $this->message = $message;
         $this->user = $user->only(['id', 'name', 'avatar_url']);
         $this->reaction = $reaction;
         $this->added = $added;
