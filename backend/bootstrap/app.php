@@ -36,6 +36,8 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'throttle' => \Illuminate\Routing\Middleware\ThrottleRequests::class,
             'auth.sanctum' => \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class,
+            'verify.webhook' => \App\Http\Middleware\VerifyWebhookSecret::class,
+            'verify.receiver' => \App\Http\Middleware\VerifyReceiverApiKey::class,
         ]);
         
         // Completely disable CSRF middleware

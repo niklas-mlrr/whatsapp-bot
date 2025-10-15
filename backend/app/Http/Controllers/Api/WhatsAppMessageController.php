@@ -402,6 +402,7 @@ class WhatsAppMessageController extends Controller
                 ->withHeaders([
                     'Accept' => 'application/json',
                     'Content-Type' => 'application/json',
+                    'X-API-Key' => config('app.receiver_api_key', ''),
                 ]);
 
             $isHttps = str_starts_with(strtolower($receiverUrl), 'https://');

@@ -11,7 +11,7 @@ const apiClient = axios.create({
     timeout: config.backend.timeoutMs,
     headers: {
         'Content-Type': 'application/json',
-        'X-API-KEY': config.backend.apiKey,
+        'X-Webhook-Secret': process.env.WEBHOOK_SECRET || config.backend.webhookSecret || '',
         'User-Agent': `WhatsAppBot/${process.env.npm_package_version || '1.0.0'}`,
     },
     maxContentLength: config.media.maxSizeMB * 1024 * 1024, // Convert MB to bytes

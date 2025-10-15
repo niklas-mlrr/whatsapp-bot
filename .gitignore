@@ -15,6 +15,11 @@ Thumbs.db
 # Env
 .env
 .env.*
+!.env.example
+# CRITICAL: Never commit secrets
+secrets.txt
+*.secret
+*.key
 # Build
 /dist/
 /build/
@@ -26,3 +31,9 @@ yarn-error.log*
 pnpm-debug.log*
 # Misc
 *.local
+# Security sensitive
+/backend/storage/
+/receiver/logs/
+/receiver/media/
+/receiver/baileys_auth_info/
+receiver/.env

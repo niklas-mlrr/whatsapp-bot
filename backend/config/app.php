@@ -125,6 +125,20 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Security Configuration
+    |--------------------------------------------------------------------------
+    |
+    | These values control security-related settings for the application.
+    | Webhook secret is used to authenticate incoming webhook requests.
+    | Receiver API key is used to authenticate the receiver service.
+    |
+    */
+
+    'webhook_secret' => env('WEBHOOK_SECRET'),
+    'receiver_api_key' => env('RECEIVER_API_KEY'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Autoloaded Service Providers
     |--------------------------------------------------------------------------
     |

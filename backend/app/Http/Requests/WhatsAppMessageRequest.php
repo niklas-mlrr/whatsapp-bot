@@ -13,8 +13,8 @@ class WhatsAppMessageRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        // Hier könnte man z.B. die IP-Adresse des Absenders prüfen.
-        // Fürs Erste erlauben wir alle Anfragen.
+        // Authorization is now handled by VerifyWebhookSecret middleware
+        // This ensures the request comes from the authenticated receiver service
         return true;
     }
 
@@ -64,5 +64,40 @@ class WhatsAppMessageRequest extends FormRequest
         ]);
 
         return $rules;
+    }
+
+    /**
+     * Prepare the data for validation.
+     */
+    protected function prepareForValidation(): void
+    {
+        // Sanitize string inputs to prevent XSS
+        $sanitizedData = [];
+        
+        if ($this->has('content')) {
+            $sanitizedData['content'] = \App\Helpers\SecurityHelper::sanitizeString($this->input('content'));
+        }
+        
+        if ($this->has('body')) {
+            $sanitizedData['body'] = \App\Helpers\SecurityHelper::sanitizeString($this->input('body'));
+        }
+        
+        if ($this->has('sender')) {
+            $sanitizedData['sender'] = \App\Helpers\SecurityHelper::sanitizePhone($this->input('sender'));
+        }
+        
+        if ($this->has('from')) {
+            $sanitizedData['from'] = \App\Helpers\SecurityHelper::sanitizePhone($this->input('from'));
+        }
+        
+        if ($this->has('chat')) {
+            $sanitizedData['chat'] = \App\Helpers\SecurityHelper::sanitizePhone($this->input('chat'));
+        }
+        
+        if ($this->has('fileName')) {
+            $sanitizedData['fileName'] = \App\Helpers\SecurityHelper::sanitizeFilename($this->input('fileName'));
+        }
+        
+        $this->merge($sanitizedData);
     }
 }

@@ -89,14 +89,61 @@ See [ENV_EXAMPLE.md](ENV_EXAMPLE.md) for detailed environment variable configura
 ### Containerization (Docker)
 Docker support can be added by creating appropriate `Dockerfile` and `docker-compose.yml` files.
 
-## Security Considerations
+## Security
 
-- Use HTTPS in production
-- Implement proper authentication and authorization
-- Validate and sanitize all user inputs
-- Regularly update dependencies
-- Monitor logs for suspicious activities
-- Implement rate limiting
+⚠️ **IMPORTANT**: This application has been security-hardened for production deployment.
+
+### Before Deploying to Production
+
+**REQUIRED STEPS**:
+
+1. **Generate Secure Secrets**:
+   ```powershell
+   # Windows
+   .\generate-secrets.ps1
+   
+   # Linux/Mac
+   bash generate-secrets.sh
+   ```
+
+2. **Review Security Documentation**:
+   - Read [SECURITY_FIXES_SUMMARY.md](SECURITY_FIXES_SUMMARY.md) for all security improvements
+   - Follow [PRODUCTION_DEPLOYMENT_GUIDE.md](PRODUCTION_DEPLOYMENT_GUIDE.md) step-by-step
+
+3. **Critical Configuration**:
+   - Set `APP_DEBUG=false` in backend `.env`
+   - Configure `WEBHOOK_SECRET` (must match in backend and receiver)
+   - Configure `RECEIVER_API_KEY` (must match in backend and receiver)
+   - Set `CORS_ALLOWED_ORIGINS` to your actual domain (not `*`)
+   - Use strong database passwords
+
+### Security Features Implemented
+
+✅ **Webhook Authentication** - Prevents unauthorized message injection  
+✅ **API Key Protection** - Secures receiver service endpoints  
+✅ **Input Sanitization** - Prevents XSS and injection attacks  
+✅ **CORS Configuration** - Restricts cross-origin requests  
+✅ **Rate Limiting** - Protects against brute force and DDoS  
+✅ **File Upload Validation** - Prevents malicious file uploads  
+✅ **SQL Injection Prevention** - Uses parameterized queries  
+✅ **HTTPS/TLS Support** - Encrypted communications  
+
+### Security Checklist
+
+Before going live, ensure:
+
+- [ ] All secrets generated and configured
+- [ ] `APP_DEBUG=false` in production
+- [ ] CORS configured with actual domain
+- [ ] SSL/TLS certificate installed
+- [ ] Firewall configured (only ports 22, 80, 443 open)
+- [ ] Database user has minimal privileges
+- [ ] File permissions set correctly
+- [ ] Rate limiting enabled
+- [ ] Logs monitored
+- [ ] Backups configured
+
+See [PRODUCTION_DEPLOYMENT_GUIDE.md](PRODUCTION_DEPLOYMENT_GUIDE.md) for complete details.
 
 ## License
 
