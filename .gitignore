@@ -36,4 +36,4 @@ pnpm-debug.log*
 /receiver/logs/
 /receiver/media/
 /receiver/baileys_auth_info/
-receiver/.env
+/receiver/.env
