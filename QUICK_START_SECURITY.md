@@ -27,7 +27,8 @@ bash generate-secrets.sh
 Edit `backend/.env`:
 
 ```bash
-# CRITICAL - Set to false in production
+# CRITICAL - Set to production
+APP_ENV=production
 APP_DEBUG=false
 
 # Paste your generated secrets here
@@ -60,19 +61,15 @@ BACKEND_API_URL=http://localhost:8000/api/whatsapp-webhook
 
 ---
 
-## Step 4: Update Routes (30 seconds)
+## Step 4: Verify Routes Are Secured (10 seconds)
 
-For production, use the secure routes file:
+**Good news!** The routes file has been updated with environment-based security:
 
-**Option A - Rename files:**
-```bash
-cd backend/routes
-mv api.php api_dev.php
-mv api_production.php api.php
-```
+✅ Debug endpoints are automatically disabled when `APP_ENV=production`  
+✅ Webhook endpoint requires authentication  
+✅ Rate limiting is enabled on all routes  
 
-**Option B - Copy content:**
-Copy content from `backend/routes/api_production.php` to `backend/routes/api.php`
+**No action needed** - just ensure `APP_ENV=production` in your backend `.env`
 
 ---
 

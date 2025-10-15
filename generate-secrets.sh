@@ -29,6 +29,13 @@ echo "✓ Generated RECEIVER_API_KEY (64 characters)"
 DB_PASSWORD=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-32)
 echo "✓ Generated DB_PASSWORD (32 characters)"
 
+# Generate Reverb secrets
+REVERB_APP_KEY=$(openssl rand -hex 16)
+echo "✓ Generated REVERB_APP_KEY (32 characters)"
+
+REVERB_APP_SECRET=$(openssl rand -hex 32)
+echo "✓ Generated REVERB_APP_SECRET (64 characters)"
+
 echo ""
 echo "=========================================="
 echo "IMPORTANT: Copy these secrets to your .env files"
@@ -40,12 +47,19 @@ echo "-------------------"
 echo "WEBHOOK_SECRET=${WEBHOOK_SECRET}"
 echo "RECEIVER_API_KEY=${RECEIVER_API_KEY}"
 echo "DB_PASSWORD=${DB_PASSWORD}"
+echo "REVERB_APP_KEY=${REVERB_APP_KEY}"
+echo "REVERB_APP_SECRET=${REVERB_APP_SECRET}"
 echo ""
 
 echo "For Receiver (.env):"
 echo "--------------------"
 echo "WEBHOOK_SECRET=${WEBHOOK_SECRET}"
 echo "RECEIVER_API_KEY=${RECEIVER_API_KEY}"
+echo ""
+
+echo "For Frontend (.env.production):"
+echo "--------------------------------"
+echo "VITE_REVERB_APP_KEY=${REVERB_APP_KEY}"
 echo ""
 
 echo "=========================================="
@@ -71,10 +85,15 @@ Backend .env:
 WEBHOOK_SECRET=${WEBHOOK_SECRET}
 RECEIVER_API_KEY=${RECEIVER_API_KEY}
 DB_PASSWORD=${DB_PASSWORD}
+REVERB_APP_KEY=${REVERB_APP_KEY}
+REVERB_APP_SECRET=${REVERB_APP_SECRET}
 
 Receiver .env:
 WEBHOOK_SECRET=${WEBHOOK_SECRET}
 RECEIVER_API_KEY=${RECEIVER_API_KEY}
+
+Frontend .env.production:
+VITE_REVERB_APP_KEY=${REVERB_APP_KEY}
 
 # IMPORTANT: Delete this file immediately after use!
 # Run: rm secrets.txt
@@ -89,6 +108,8 @@ fi
 echo ""
 echo "Next steps:"
 echo "1. Copy the secrets above to your .env files"
-echo "2. Generate Laravel APP_KEY: cd backend && php artisan key:generate"
-echo "3. Review PRODUCTION_DEPLOYMENT_GUIDE.md for complete setup"
+echo "2. Generate Laravel APP_KEY:"
+echo "   cd backend && php artisan key:generate"
+echo "3. IMPORTANT: REVERB_APP_KEY must match in backend and frontend"
+echo "4. Review PRODUCTION_DEPLOYMENT_GUIDE.md for complete setup"
 echo ""

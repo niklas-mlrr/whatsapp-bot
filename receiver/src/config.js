@@ -34,7 +34,11 @@ const config = {
     
     // Logging Configuration
     logging: {
-        level: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'production' ? 'info' : 'debug'),
+        level: (() => {
+            const logLevel = process.env.LOG_LEVEL || (process.env.NODE_ENV === 'production' ? 'info' : 'debug');
+            // Map 'warning' to 'warn' for Pino compatibility
+            return logLevel === 'warning' ? 'warn' : logLevel;
+        })(),
         logToFile: process.env.LOG_TO_FILE === 'true' || process.env.NODE_ENV === 'production',
         logFilePath: process.env.LOG_FILE_PATH || path.join(process.cwd(), 'logs', 'app.log'),
         logToConsole: process.env.LOG_TO_CONSOLE !== 'false',

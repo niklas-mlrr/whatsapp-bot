@@ -17,6 +17,29 @@ class WhatsAppWebhookController extends Controller
 
     public function handle(WhatsAppMessageRequest $request): JsonResponse
     {
+        // Verify webhook secret
+        $webhookSecret = config('app.webhook_secret');
+        
+        if (!empty($webhookSecret)) {
+            $providedSecret = $request->header('X-Webhook-Secret') 
+                           ?? $request->header('X-API-Key')
+                           ?? $request->input('webhook_secret');
+            
+            if (!hash_equals($webhookSecret, $providedSecret ?? '')) {
+                Log::warning('Webhook authentication failed', [
+                    'ip' => $request->ip(),
+                    'user_agent' => $request->userAgent(),
+                ]);
+                
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Unauthorized: Invalid webhook secret',
+                ], 401);
+            }
+        } else {
+            Log::warning('SECURITY WARNING: No webhook secret configured. Set WEBHOOK_SECRET in .env');
+        }
+        
         try {
             $messageData = WhatsAppMessageData::fromRequest($request);
             $this->messageService->handle($messageData);

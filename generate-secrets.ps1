@@ -39,6 +39,12 @@ Write-Host "[OK] Generated RECEIVER_API_KEY (64 characters)" -ForegroundColor Gr
 $DB_PASSWORD = (Get-RandomBase64 -Length 32).Substring(0, 32)
 Write-Host "[OK] Generated DB_PASSWORD (32 characters)" -ForegroundColor Green
 
+$REVERB_APP_KEY = Get-RandomHex -Length 16
+Write-Host "[OK] Generated REVERB_APP_KEY (32 characters)" -ForegroundColor Green
+
+$REVERB_APP_SECRET = Get-RandomHex -Length 32
+Write-Host "[OK] Generated REVERB_APP_SECRET (64 characters)" -ForegroundColor Green
+
 Write-Host ""
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host "IMPORTANT: Copy these secrets to your .env files" -ForegroundColor Yellow
@@ -50,12 +56,19 @@ Write-Host "-------------------" -ForegroundColor White
 Write-Host "WEBHOOK_SECRET=$WEBHOOK_SECRET" -ForegroundColor Green
 Write-Host "RECEIVER_API_KEY=$RECEIVER_API_KEY" -ForegroundColor Green
 Write-Host "DB_PASSWORD=$DB_PASSWORD" -ForegroundColor Green
+Write-Host "REVERB_APP_KEY=$REVERB_APP_KEY" -ForegroundColor Green
+Write-Host "REVERB_APP_SECRET=$REVERB_APP_SECRET" -ForegroundColor Green
 Write-Host ""
 
 Write-Host "For Receiver (.env):" -ForegroundColor White
 Write-Host "--------------------" -ForegroundColor White
 Write-Host "WEBHOOK_SECRET=$WEBHOOK_SECRET" -ForegroundColor Green
 Write-Host "RECEIVER_API_KEY=$RECEIVER_API_KEY" -ForegroundColor Green
+Write-Host ""
+
+Write-Host "For Frontend (.env.production):" -ForegroundColor White
+Write-Host "--------------------------------" -ForegroundColor White
+Write-Host "VITE_REVERB_APP_KEY=$REVERB_APP_KEY" -ForegroundColor Green
 Write-Host ""
 
 Write-Host "==========================================" -ForegroundColor Cyan
@@ -80,10 +93,15 @@ Backend .env:
 WEBHOOK_SECRET=$WEBHOOK_SECRET
 RECEIVER_API_KEY=$RECEIVER_API_KEY
 DB_PASSWORD=$DB_PASSWORD
+REVERB_APP_KEY=$REVERB_APP_KEY
+REVERB_APP_SECRET=$REVERB_APP_SECRET
 
 Receiver .env:
 WEBHOOK_SECRET=$WEBHOOK_SECRET
 RECEIVER_API_KEY=$RECEIVER_API_KEY
+
+Frontend .env.production:
+VITE_REVERB_APP_KEY=$REVERB_APP_KEY
 
 # IMPORTANT: Delete this file immediately after use!
 # Run: Remove-Item secrets.txt
@@ -100,8 +118,11 @@ RECEIVER_API_KEY=$RECEIVER_API_KEY
 Write-Host ""
 Write-Host "Next steps:" -ForegroundColor Yellow
 Write-Host "1. Copy the secrets above to your .env files"
-Write-Host "2. Generate Laravel APP_KEY: cd backend; php artisan key:generate"
-Write-Host "3. Review PRODUCTION_DEPLOYMENT_GUIDE.md for complete setup"
+Write-Host "2. Generate Laravel APP_KEY:"
+Write-Host "   cd backend"
+Write-Host "   php artisan key:generate"
+Write-Host "3. IMPORTANT: REVERB_APP_KEY must match in backend and frontend"
+Write-Host "4. Review PRODUCTION_DEPLOYMENT_GUIDE.md for complete setup"
 Write-Host ""
 
 # Keep window open

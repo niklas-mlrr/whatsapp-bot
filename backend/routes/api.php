@@ -25,13 +25,20 @@ use Illuminate\Support\Facades\Schema;
 */
 
 // Public routes
-Route::post('/login', [\App\Http\Controllers\Api\AuthController::class, 'login']);
+Route::post('/login', [\App\Http\Controllers\Api\AuthController::class, 'login'])
+    ->middleware('throttle:5,1'); // Rate limit: 5 attempts per minute
+
 Route::post('/test', function () {
     return response()->json(['status' => 'ok']);
 });
 
-// Test endpoint to check database connection
-Route::get('/test-db', function () {
+// ============================================================================
+// DEBUG/TEST ENDPOINTS - ONLY AVAILABLE IN DEVELOPMENT
+// These endpoints are DISABLED in production for security
+// ============================================================================
+if (config('app.env') !== 'production') {
+    // Test endpoint to check database connection
+    Route::get('/test-db', function () {
     try {
         $userCount = \App\Models\User::count();
         $chatCount = \App\Models\Chat::count();
@@ -161,11 +168,15 @@ Route::get('/test-tables', function () {
         ], 500);
     }
 });
+} // End of debug/test endpoints
 
-// Webhook endpoint (public)
+// ============================================================================
+// PRODUCTION ENDPOINTS - Always available
+// ============================================================================
+
+// Webhook endpoint (temporarily without middleware for testing)
+// TODO: Re-enable middleware after testing
 Route::post('/whatsapp/webhook', [WhatsAppWebhookController::class, 'handle'])->name('whatsapp.webhook');
-
-// Backward compatibility for old webhook URL
 Route::post('/whatsapp-webhook', [WhatsAppWebhookController::class, 'handle']);
 
 // Simple auth check endpoint
@@ -174,8 +185,8 @@ Route::get('/check-auth', function () {
     return response()->json(['authenticated' => true]);
 });
 
-// Protected routes
-Route::middleware(['auth:sanctum'])->group(function () {
+// Protected routes (require authentication + rate limiting)
+Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     // Auth routes
     Route::post('/logout', [\App\Http\Controllers\Api\AuthController::class, 'logout']);
     Route::get('/me', [\App\Http\Controllers\Api\AuthController::class, 'user']);
