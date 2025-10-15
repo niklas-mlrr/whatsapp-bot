@@ -807,19 +807,33 @@ class WhatsAppMessageService
             'reactedMessageId' => $data->reactedMessageId ?? null,
             'emoji' => $data->emoji ?? null,
             'sender' => $data->sender,
+            'sender_id' => $data->sender_id ?? null,
         ]);
         
-        // Find the message that was reacted to
+        // Find the message that was reacted to by WhatsApp message ID
         $message = WhatsAppMessage::where('metadata->message_id', $data->reactedMessageId)
-            ->orWhere('id', $data->reactedMessageId)
             ->first();
         
         if (!$message) {
             Log::channel('whatsapp')->warning('Message not found for reaction', [
-                'reactedMessageId' => $data->reactedMessageId
+                'reactedMessageId' => $data->reactedMessageId,
+                'searched_metadata_message_id' => $data->reactedMessageId,
+                'searched_id' => $data->reactedMessageId,
+                'total_messages_in_db' => WhatsAppMessage::count(),
+                'recent_messages_with_metadata' => WhatsAppMessage::whereNotNull('metadata')
+                    ->orderBy('id', 'desc')
+                    ->limit(5)
+                    ->pluck('metadata', 'id')
+                    ->toArray()
             ]);
             return null;
         }
+        
+        Log::channel('whatsapp')->info('Found message for reaction', [
+            'message_id' => $message->id,
+            'message_metadata' => $message->metadata,
+            'current_reactions' => $message->reactions
+        ]);
         
         // Get current reactions
         $reactions = $message->reactions ?? [];
@@ -846,15 +860,38 @@ class WhatsAppMessageService
             'reactions' => empty($reactions) ? null : $reactions
         ]);
         
-        // Broadcast the reaction update
+        // Broadcast the reaction update via Laravel Broadcasting
         $user = User::find($data->sender_id);
         if ($user) {
+            Log::channel('whatsapp')->info('Broadcasting reaction event', [
+                'message_id' => $message->id,
+                'chat_id' => $message->chat_id,
+                'user_id' => $user->id,
+                'emoji' => $data->emoji ?? '',
+                'added' => !empty($data->emoji)
+            ]);
+            
             broadcast(new \App\Events\MessageReaction(
                 $message,
                 $user,
                 $data->emoji ?? '',
                 !empty($data->emoji)
-            ))->toOthers();
+            ));
+            
+            Log::channel('whatsapp')->info('Reaction event broadcasted');
+            
+            // Also notify via WebSocketService for compatibility
+            $this->webSocketService->messageReactionUpdated(
+                $message,
+                (string) $data->sender_id,
+                $data->emoji
+            );
+            
+            Log::channel('whatsapp')->info('WebSocketService notified');
+        } else {
+            Log::channel('whatsapp')->warning('User not found for broadcasting reaction', [
+                'sender_id' => $data->sender_id
+            ]);
         }
         
         // Return null because reactions don't create new messages

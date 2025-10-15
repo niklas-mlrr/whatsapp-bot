@@ -130,7 +130,7 @@ return [
         'whatsapp' => [
             'driver' => 'single',
             'path' => storage_path('logs/whatsapp.log'),
-            'level' => 'error',
+            'level' => 'debug',
         ],
 
 

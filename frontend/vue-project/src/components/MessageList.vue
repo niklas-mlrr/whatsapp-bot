@@ -53,6 +53,7 @@
               isMe: isMine(message),
               sender: typeof message.sender === 'string' ? message.sender : (getSenderName(message) || 'Unknown')
             }"
+            :current-user="currentUser"
             @open-image-preview="handleOpenImagePreview"
             @add-reaction="handleAddReaction"
             @remove-reaction="handleRemoveReaction"
@@ -1252,7 +1253,7 @@ const setupWebSocketListeners = () => {
       console.log(`Reaction ${event.added ? 'added' : 'removed'} on message ${event.message_id}`);
       
       // Update the message with new reactions
-      const messageIndex = messages.value.findIndex(m => m.id === event.message_id);
+      const messageIndex = messages.value.findIndex(m => String(m.id) === String(event.message_id));
       if (messageIndex !== -1) {
         const message = messages.value[messageIndex];
         let updatedReactions = message.reactions || {};

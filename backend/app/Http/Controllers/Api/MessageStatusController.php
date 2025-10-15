@@ -378,8 +378,9 @@ class MessageStatusController extends Controller
             // Use the chat name which should be the WhatsApp JID
             $chatJid = $chatModel->name;
 
-            $receiverUrl = env('WHATSAPP_RECEIVER_URL', 'http://localhost:3000');
+            $receiverUrl = env('RECEIVER_URL', 'http://localhost:3000');
             
+
             $response = \Illuminate\Support\Facades\Http::timeout(10)->post("{$receiverUrl}/send-reaction", [
                 'chat' => $chatJid,
                 'messageId' => $whatsappMessageId,

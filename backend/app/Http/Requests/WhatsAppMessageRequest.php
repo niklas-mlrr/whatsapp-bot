@@ -45,14 +45,14 @@ class WhatsAppMessageRequest extends FormRequest
             'media' => ['nullable', 'string'],
             'mimetype' => ['nullable', 'string'],
             'contextInfo' => ['sometimes', 'array'],
-            'messageId' => ['sometimes', 'string'],
+            'messageId' => ['nullable', 'string'],
             'isGroup' => ['sometimes', 'boolean'],
             'messageTimestamp' => ['sometimes', 'string'],
-            'fileName' => ['sometimes', 'string'],
-            'mediaSize' => ['sometimes', 'integer'],
-            'reactedMessageId' => ['sometimes', 'string'],
-            'emoji' => ['sometimes', 'string'],
-            'senderJid' => ['sometimes', 'string'],
+            'fileName' => ['nullable', 'string'],
+            'mediaSize' => ['nullable', 'integer'],
+            'reactedMessageId' => ['nullable', 'string'],
+            'emoji' => ['nullable', 'string'],
+            'senderJid' => ['nullable', 'string'],
         ];
 
         // Add required validation for either 'from' or 'sender'

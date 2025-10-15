@@ -320,19 +320,23 @@ export function useWebSocket() {
     const callbacks = reactionCallbacks.get(chatId)!;
     callbacks.add(callback);
 
-    // Set up the channel if not already done
-    if (!privateChannels.has(chatId)) {
-      const channel = echo?.private(`chat.${chatId}`);
+    // Get or create the channel
+    let channel = privateChannels.get(chatId);
+    if (!channel) {
+      channel = echo?.private(`chat.${chatId}`);
       if (channel) {
         privateChannels.set(chatId, channel);
-
-        channel.listen('.message.reaction', (data: any) => {
-          const callbacks = reactionCallbacks.get(chatId);
-          if (callbacks) {
-            callbacks.forEach(cb => cb(data));
-          }
-        });
       }
+    }
+
+    // Always add the listener (Echo handles duplicates)
+    if (channel) {
+      channel.listen('.message.reaction', (data: any) => {
+        const callbacks = reactionCallbacks.get(chatId);
+        if (callbacks) {
+          callbacks.forEach(cb => cb(data));
+        }
+      });
     }
 
     // Return cleanup function

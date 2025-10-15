@@ -9,10 +9,11 @@ use Illuminate\Broadcasting\InteractsWithSockets;
 use Illuminate\Broadcasting\PresenceChannel;
 use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
+use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
 use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Queue\SerializesModels;
 
-class MessageReaction implements ShouldBroadcast
+class MessageReaction implements ShouldBroadcastNow
 {
     use Dispatchable, InteractsWithSockets, SerializesModels;
 
@@ -56,7 +57,11 @@ class MessageReaction implements ShouldBroadcast
     public function __construct(WhatsAppMessage $message, User $user, string $reaction, bool $added = true)
     {
         $this->message = $message;
-        $this->user = $user->only(['id', 'name', 'avatar_url']);
+        $this->user = [
+            'id' => $user->id,
+            'name' => $user->name,
+            'avatar_url' => $user->avatar_url ?? null
+        ];
         $this->reaction = $reaction;
         $this->added = $added;
         
@@ -71,10 +76,9 @@ class MessageReaction implements ShouldBroadcast
      */
     public function broadcastOn()
     {
-        // Broadcast to the chat channel and the user's private channel
+        // Broadcast to the chat channel
         return [
             new PrivateChannel('chat.' . $this->message->chat_id),
-            new PrivateChannel('user.' . $this->message->sender_phone),
         ];
     }
     
@@ -112,7 +116,7 @@ class MessageReaction implements ShouldBroadcast
      */
     public function broadcastWhen()
     {
-        // Only broadcast if the message has a chat
-        return (bool) $this->message->chat;
+        // Only broadcast if the message has a chat_id
+        return (bool) $this->message->chat_id;
     }
 }

@@ -410,7 +410,7 @@ class WhatsAppMessageController extends Controller
                 $http = $http->withoutVerifying();
             }
 
-            $response = $http->post($receiverUrl, $sendPayload);
+            $response = $http->post("{$receiverUrl}/send-message", $sendPayload);
             
             if (!$response->successful()) {
                 $errorResponse = [
@@ -425,6 +425,15 @@ class WhatsAppMessageController extends Controller
                 \Log::error('Failed to send message to receiver', $errorResponse);
                 
                 return response()->json($errorResponse, 500);
+            }
+            
+            // Get the WhatsApp message ID from the receiver response
+            $receiverData = $response->json();
+            $whatsappMessageId = $receiverData['messageId'] ?? null;
+            
+            // Add the WhatsApp message ID to metadata
+            if ($whatsappMessageId) {
+                $metadata['message_id'] = $whatsappMessageId;
             }
             
             // If we get here, the message was sent successfully
