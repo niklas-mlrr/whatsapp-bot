@@ -74,7 +74,6 @@ type Chat = {
 
 declare global {
   interface Window {
-    axios: typeof axios;
     Pusher: any;
     Echo: any;
   }
@@ -120,7 +119,7 @@ export const useChatWebSockets = () => {
   const connectionListeners: Array<() => void> = [];
   
   // Track timeouts for cleanup
-  const timeouts = new Map<string, NodeJS.Timeout>();
+  const timeouts = new Map<string, number>();
   
   // Helper to generate unique IDs for listeners
   const generateId = (): string => {
@@ -214,39 +213,6 @@ export const useChatWebSockets = () => {
       console.error('Failed to initialize Echo:', error);
       throw error;
     }
-  };
-  };
-    if (echo.value) return echo.value;
-    
-    const token = localStorage.getItem('auth_token');
-    if (!token) {
-      console.error('No authentication token found');
-      return null;
-    }
-    
-    // @ts-ignore - Import Echo dynamically to avoid SSR issues
-    import('laravel-echo').then(({ default: Echo }) => {
-      echo.value = new window.Echo({
-        broadcaster: 'pusher',
-        key: import.meta.env.VITE_PUSHER_APP_KEY,
-        wsHost: import.meta.env.VITE_PUSHER_HOST || `ws-${import.meta.env.VITE_PUSHER_APP_CLUSTER}.pusher.com`,
-        wsPort: import.meta.env.VITE_PUSHER_PORT || 80,
-        wssPort: import.meta.env.VITE_PUSHER_PORT || 443,
-        forceTLS: (import.meta.env.VITE_PUSHER_SCHEME || 'https') === 'https',
-        disableStats: true,
-        enabledTransports: ['ws', 'wss'],
-        auth: {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'X-CSRF-TOKEN': document.head.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
-          },
-        },
-        authEndpoint: `${import.meta.env.VITE_API_URL}/broadcasting/auth`,
-      });
-      
-      setupConnectionHandlers();
-      return echo.value;
-    });
   };
   
   const getSocketId = (): string => {
@@ -454,50 +420,11 @@ export const useChatWebSockets = () => {
     }
   };
 
-  /**
-   * Clean up all listeners
-   */
-  const disconnect = () => {
-    // Unsubscribe from all channels
-    activeChannels.forEach(channel => {
-      echo.value.leave(channel);
-    });
-    
-    activePrivateChannels.forEach(channel => {
-      echo.value.leave(channel);
-    });
-    
-    activeChannels.clear();
-    activePrivateChannels.clear();
-    messageListeners.value = {};
-    
-    // Disconnect the WebSocket connection
-    disconnectWebSockets();
-  };
-
-  // Auto-cleanup when component unmounts
-  onUnmounted(() => {
-    disconnect();
-  });
-
-  // Add a connection listener
-  const onConnection = (callback: () => void): (() => void) => {
-    connectionListeners.push(callback);
-    
-    // Return cleanup function
-    return () => {
-      const index = connectionListeners.indexOf(callback);
-      if (index !== -1) {
-        connectionListeners.splice(index, 1);
-      }
-    };
-  };
   // Connect to WebSocket server
   const connect = async (): Promise<boolean> => {
     try {
       if (!echo.value) {
         echo.value = await initEcho();
-        setupConnectionHandlers(echo.value);
       }
       
       if (!isConnected.value) {
@@ -511,31 +438,6 @@ export const useChatWebSockets = () => {
       isConnected.value = false;
       throw error;
     }
-  };
-
-  // Set up WebSocket connection handlers
-  const setupConnectionHandlers = (echoInstance: any) => {
-    if (!echoInstance) return;
-    
-    const { pusher } = echoInstance.connector;
-    
-    pusher.connection.bind('connected', () => {
-      isConnected.value = true;
-      console.log('WebSocket connected');
-      
-      // Notify all connection listeners
-      connectionListeners.forEach(callback => callback());
-    });
-    
-    pusher.connection.bind('disconnected', () => {
-      isConnected.value = false;
-      console.log('WebSocket disconnected');
-    });
-    
-    pusher.connection.bind('error', (error: any) => {
-      console.error('WebSocket error:', error);
-      isConnected.value = false;
-    });
   };
 
   // Disconnect from WebSocket server
@@ -580,6 +482,24 @@ export const useChatWebSockets = () => {
       }
     }
   };
+
+  // Add a connection listener
+  const onConnection = (callback: () => void): (() => void) => {
+    connectionListeners.push(callback);
+    
+    // Return cleanup function
+    return () => {
+      const index = connectionListeners.indexOf(callback);
+      if (index !== -1) {
+        connectionListeners.splice(index, 1);
+      }
+    };
+  };
+
+  // Auto-cleanup when component unmounts
+  onUnmounted(() => {
+    disconnect();
+  });
 
   return {
     // Connection management
