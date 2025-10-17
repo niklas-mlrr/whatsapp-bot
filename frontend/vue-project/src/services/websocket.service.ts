@@ -1,6 +1,7 @@
-import Echo, { EchoOptions } from 'laravel-echo';
+import Echo from 'laravel-echo';
+import type { EchoOptions } from 'laravel-echo';
 import Pusher from 'pusher-js';
-import { ref, onUnmounted, Ref } from 'vue';
+import { ref, onUnmounted, type Ref } from 'vue';
 import { useAuthStore } from '@/stores/auth';
 
 // Type definitions for our WebSocket events
@@ -27,10 +28,11 @@ type ReadReceiptEvent = {
 };
 
 // Extended Window interface for Pusher and Echo
+// Note: This matches the declaration in websocket.ts
 declare global {
   interface Window {
-    Pusher: typeof Pusher;
-    Echo: typeof Echo;
+    Pusher: any;
+    Echo: any;
   }
 }
 
@@ -42,7 +44,7 @@ if (!window.Pusher) {
 export const useWebSockets = () => {
   const authStore = useAuthStore();
   const isConnected: Ref<boolean> = ref(false);
-  const echo: Ref<Echo | null> = ref(null);
+  const echo: Ref<Echo<any> | null> = ref(null);
   const socketId: Ref<string | null> = ref(null);
   
   // Store channel instances
@@ -56,7 +58,7 @@ export const useWebSockets = () => {
   const connectionCallbacks: Set<() => void> = new Set();
 
   // Initialize the Echo instance
-  const initEcho = async (): Promise<Echo | null> => {
+  const initEcho = async (): Promise<Echo<any> | null> => {
     if (echo.value) {
       return echo.value;
     }
@@ -69,7 +71,7 @@ export const useWebSockets = () => {
 
     try {
       // Configure Echo with Pusher
-      const echoConfig: EchoOptions = {
+      const echoConfig: EchoOptions<any> = {
         broadcaster: 'pusher',
         key: import.meta.env.VITE_PUSHER_APP_KEY,
         wsHost: import.meta.env.VITE_PUSHER_HOST || window.location.hostname,
@@ -93,7 +95,7 @@ export const useWebSockets = () => {
       echo.value = echoInstance;
 
       // Set up connection state handling
-      const pusher = echoInstance.connector.pusher;
+      const pusher = (echoInstance.connector as any).pusher;
       
       pusher.connection.bind('connected', () => {
         isConnected.value = true;
@@ -118,7 +120,6 @@ export const useWebSockets = () => {
       isConnected.value = false;
       return null;
     }
-    return echo;
   };
 
   const getSocketId = (): string => {
@@ -126,9 +127,9 @@ export const useWebSockets = () => {
   };
 
   const disconnect = () => {
-    if (echo) {
-      echo.disconnect();
-      echo = null;
+    if (echo.value) {
+      echo.value.disconnect();
+      echo.value = null;
       isConnected.value = false;
     }
   };
