@@ -22,12 +22,20 @@ CORS_ALLOWED_ORIGINS=*
 
 ### After Updating Files on Server:
 
-1. **Upload the updated files:**
-   - `backend/bootstrap/app.php`
+1. **Upload the updated files (CRITICAL):**
+   - `backend/bootstrap/app.php` (CORS middleware)
+   - `backend/public/.htaccess` (CORS headers - **THIS IS THE KEY FIX**)
    - `backend/database/migrations/2025_01_01_000000_unified_database_schema.php`
    - `backend/app/Console/Commands/CreateAdminUser.php`
 
-2. **Clear Laravel cache:**
+2. **Verify Apache modules are enabled (if using Apache):**
+   ```bash
+   sudo a2enmod headers
+   sudo a2enmod rewrite
+   sudo systemctl restart apache2
+   ```
+
+3. **Clear Laravel cache:**
    ```bash
    cd /var/www/html/whatsapp-bot/backend
    php artisan config:clear
@@ -36,7 +44,7 @@ CORS_ALLOWED_ORIGINS=*
    php artisan optimize:clear
    ```
 
-3. **Create admin user:**
+4. **Create admin user:**
    ```bash
    php artisan user:create-admin
    ```
@@ -46,14 +54,14 @@ CORS_ALLOWED_ORIGINS=*
    php artisan user:create-admin --name="Admin" --phone="+1234567890" --password="your-secure-password"
    ```
 
-4. **Restart PHP-FPM (if applicable):**
+5. **Restart PHP-FPM (if applicable):**
    ```bash
    sudo systemctl restart php8.2-fpm
    # or
    sudo systemctl restart php-fpm
    ```
 
-5. **Check if web server needs restart:**
+6. **Restart web server:**
    ```bash
    sudo systemctl restart nginx
    # or
