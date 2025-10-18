@@ -52,32 +52,46 @@ if (config.logging.logToFile) {
     try {
         ensureLogDirectoryExists(config.logging.logFilePath);
         
-        // Create a file transport with rotation
-        const fileTransport = pino.transport({
-            targets: [
-                {
-                    level: config.logging.level,
-                    target: 'pino/file',
-                    options: {
-                        destination: config.logging.logFilePath,
-                        mkdir: true,
-                    },
+        // Determine rotation availability
+        let rotationEnabled = config.logging.rotate;
+        if (rotationEnabled) {
+            try {
+                require.resolve('pino-roll');
+            } catch (rotationError) {
+                rotationEnabled = false;
+                console.warn('[LOGGER] pino-roll module not found. Disabling log rotation.');
+            }
+        }
+
+        // Create a file transport with rotation when available
+        const transportTargets = [
+            {
+                level: config.logging.level,
+                target: 'pino/file',
+                options: {
+                    destination: config.logging.logFilePath,
+                    mkdir: true,
                 },
-                ...(config.logging.rotate ? [
-                    {
-                        level: config.logging.level,
-                        target: 'pino-roll',
-                        options: {
-                            file: config.logging.logFilePath.replace(/\.log$/, '-%Y-%m-%d.log'),
-                            frequency: 'daily',
-                            mkdir: true,
-                            size: config.logging.maxFileSize || '100m',
-                            age: config.logging.maxAge || '30d',
-                            count: config.logging.maxFiles || 10,
-                        },
-                    }
-                ] : [])
-            ]
+            },
+        ];
+
+        if (rotationEnabled) {
+            transportTargets.push({
+                level: config.logging.level,
+                target: 'pino-roll',
+                options: {
+                    file: config.logging.logFilePath.replace(/\.log$/, '-%Y-%m-%d.log'),
+                    frequency: 'daily',
+                    mkdir: true,
+                    size: config.logging.maxFileSize || '100m',
+                    age: config.logging.maxAge || '30d',
+                    count: config.logging.maxFiles || 10,
+                },
+            });
+        }
+
+        const fileTransport = pino.transport({
+            targets: transportTargets,
         });
         
         // Create a new logger with both console and file transports

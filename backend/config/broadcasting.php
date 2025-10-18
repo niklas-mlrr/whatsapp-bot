@@ -1,5 +1,10 @@
 <?php
 
+$defaultAppUrl = parse_url(env('APP_URL', 'http://localhost'));
+$defaultHost = $defaultAppUrl['host'] ?? '127.0.0.1';
+$defaultScheme = $defaultAppUrl['scheme'] ?? 'http';
+$defaultPort = $defaultAppUrl['port'] ?? ($defaultScheme === 'https' ? 443 : 80);
+
 return [
     'default' => env('BROADCAST_DRIVER', 'reverb'),
 
@@ -10,10 +15,10 @@ return [
             'secret' => env('REVERB_APP_SECRET', 'whatsapp-bot-secret'),
             'app_id' => env('REVERB_APP_ID', 'whatsapp-bot'),
             'options' => [
-                'host' => env('REVERB_HOST', '127.0.0.1'),
-                'port' => env('REVERB_PORT', 8080),
-                'scheme' => env('REVERB_SCHEME', 'http'),
-                'useTLS' => env('REVERB_SCHEME') === 'https',
+                'host' => env('REVERB_HOST', $defaultHost),
+                'port' => (int) env('REVERB_PORT', $defaultPort),
+                'scheme' => env('REVERB_SCHEME', $defaultScheme),
+                'useTLS' => (env('REVERB_SCHEME', $defaultScheme) === 'https'),
             ],
         ],
         'pusher' => [
