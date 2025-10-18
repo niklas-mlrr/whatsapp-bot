@@ -11,6 +11,7 @@ const pipeline = promisify(stream.pipeline);
 
 let sockInstance = null;
 let isConnected = false;
+let awaitingInitialSync = true;
 
 // Function to set the socket instance
 function setSocketInstance(sock) {
@@ -28,14 +29,49 @@ function setSocketInstance(sock) {
         sock.ev.on('connection.update', (update) => {
             if (update.connection === 'open') {
                 isConnected = true;
+                awaitingInitialSync = !!update?.isOnline === false;
                 console.log('Socket connected and ready.');
             } else if (update.connection === 'close') {
                 isConnected = false;
+                awaitingInitialSync = true;
                 console.log('Socket connection closed.');
                 // Reconnection is handled in whatsappClient.js
             }
         });
     }
+}
+
+async function waitForSocketReady(timeoutMs = 10000) {
+    if (!sockInstance) {
+        throw new Error('WhatsApp socket not initialized');
+    }
+
+    if (!awaitingInitialSync) {
+        return;
+    }
+
+    await Promise.race([
+        new Promise((resolve) => {
+            const checkReady = () => {
+                if (!awaitingInitialSync) {
+                    sockInstance?.ev?.off?.('connection.update', checkReady);
+                    resolve();
+                }
+            };
+
+            if (sockInstance?.ev?.on) {
+                sockInstance.ev.on('connection.update', (update) => {
+                    if (update?.receivedPendingNotifications) {
+                        awaitingInitialSync = false;
+                        resolve();
+                    }
+                });
+            }
+
+            checkReady();
+        }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('WhatsApp initial sync timeout')), timeoutMs)),
+    ]);
 }
 
 async function start() {
@@ -161,11 +197,18 @@ async function start() {
             console.error(error);
             return res.status(500).json({ error });
         }
-        
+
         if (!isConnected) {
             const error = 'WhatsApp socket not connected';
             console.error(error);
             return res.status(500).json({ error });
+        }
+
+        try {
+            await waitForSocketReady(20000);
+        } catch (syncError) {
+            console.error('WhatsApp socket not ready:', syncError.message);
+            return res.status(503).json({ error: 'WhatsApp initial sync incomplete', details: syncError.message });
         }
 
         const { chat, type, content, media, mimetype, filename } = req.body;
@@ -181,10 +224,7 @@ async function start() {
             let sentMessage;
             if (type === 'text') {
                 console.log('Sending text message to', chat);
-                sentMessage = await Promise.race([
-                    sockInstance.sendMessage(chat, { text: content || '' }),
-                    new Promise((_, reject) => setTimeout(() => reject(new Error('sendMessage timeout exceeded')), 20000)),
-                ]);
+                sentMessage = await sockInstance.sendMessage(chat, { text: content || '' });
             } else if (type === 'image' && media) {
                 console.log('Processing image message for', chat);
                 try {
@@ -211,8 +251,7 @@ async function start() {
                         
                         console.log('Sending image to WhatsApp');
                         // Send the image to WhatsApp
-                        sentMessage = await Promise.race([
-                            sockInstance.sendMessage(
+                        sentMessage = await sockInstance.sendMessage(
                             chat, 
                             { 
                                 image: response.data, 
@@ -223,9 +262,7 @@ async function start() {
                                 quoted: null,
                                 upload: true
                             }
-                        ),
-                            new Promise((_, reject) => setTimeout(() => reject(new Error('sendMessage timeout exceeded')), 20000)),
-                        ]);
+                        );
                     } else if (fs.existsSync(media)) {
                         console.log('Reading local file:', media);
                         // Read the local file
@@ -233,8 +270,7 @@ async function start() {
                         const actualMimetype = mimetype || 'image/jpeg';
                         
                         console.log('Sending local file to WhatsApp');
-                        sentMessage = await Promise.race([
-                            sockInstance.sendMessage(
+                        sentMessage = await sockInstance.sendMessage(
                             chat,
                             {
                                 image: fileData,
@@ -245,9 +281,7 @@ async function start() {
                                 quoted: null,
                                 upload: true
                             }
-                        ),
-                            new Promise((_, reject) => setTimeout(() => reject(new Error('sendMessage timeout exceeded')), 20000)),
-                        ]);
+                        );
                     } else if (media.startsWith('data:')) {
                         console.log('Processing base64 image data');
                         // Handle base64 data URL
@@ -273,10 +307,7 @@ async function start() {
                         
                         // Send the message with the correct options
                         const sendOptions = { quoted: null };
-                        sentMessage = await Promise.race([
-                            sockInstance.sendMessage(chat, message, sendOptions),
-                            new Promise((_, reject) => setTimeout(() => reject(new Error('sendMessage timeout exceeded')), 20000)),
-                        ]);
+                        sentMessage = await sockInstance.sendMessage(chat, message, sendOptions);
                     } else {
                         throw new Error('Unsupported media format. Must be a URL or data URI');
                     }
@@ -325,10 +356,7 @@ async function start() {
                         documentMessage.caption = content;
                     }
 
-                    sentMessage = await Promise.race([
-                        sockInstance.sendMessage(chat, documentMessage, { quoted: null }),
-                        new Promise((_, reject) => setTimeout(() => reject(new Error('sendMessage timeout exceeded')), 20000)),
-                    ]);
+                    sentMessage = await sockInstance.sendMessage(chat, documentMessage, { quoted: null });
                 } catch (error) {
                     console.error('Error processing document:', {
                         error: error.message,
@@ -358,10 +386,7 @@ async function start() {
                         videoMessage.caption = content;
                     }
 
-                    sentMessage = await Promise.race([
-                        sockInstance.sendMessage(chat, videoMessage, { quoted: null }),
-                        new Promise((_, reject) => setTimeout(() => reject(new Error('sendMessage timeout exceeded')), 20000)),
-                    ]);
+                    sentMessage = await sockInstance.sendMessage(chat, videoMessage, { quoted: null });
                 } catch (error) {
                     console.error('Error processing video:', {
                         error: error.message,
@@ -387,10 +412,7 @@ async function start() {
                         mimetype: actualMimetype
                     };
 
-                    sentMessage = await Promise.race([
-                        sockInstance.sendMessage(chat, audioMessage, { quoted: null }),
-                        new Promise((_, reject) => setTimeout(() => reject(new Error('sendMessage timeout exceeded')), 20000)),
-                    ]);
+                    sentMessage = await sockInstance.sendMessage(chat, audioMessage, { quoted: null });
                 } catch (error) {
                     console.error('Error processing audio:', {
                         error: error.message,
