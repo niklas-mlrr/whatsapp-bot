@@ -40,6 +40,11 @@ return Application::configure(basePath: dirname(__DIR__))
             'verify.receiver' => \App\Http\Middleware\VerifyReceiverApiKey::class,
         ]);
         
+        // Add CORS middleware to API routes
+        $middleware->api(prepend: [
+            \Illuminate\Http\Middleware\HandleCors::class,
+        ]);
+        
         // Completely disable CSRF middleware
         $middleware->remove(\Illuminate\Foundation\Http\Middleware\VerifyCsrfToken::class);
         
