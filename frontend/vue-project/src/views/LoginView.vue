@@ -3,13 +3,15 @@
     <div class="max-w-md w-full space-y-8">
       <div>
         <h2 class="mt-6 text-center text-3xl font-extrabold text-gray-900">
-          Sign in
+          - Lukas WhatsApp -
+          <br>
+          Anmelden
         </h2>
       </div>
       <form class="mt-8 space-y-6" @submit.prevent="handleLogin">
         <div class="rounded-md shadow-sm -space-y-px">
           <div>
-            <label for="password" class="sr-only">Password</label>
+            <label for="password" class="sr-only">Passwort</label>
             <input
               id="password"
               v-model="password"
@@ -18,7 +20,7 @@
               autocomplete="current-password"
               required
               class="appearance-none rounded relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
-              placeholder="Enter password"
+              placeholder="Passwort eingeben"
             />
           </div>
         </div>
@@ -36,7 +38,7 @@
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
             </span>
-            {{ loading ? 'Signing in...' : 'Sign in' }}
+            {{ loading ? 'Anmeldung läuft...' : 'Anmelden' }}
           </button>
         </div>
         
@@ -63,7 +65,7 @@ const error = ref('');
 
 const handleLogin = async () => {
   if (!password.value) {
-    error.value = 'Please enter your password';
+    error.value = 'Bitte geben Sie Ihr Passwort ein';
     return;
   }
 
@@ -76,7 +78,7 @@ const handleLogin = async () => {
     router.push('/messages');
   } catch (err: any) {
     console.error('Login error:', err);
-    error.value = err.response?.data?.message || 'Login failed. Please try again.';
+    error.value = err.response?.data?.message || 'Anmeldung fehlgeschlagen. Bitte versuchen Sie es erneut.';
   } finally {
     loading.value = false;
   }

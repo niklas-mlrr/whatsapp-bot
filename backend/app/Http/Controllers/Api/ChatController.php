@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Chat;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -95,6 +97,8 @@ class ChatController extends Controller
                     'id' => $chat->id,
                     'name' => $chat->name,
                     'is_group' => $chat->is_group,
+                    'participants' => json_decode($chat->participants, true) ?? [],
+                    'metadata' => json_decode($chat->metadata, true) ?? [],
                     'avatar_url' => $chatModel->avatar_url,
                     'updated_at' => $chat->updated_at,
                     'created_at' => $chat->created_at,
@@ -128,6 +132,73 @@ class ChatController extends Controller
     }
 
     /**
+     * Create or update a chat (for contacts)
+     */
+    public function store(Request $request)
+    {
+        try {
+            $validated = $request->validate([
+                'name' => 'required|string|max:255',
+                'participants' => 'required|array',
+                'participants.*' => 'string',
+                'is_group' => 'sometimes|boolean',
+            ]);
+            
+            $isGroup = $validated['is_group'] ?? false;
+            $participants = $validated['participants'];
+            
+            // For direct chats, find or create based on participants
+            if (!$isGroup && count($participants) === 1) {
+                // Add 'me' as the second participant
+                $participants[] = 'me';
+                sort($participants);
+                
+                // Find existing chat with these participants
+                $chat = Chat::where('is_group', false)
+                    ->where('participants', json_encode($participants))
+                    ->first();
+                
+                if ($chat) {
+                    // Update existing chat name
+                    $chat->update(['name' => $validated['name']]);
+                } else {
+                    // Create new chat
+                    $chat = Chat::create([
+                        'name' => $validated['name'],
+                        'is_group' => false,
+                        'participants' => $participants,
+                    ]);
+                    
+                    // Attach the app user to the chat
+                    $user = User::getFirstUser();
+                    $chat->users()->attach($user->id);
+                }
+            } else {
+                // Group chat creation
+                $chat = Chat::create([
+                    'name' => $validated['name'],
+                    'is_group' => true,
+                    'participants' => $participants,
+                ]);
+                
+                $user = User::getFirstUser();
+                $chat->users()->attach($user->id);
+            }
+            
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Chat created/updated successfully',
+                'data' => $chat
+            ], 201);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to create chat: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+    
+    /**
      * Placeholder methods for other chat operations
      */
     public function createDirectChat(Request $request)
@@ -144,11 +215,51 @@ class ChatController extends Controller
         ], 501);
     }
 
-    public function update(Request $request, $chatId)
+    public function update(Request $request, Chat $chat)
     {
-        return response()->json([
-            'message' => 'Feature temporarily disabled',
-        ], 501);
+        try {
+            $validated = $request->validate([
+                'name' => 'sometimes|string|max:255',
+                'is_archived' => 'sometimes|boolean',
+                'is_muted' => 'sometimes|boolean',
+                'metadata' => 'sometimes|array',
+            ]);
+            
+            $chat->update($validated);
+            
+            // Reload the model to get fresh data
+            $chat->refresh();
+            
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Chat updated successfully',
+                'data' => [
+                    'id' => $chat->id,
+                    'name' => $chat->name,
+                    'is_group' => $chat->is_group,
+                    'participants' => $chat->participants,
+                    'updated_at' => $chat->updated_at,
+                ]
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Validation failed',
+                'errors' => $e->errors()
+            ], 422);
+        } catch (\Exception $e) {
+            \Log::error('Chat update failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'chat_id' => $chat->id ?? null
+            ]);
+            
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to update chat: ' . $e->getMessage(),
+                'trace' => config('app.debug') ? $e->getTraceAsString() : null
+            ], 500);
+        }
     }
 
     public function addParticipants(Request $request, $chatId)

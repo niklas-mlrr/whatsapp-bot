@@ -1,19 +1,47 @@
 <template>
-  <div class="h-screen bg-gray-100 flex flex-row overflow-hidden">
+  <div class="h-screen bg-gray-100 flex flex-row overflow-hidden relative">
+    <!-- Logout overlay -->
+    <div v-if="isLoggingOut" class="absolute inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
+      <div class="bg-white rounded-lg p-8 flex flex-col items-center gap-4 shadow-xl">
+        <svg class="animate-spin h-12 w-12 text-red-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+        <p class="text-lg font-semibold text-gray-800">Abmelden...</p>
+      </div>
+    </div>
     <!-- Sidebar -->
     <aside class="w-80 bg-white border-r border-gray-200 flex flex-col h-full">
-      <div class="p-4 font-bold text-lg border-b border-gray-200">Chats</div>
+      <div class="p-4 font-bold text-lg border-b border-gray-200 flex items-center justify-between">
+        <span>Chats</span>
+        <button 
+          @click="handleLogout"
+          :disabled="isLoggingOut"
+          class="flex items-center gap-2 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          title="Abmelden"
+        >
+          <svg v-if="!isLoggingOut" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+          </svg>
+          <svg v-else class="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          <span>Abmelden</span>
+        </button>
+      </div>
       <div class="flex-1 overflow-y-auto">
-        <div v-if="loadingChats" class="text-blue-500 p-4">Loading chats...</div>
+        <div v-if="loadingChats" class="text-blue-500 p-4">Chats werden geladen...</div>
         <div v-if="errorChats" class="text-red-500 p-4">{{ errorChats }}</div>
         <ul v-if="!loadingChats && !errorChats">
           <li v-for="chat in chats" :key="chat.id" 
+              @click="selectChat(chat)"
               :class="['cursor-pointer px-4 py-3 border-b border-gray-100 hover:bg-green-50 relative group flex items-center justify-between', selectedChat && selectedChat.id === chat.id ? 'bg-green-100 font-bold' : '']">
-            <span @click="selectChat(chat)" class="flex-1">{{ chat.name }}</span>
+            <span class="flex-1">{{ chat.name }}</span>
             <button 
               @click.stop="confirmDeleteChat(chat)"
               class="opacity-0 group-hover:opacity-100 transition-opacity p-2 hover:bg-red-100 rounded-full"
-              title="Delete chat"
+              title="Chat löschen"
             >
               <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -21,6 +49,18 @@
             </button>
           </li>
         </ul>
+      </div>
+      <!-- Kontakte Button -->
+      <div class="p-4 border-t border-gray-200">
+        <button
+          @click="showContactsModal = true"
+          class="w-full py-3 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors font-semibold flex items-center justify-center gap-2"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+          </svg>
+          Kontakte
+        </button>
       </div>
     </aside>
     <!-- Main chat area -->
@@ -30,10 +70,21 @@
         <div class="w-10 h-10 rounded-full bg-green-300 flex items-center justify-center text-green-700 font-bold text-lg">
           <span v-if="selectedChat">{{ selectedChat.name.slice(0,2).toUpperCase() }}</span>
         </div>
-        <div class="flex flex-col">
-          <span class="font-semibold text-lg text-gray-900">{{ selectedChat ? selectedChat.name : 'Select a chat' }}</span>
+        <div class="flex flex-col flex-1">
+          <span class="font-semibold text-lg text-gray-900">{{ selectedChat ? selectedChat.name : 'Wähle einen Chat' }}</span>
           <span class="text-xs text-gray-400">Online</span>
         </div>
+        <!-- Add to contacts button (shown when chat name looks like a phone number) -->
+        <button
+          v-if="selectedChat && isPhoneNumber(selectedChat.name)"
+          @click="addToContacts"
+          class="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors text-sm"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+          </svg>
+          Zu Kontakten hinzufügen
+        </button>
       </div>
       
       <!-- Messages area -->
@@ -47,7 +98,14 @@
           :members="membersForChat"
         />
         <div v-else class="flex items-center justify-center h-full text-gray-500">
-          Select a chat to start messaging
+          <div v-if="loadingChats" class="text-center">
+            Laden...
+            <br>
+            Bitte warten...
+          </div>
+          <div v-else>
+            Wähle einen Chat, um Nachrichten zu senden
+          </div>
         </div>
       </div>
       
@@ -61,14 +119,14 @@
               type="button"
               @click="clearAttachment"
               class="absolute -right-2 -top-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center hover:bg-red-600 transition-colors"
-              title="Remove attachment"
+              title="Anhang entfernen"
             >
               <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
             <div v-if="isUploadingAttachment" class="absolute inset-x-0 bottom-2 flex justify-center">
-              <span class="text-xs bg-black bg-opacity-60 text-white px-2 py-0.5 rounded-full">Uploading...</span>
+              <span class="text-xs bg-black bg-opacity-60 text-white px-2 py-0.5 rounded-full">Wird hochgeladen...</span>
             </div>
           </div>
           <div v-else class="relative flex items-start gap-3 bg-white border border-gray-200 rounded-lg p-4 pr-12 max-w-lg">
@@ -83,13 +141,13 @@
                 {{ formattedAttachmentSize }}
                 <span v-if="attachmentDisplayMimetype"> • {{ attachmentDisplayMimetype }}</span>
               </p>
-              <p v-if="isUploadingAttachment" class="text-xs text-blue-500 mt-1">Uploading...</p>
+              <p v-if="isUploadingAttachment" class="text-xs text-blue-500 mt-1">Wird hochgeladen...</p>
             </div>
             <button
               type="button"
               @click="clearAttachment"
               class="absolute top-2 right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center hover:bg-red-600 transition-colors"
-              title="Remove attachment"
+              title="Anhang entfernen"
             >
               <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
@@ -103,7 +161,7 @@
           v-model="input"
           :disabled="!selectedChat"
           type="text"
-          placeholder="Type a message"
+          placeholder="Nachricht eingeben"
           class="flex-1 rounded-full border border-gray-300 px-4 py-2 focus:outline-none focus:ring-2 focus:ring-green-400 disabled:bg-gray-100 disabled:cursor-not-allowed"
         />
         <div class="relative">
@@ -113,8 +171,8 @@
           </button>
           <div v-if="showMenu" class="absolute left-0 bottom-12 z-10 bg-white border border-gray-200 rounded shadow-lg min-w-[160px]">
             <ul>
-              <li @click="selectAddImage" class="px-4 py-2 hover:bg-green-50 cursor-pointer">Add image</li>
-              <li @click="selectAddFile" class="px-4 py-2 hover:bg-green-50 cursor-pointer">Add file</li>
+              <li @click="selectAddImage" class="px-4 py-2 hover:bg-green-50 cursor-pointer">Bild hinzufügen</li>
+              <li @click="selectAddFile" class="px-4 py-2 hover:bg-green-50 cursor-pointer">Datei hinzufügen</li>
               <!-- Future: <li class='px-4 py-2 hover:bg-green-50 cursor-pointer'>Create poll</li> -->
             </ul>
           </div>
@@ -130,11 +188,18 @@
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
           </svg>
-          <span>{{ isSending ? 'Sending...' : 'Send' }}</span>
+          <span>{{ isSending ? 'Wird gesendet...' : 'Senden' }}</span>
         </button>
         </form>
       </div>
     </main>
+    
+    <!-- Contacts Modal -->
+    <ContactsModal
+      :is-open="showContactsModal"
+      @close="handleContactsModalClose"
+      @chat-selected="handleChatSelected"
+    />
   </div>
 </template>
 
@@ -143,7 +208,10 @@ import { ref, onMounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import MessageList from '../components/MessageList.vue'
+import ContactsModal from '../components/ContactsModal.vue'
 import { fetchChats, sendMessage, uploadFile, deleteChat } from '../api/messages'
+import { useWebSocket } from '@/services/websocket'
+import apiClient from '@/services/api'
 
 // Base current user from auth (fallback)
 const currentUser = ref({
@@ -171,16 +239,102 @@ const showMenu = ref(false)
 const isSending = ref(false)
 
 const messageListRef = ref<any>(null)
+const typingTimeout = ref<number | null>(null)
+const isLoggingOut = ref(false)
+const showContactsModal = ref(false)
 
-// Watch for changes to input field to debug if image is being cleared
+// WebSocket for typing indicators
+const { notifyTyping } = useWebSocket()
+
+// Check if a string looks like a phone number (contains numbers, +, _, or -)
+const isPhoneNumber = (name: string): boolean => {
+  return /^[+\d_\-\s]+$/.test(name) || name.includes('_')
+}
+
+// Add current chat to contacts
+const addToContacts = async () => {
+  if (!selectedChat.value) return
+  
+  const contactName = prompt('Kontaktname eingeben:', '')
+  if (!contactName || !contactName.trim()) return
+  
+  try {
+    await apiClient.put(`/chats/${selectedChat.value.id}`, {
+      name: contactName.trim()
+    })
+    
+    // Refresh chats to show updated name
+    const response = await fetchChats()
+    if (response && response.data && response.data.data) {
+      chats.value = response.data.data
+      // Update selected chat with new name
+      const updatedChat = chats.value.find(c => c.id === selectedChat.value?.id)
+      if (updatedChat) {
+        selectedChat.value = updatedChat
+      }
+    }
+  } catch (error) {
+    console.error('Error adding to contacts:', error)
+    alert('Fehler beim Hinzufügen zu Kontakten')
+  }
+}
+
+// Handle contacts modal close - refresh chat list to show updated names
+const handleContactsModalClose = async () => {
+  showContactsModal.value = false
+  
+  // Refresh the chat list to show updated contact names
+  try {
+    const response = await fetchChats()
+    if (response && response.data && response.data.data) {
+      chats.value = response.data.data
+      
+      // Update selected chat if it was renamed
+      if (selectedChat.value) {
+        const updatedChat = chats.value.find(c => c.id === selectedChat.value?.id)
+        if (updatedChat) {
+          selectedChat.value = updatedChat
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Error refreshing chats:', error)
+  }
+}
+
+// Handle chat selection from contacts modal
+const handleChatSelected = (chatId: string) => {
+  const chat = chats.value.find(c => c.id === chatId)
+  if (chat) {
+    selectChat(chat)
+  }
+}
+
+// Watch for changes to input field to send typing notifications
 watch(input, (newVal: string, oldVal: string) => {
-  console.log('Input changed:', {
-    newVal,
-    oldVal,
-    attachmentPath: attachmentPath.value,
-    attachmentPreviewUrl: attachmentPreviewUrl.value,
-    attachmentMimetype: attachmentMimetype.value
-  })
+  // Send typing notification when user is typing
+  if (selectedChat.value && newVal && newVal !== oldVal) {
+    // Clear previous timeout
+    if (typingTimeout.value) {
+      clearTimeout(typingTimeout.value)
+    }
+    
+    // Notify that user is typing
+    notifyTyping(selectedChat.value.id.toString(), true)
+    
+    // Set timeout to stop typing indicator after 2 seconds of inactivity
+    typingTimeout.value = window.setTimeout(() => {
+      if (selectedChat.value) {
+        notifyTyping(selectedChat.value.id.toString(), false)
+      }
+    }, 2000)
+  } else if (!newVal && selectedChat.value) {
+    // If input is cleared, stop typing indicator
+    if (typingTimeout.value) {
+      clearTimeout(typingTimeout.value)
+    }
+    notifyTyping(selectedChat.value.id.toString(), false)
+  }
 })
 
 const isImageAttachment = computed(() => {
@@ -217,19 +371,7 @@ const canSend = computed(() => {
   const notSending = !isSending.value
   const notUploading = !isUploadingAttachment.value
 
-  const result = (hasText || hasAttachment) && hasChat && notSending && notUploading
-  console.log('canSend check:', {
-    hasText,
-    hasAttachment,
-    hasChat,
-    notSending,
-    notUploading,
-    result,
-    inputValue: input.value,
-    attachmentPathValue: attachmentPath.value
-  })
-
-  return result
+  return (hasText || hasAttachment) && hasChat && notSending && notUploading
 })
 
 // Normalized members for the selected chat (id, name, phone)
@@ -265,15 +407,6 @@ function selectChat(chat: any) {
 
 async function sendMessageHandler() {
   if ((!input.value && !attachmentPath.value) || !selectedChat.value || isSending.value) return
-
-  console.log('=== START sendMessageHandler ===');
-  console.log('Current state before storing:', {
-    inputValue: input.value,
-    attachmentPathValue: attachmentPath.value,
-    attachmentMimetypeValue: attachmentMimetype.value,
-    attachmentNameValue: attachmentName.value,
-    attachmentSizeValue: attachmentSize.value
-  });
   
   // Store the message content before clearing
   const messageContent = input.value
@@ -283,14 +416,6 @@ async function sendMessageHandler() {
   const messageAttachmentPreviewUrl = attachmentPreviewUrl.value
   const messageAttachmentName = attachmentName.value
   const messageAttachmentSize = attachmentSize.value
-  
-  console.log('Stored values:', {
-    messageContent,
-    messageAttachmentPath,
-    messageAttachmentMimetype,
-    messageAttachmentName,
-    messageAttachmentSize
-  });
   
   isSending.value = true
   
@@ -309,14 +434,27 @@ async function sendMessageHandler() {
       }
     }
     
+    // Get the WhatsApp JID (phone number) from chat participants
+    // For direct chats, use the first participant (the other person's number)
+    console.log('Selected chat object:', selectedChat.value);
+    console.log('Participants array:', selectedChat.value.participants);
+    console.log('Metadata:', selectedChat.value.metadata);
+    
+    // Try to get the WhatsApp JID from multiple sources:
+    // 1. First participant in the array
+    // 2. WhatsApp ID from metadata
+    // 3. Fall back to chat name (which might be the phone number for old chats)
+    const chatJid = selectedChat.value.participants?.[0] 
+                    || selectedChat.value.metadata?.whatsapp_id 
+                    || selectedChat.value.name;
+    console.log('Using chat JID:', chatJid);
+    
     let payload: any = {
       sender: 'me',
-      chat: selectedChat.value.name,
+      chat: chatJid,
       type: messageType,
       content: messageContent || '',  // Ensure content is at least an empty string
     }
-    
-    console.log('Payload before adding media:', payload);
     
     // If we have an image, include the media path and mimetype
     // The image was already uploaded in onImageChange, so we just use the path
@@ -325,14 +463,17 @@ async function sendMessageHandler() {
       payload.mimetype = messageAttachmentMimetype || undefined;
       payload.filename = messageAttachmentName || undefined;
       payload.size = typeof messageAttachmentSize === 'number' ? messageAttachmentSize : undefined;
-      console.log('Added attachment to payload:', { media: payload.media, mimetype: payload.mimetype, filename: payload.filename, size: payload.size });
     }
-    
-    console.log('Final payload to send:', payload);
     
     // Clear input immediately to show responsiveness
     input.value = ''
     clearAttachmentState()
+    
+    // Stop typing indicator
+    if (typingTimeout.value) {
+      clearTimeout(typingTimeout.value)
+    }
+    notifyTyping(selectedChat.value.id.toString(), false)
     
     // Add temporary "sending" message to the chat
     if (messageListRef.value && messageListRef.value.addTemporaryMessage) {
@@ -392,11 +533,11 @@ async function sendMessageHandler() {
       messageListRef.value.removeTemporaryMessage()
     }
     
-    const errorMessage = e?.response?.data?.message || e?.message || 'Failed to send message';
+    const errorMessage = e?.response?.data?.message || e?.message || 'Fehler beim Senden der Nachricht';
     const validationErrors = e?.response?.data?.errors;
     if (validationErrors) {
       console.error('Validation errors:', validationErrors);
-      alert('Validation error: ' + JSON.stringify(validationErrors));
+      alert('Validierungsfehler: ' + JSON.stringify(validationErrors));
     } else {
       alert(errorMessage);
     }
@@ -429,12 +570,6 @@ function clearAttachment() {
 }
 
 async function uploadAttachment(file: File) {
-  console.log('Uploading attachment:', {
-    name: file.name,
-    type: file.type,
-    size: file.size
-  })
-
   isUploadingAttachment.value = true
 
   try {
@@ -443,15 +578,9 @@ async function uploadAttachment(file: File) {
     attachmentMimetype.value = response.data.mimetype || file.type || null
     attachmentName.value = response.data.original_name || file.name
     attachmentSize.value = response.data.size ?? file.size
-    console.log('Attachment uploaded successfully:', {
-      path: attachmentPath.value,
-      mimetype: attachmentMimetype.value,
-      name: attachmentName.value,
-      size: attachmentSize.value
-    })
   } catch (error) {
     console.error('Attachment upload error:', error)
-    alert('File upload failed')
+    alert('Datei-Upload fehlgeschlagen')
     clearAttachmentState()
   } finally {
     isUploadingAttachment.value = false
@@ -490,8 +619,18 @@ function selectAddFile() {
   }, 100)
 }
 
+const handleLogout = async () => {
+  isLoggingOut.value = true
+  
+  // Add a small delay for the animation to be visible
+  await new Promise(resolve => setTimeout(resolve, 800))
+  
+  const authStore = useAuthStore()
+  authStore.logout()
+}
+
 const confirmDeleteChat = async (chat: any) => {
-  if (!confirm(`Are you sure you want to delete the chat with "${chat.name}"? This action cannot be undone.`)) {
+  if (!confirm(`Möchten Sie den Chat mit "${chat.name}" wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden.`)) {
     return
   }
   
@@ -511,7 +650,7 @@ const confirmDeleteChat = async (chat: any) => {
     }
   } catch (e: any) {
     console.error('Error deleting chat:', e)
-    alert(e?.response?.data?.message || 'Failed to delete chat')
+    alert(e?.response?.data?.message || 'Fehler beim Löschen des Chats')
   }
 }
 
@@ -537,45 +676,32 @@ const checkAuthAndRedirect = async () => {
 }
 
 onMounted(async () => {
-  console.log('MessagesView component mounted')
-  console.log('Auth store state:', useAuthStore())
-  
   const isAuthenticated = await checkAuthAndRedirect()
-  console.log('Authentication check result:', isAuthenticated)
   
   if (!isAuthenticated) {
-    console.log('User not authenticated, returning early')
     return
   }
   
   loadingChats.value = true
   errorChats.value = null
   try {
-    console.log('Fetching chats...')
     const response = await fetchChats()
-    console.log('Chats response:', response)
     
     if (response && response.data && response.data.data) {
       chats.value = response.data.data
-      console.log('Chats loaded:', chats.value)
-      
-      if (chats.value && chats.value.length > 0) {
-        selectedChat.value = chats.value[0]
-        console.log('Selected chat:', selectedChat.value)
-      }
     } else {
       console.error('Invalid response format:', response)
-      errorChats.value = 'Invalid response format from server'
+      errorChats.value = 'Ungültiges Antwortformat vom Server'
     }
   } catch (e: any) {
     console.error('Error fetching chats:', e)
     
     if (e.response?.status === 401) {
-      errorChats.value = 'Session expired. Please login again.'
+      errorChats.value = 'Sitzung abgelaufen. Bitte erneut anmelden.'
       const authStore = useAuthStore()
       authStore.logout()
     } else {
-      errorChats.value = e?.message || 'Failed to load chats.'
+      errorChats.value = e?.message || 'Fehler beim Laden der Chats.'
     }
   } finally {
     loadingChats.value = false

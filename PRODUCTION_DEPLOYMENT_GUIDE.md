@@ -514,6 +514,7 @@ crontab -e
 
 ---
 
+
 ## 11. Backup Strategy
 
 ### Database Backup

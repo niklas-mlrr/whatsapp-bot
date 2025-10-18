@@ -267,6 +267,7 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     Route::delete('/messages/{message}/reactions/{userId}', [MessageStatusController::class, 'removeReaction']);
 
     // Chat management routes
+    Route::post('/chats', [ChatController::class, 'store']);
     Route::prefix('chats')->group(function () {
         // Create a new direct chat
         Route::post('/direct', [ChatController::class, 'createDirectChat']);

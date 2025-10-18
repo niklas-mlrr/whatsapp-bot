@@ -1,8 +1,8 @@
 <template>
   <div v-if="error" class="p-4 text-red-600">
-    An error occurred while loading messages. Please refresh the page.
+    Beim Laden der Nachrichten ist ein Fehler aufgetreten. Bitte laden Sie die Seite neu.
     <button @click="error = null" class="ml-2 text-blue-600 hover:underline">
-      Dismiss
+      Schließen
     </button>
   </div>
   
@@ -26,7 +26,7 @@
           class="px-4 py-2 text-sm text-blue-600 hover:text-blue-800"
           :disabled="isLoadingMore"
         >
-          {{ isLoadingMore ? 'Loading...' : 'Load older messages' }}
+          {{ isLoadingMore ? 'Lädt...' : 'Ältere Nachrichten laden' }}
         </button>
       </div>
 
@@ -66,13 +66,13 @@
         <div class="w-2 h-2 bg-blue-500 rounded-full animate-bounce"></div>
         <div class="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
         <div class="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style="animation-delay: 0.4s"></div>
-        <span class="text-sm text-gray-500">typing...</span>
+        <span class="text-sm text-gray-500">tippt...</span>
       </div>
       
       <!-- New message indicator -->
       <div v-if="hasNewMessages" class="new-messages-indicator">
         <button @click="scrollToBottom({ behavior: 'smooth' })">
-          New messages
+          Neue Nachrichten
         </button>
       </div>
       
@@ -91,7 +91,7 @@
         <div class="w-2 h-2 bg-blue-500 rounded-full animate-bounce"></div>
         <div class="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
         <div class="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style="animation-delay: 0.4s"></div>
-        <span class="text-sm text-gray-500">typing...</span>
+        <span class="text-sm text-gray-500">tippt...</span>
       </div>
     </div>
     
@@ -212,7 +212,9 @@ const maxReconnectAttempts = 5;
 const reconnectTimeout = ref<number | null>(null);
 const pollInterval = ref<number | null>(null);
 const hasNewMessages = ref(false);
-const isTyping = ref(false);
+const isTyping = computed(() => {
+  return Object.values(typingUsers.value).some(typing => typing === true);
+});
 const error = ref<Error | null>(null);
 const isInitialLoad = ref(true);
 
@@ -239,7 +241,6 @@ const {
 const sortedMessages = computed(() => {
   try {
     if (!messages.value) {
-      console.log('messages.value is undefined');
       return [];
     }
     
@@ -253,7 +254,6 @@ const sortedMessages = computed(() => {
     const validMessages = messages.value.filter(msg => {
       try {
         if (!msg) {
-          console.warn('Null or undefined message found in messages array');
           return false;
         }
         
@@ -261,20 +261,7 @@ const sortedMessages = computed(() => {
         const hasContentOrMedia = Boolean(msg.content || msg.media || msg.type === 'image' || msg.mimetype?.startsWith('image/'));
         const hasSender = Boolean(msg.sender_id || msg.sender);
         
-        const isValid = hasId && hasContentOrMedia && hasSender;
-        
-        if (!isValid) {
-          console.warn('Invalid message found:', {
-            message: msg,
-            hasId,
-            hasContentOrMedia,
-            hasSender,
-            type: msg.type,
-            mimetype: msg.mimetype
-          });
-        }
-        
-        return isValid;
+        return hasId && hasContentOrMedia && hasSender;
       } catch (err) {
         console.error('Error validating message:', err, 'Message:', msg);
         return false;
@@ -312,7 +299,6 @@ const sortedMessages = computed(() => {
 const isCurrentUser = (message: Message): boolean => {
   // 1) Trust backend boolean if provided
   if (typeof (message as any).is_from_me === 'boolean') {
-    console.log(`Message ${message.id} has is_from_me:`, (message as any).is_from_me);
     return (message as any).is_from_me === true;
   }
   // 2) Temp/UI messages may set sender to 'me'
@@ -325,21 +311,13 @@ const isCurrentUser = (message: Message): boolean => {
     if (m && (m as any).phone === 'me') return true;
   }
   // 3) Fallback to id comparison
-  const result = message.sender_id?.toString() === props.currentUser.id?.toString();
-  console.log(`Message ${message.id} sender_id comparison:`, {
-    sender_id: message.sender_id,
-    current_user_id: props.currentUser.id,
-    result
-  });
-  return result;
+  return message.sender_id?.toString() === props.currentUser.id?.toString();
 };
 
 // Unified helper used in template
 const isMine = (message: Message): boolean => {
   if (typeof (message as any).is_mine === 'boolean') return (message as any).is_mine;
-  const result = isCurrentUser(message);
-  console.log(`isMine for message ${message.id}:`, result);
-  return result;
+  return isCurrentUser(message);
 };
 
 const getSenderName = (message: Message): string => {
@@ -430,48 +408,25 @@ const handleReadReceipt = (event: ReadReceiptEvent) => {
 
 // Initialize WebSocket connection
 const initWebSocket = async () => {
-  console.group('initWebSocket');
-  console.log('Starting WebSocket initialization...');
-  console.log('Current chat ID:', props.chat);
-  console.log('Current user ID:', props.currentUser?.id);
-  
   try {
-    console.log('Attempting to connect to WebSocket...');
     const connected = await connectWebSocket();
-    console.log('connectWebSocket() result:', connected);
     
     if (connected) {
-      console.log('WebSocket connected successfully');
       isConnected.value = true;
       reconnectAttempts.value = 0;
       
-      console.log('Setting up WebSocket event listeners...');
       setupWebSocketListeners();
-      
-      console.log('Fetching latest messages...');
       await fetchLatestMessages();
-      
-      console.log('Marking visible messages as read...');
       markVisibleMessagesAsRead();
       
-      console.log('WebSocket initialization completed successfully');
-      console.groupEnd();
       return true;
     } else {
       console.error('Failed to establish WebSocket connection');
-      console.groupEnd();
       throw new Error('Failed to connect to WebSocket');
     }
   } catch (error) {
-    const errorObj = error as Error;
-    console.error('WebSocket initialization failed:', errorObj);
-    console.log('Error details:', {
-      name: errorObj.name,
-      message: errorObj.message,
-      stack: errorObj.stack
-    });
+    console.error('WebSocket initialization failed:', error);
     isConnected.value = false;
-    console.groupEnd();
     handleReconnect();
     return false;
   }
@@ -621,17 +576,6 @@ const normalizeMessage = (msg: any): Message => {
     || (msg?.sender_id?.toString?.() === props.currentUser.id?.toString());
   const normalizedIsMine = (typeof normalizedIsFromMe === 'boolean') ? normalizedIsFromMe : !!fallbackMine;
 
-  // Debug logging for document messages
-  if (msg.type === 'document') {
-    console.log('normalizeMessage - Document message:', {
-      id: msg.id,
-      filename: msg.filename,
-      size: msg.size,
-      mimetype: msg.mimetype,
-      raw_msg: msg
-    });
-  }
-
   return {
     id: msg.id?.toString() || '',
     content: msg.content || '',
@@ -659,9 +603,7 @@ const normalizeMessage = (msg: any): Message => {
 
 // Fetch latest messages with deduplication and proper ordering
 const fetchLatestMessages = async () => {
-  console.log('fetchLatestMessages called with chat:', props.chat);
   if (!props.chat) {
-    console.log('No chat ID provided, skipping fetch');
     loading.value = false;
     return;
   }
@@ -671,9 +613,6 @@ const fetchLatestMessages = async () => {
     if (isInitialLoad.value) {
       loading.value = true;
     }
-    console.log('Fetching latest messages for chat:', props.chat);
-    console.log('Current messages length:', messages.value?.length);
-    console.log('Last message ID:', messages.value?.[messages.value?.length - 1]?.id);
     
     const response = await apiClient.get(`/chats/${props.chat}/messages/latest`, {
       params: {
@@ -681,40 +620,10 @@ const fetchLatestMessages = async () => {
       }
     });
     
-    console.log('API response:', response);
-    console.log('Raw messages from API:', response?.data?.data);
-    
-    // Log each raw message to see is_from_me
-    response?.data?.data?.forEach((msg: any, i: number) => {
-      console.log(`Raw message ${i}:`, {
-        id: msg.id,
-        sender_id: msg.sender_id,
-        is_from_me: msg.is_from_me,
-        content: msg.content?.substring(0, 30),
-        type: msg.type,
-        media: msg.media,
-        mimetype: msg.mimetype
-      });
-    });
-    
     // Process and normalize the messages
     const newMessages = Array.isArray(response?.data?.data) 
       ? response.data.data.map(normalizeMessage) 
       : [];
-    
-    console.log('Normalized messages:', newMessages);
-    console.log('Current user ID:', props.currentUser?.id);
-    
-    // Log each normalized message
-    newMessages.forEach((msg: any, i: number) => {
-      console.log(`Normalized message ${i}:`, {
-        id: msg.id,
-        sender_id: msg.sender_id,
-        is_from_me: msg.is_from_me,
-        is_mine: msg.is_mine,
-        content: msg.content?.substring(0, 30)
-      });
-    });
     
     if (newMessages.length > 0) {
       // Store the current scroll position
@@ -820,27 +729,20 @@ const markMessagesAsRead = async (messageIds: string[]) => {
 // Reaction handlers
 const handleAddReaction = async (payload: { messageId: string | number; emoji: string }) => {
   try {
-    console.log('Adding reaction:', payload);
-    
     const response = await apiClient.post(`/messages/${payload.messageId}/reactions`, {
       user_id: props.currentUser.id,
       reaction: payload.emoji
     });
     
-    console.log('Add reaction response:', response.data);
-    
     if (response.data.status === 'success') {
       // Update local message with new reactions
       const messageIndex = messages.value.findIndex(m => m.id === payload.messageId);
-      console.log('Found message at index:', messageIndex);
       if (messageIndex !== -1) {
-        console.log('Setting reactions to:', response.data.data.reactions);
         // Use Vue's reactivity by creating a new object
         messages.value[messageIndex] = {
           ...messages.value[messageIndex],
           reactions: response.data.data.reactions
         };
-        console.log('Message reactions after update:', messages.value[messageIndex].reactions);
       }
     }
   } catch (error) {
@@ -850,11 +752,7 @@ const handleAddReaction = async (payload: { messageId: string | number; emoji: s
 
 const handleRemoveReaction = async (payload: { messageId: string | number }) => {
   try {
-    console.log('Removing reaction:', payload);
-    
     const response = await apiClient.delete(`/messages/${payload.messageId}/reactions/${props.currentUser.id}`);
-    
-    console.log('Remove reaction response:', response.data);
     
     if (response.data.status === 'success') {
       // Update local message with new reactions
@@ -967,71 +865,40 @@ function handleWindowFocus() {
 }
 
 onMounted(async () => {
-  console.group('MessageList Component Lifecycle');
-  console.log('1. Component mounted');
-  console.log('2. Props:', {
-    chat: props.chat,
-    isGroupChat: props.isGroupChat,
-    currentUser: props.currentUser?.id || 'Not available'
-  });
-  console.log('3. Initial messages state:', messages.value);
-  
   try {
-    console.log('Setting up window event listeners...');
     window.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('focus', handleWindowFocus);
     
-    console.log('Initializing WebSocket connection...');
-    const webSocketInitialized = await initWebSocket();
-    
-    if (webSocketInitialized) {
-      console.log('WebSocket initialized successfully');
-    } else {
-      console.warn('WebSocket initialization failed');
-    }
+    await initWebSocket();
     
     // Always start polling as a fallback mechanism
-    console.log('Starting polling for new messages...');
     startPolling();
     
     loading.value = false;
-    console.log('Component initialization completed');
   } catch (error) {
-    const errorObj = error as Error;
-    console.error('Error initializing MessageList:', errorObj);
-    console.log('Error details:', {
-      name: errorObj.name,
-      message: errorObj.message,
-      stack: errorObj.stack
-    });
+    console.error('Error initializing MessageList:', error);
     
     loading.value = false;
     
     // Start polling as fallback
-    console.log('Starting fallback polling due to initialization error...');
     try {
       await fetchLatestMessages();
       startPolling();
     } catch (fetchError) {
-      const fetchErrorObj = fetchError as Error;
-      console.error('Error in fallback polling:', fetchErrorObj);
+      console.error('Error in fallback polling:', fetchError);
     }
-  } finally {
-    console.groupEnd();
   }
 });
 
 // Watch for chat changes and scroll to bottom when messages load
 watch(() => props.chat, async (newChatId, oldChatId) => {
   if (newChatId && newChatId !== oldChatId) {
-    console.log('Chat changed, waiting for messages to load...');
     // Reset messages first
     messages.value = [];
     // Wait for messages to be fetched
     await nextTick();
     // Give more time for the DOM to update and render all messages
     setTimeout(() => {
-      console.log('Scrolling to bottom after chat change');
       scrollToBottom({ behavior: 'auto' });
     }, 800);
   }
@@ -1041,7 +908,6 @@ watch(() => props.chat, async (newChatId, oldChatId) => {
 watch(messages, (newMessages, oldMessages) => {
   // Only scroll if we're going from no messages to having messages (initial load)
   if (oldMessages.length === 0 && newMessages.length > 0) {
-    console.log('Initial messages loaded, scrolling to bottom');
     nextTick(() => {
       scrollToBottom({ behavior: 'auto' });
     });
@@ -1050,23 +916,16 @@ watch(messages, (newMessages, oldMessages) => {
 
 // Clean up on unmount
 onUnmounted(() => {
-  console.group('MessageList Component Unmounting');
-  console.log('1. Component unmounting - starting cleanup');
-  
   // Clean up any remaining timeouts or intervals
-  console.log('2. Cleaning up typing timeouts');
   Object.entries(typingTimeouts.value).forEach(([userId, timeoutId]) => {
-    console.log(`   - Clearing timeout for user ${userId}`);
     clearTimeout(timeoutId);
   });
   
   if (pollInterval.value) {
-    console.log('3. Clearing poll interval');
     clearInterval(pollInterval.value);
   }
   
   if (reconnectTimeout.value) {
-    console.log('4. Clearing reconnect timeout');
     clearTimeout(reconnectTimeout.value);
   }
   
@@ -1087,7 +946,6 @@ const handleDisconnect = () => {
     reconnectAttempts.value++;
     
     reconnectTimeout.value = window.setTimeout(() => {
-      console.log(`Attempting to reconnect (${reconnectAttempts.value}/${maxReconnectAttempts})...`);
       initWebSocket();
     }, delay);
   } else {
@@ -1098,46 +956,26 @@ const handleDisconnect = () => {
 
 // Set up WebSocket event listeners
 const setupWebSocketListeners = () => {
-  console.group('setupWebSocketListeners');
-  console.log('1. Starting WebSocket listener setup');
-  
   if (!props.chat) {
     const errorMsg = 'Cannot set up WebSocket listeners: No chat ID provided';
     console.error(errorMsg);
-    console.groupEnd();
     throw new Error(errorMsg);
   }
   
-  console.log('2. Chat ID:', props.chat);
-  console.log('3. Current user ID:', props.currentUser?.id || 'Not available');
-  console.log('4. Current messages value:', messages.value);
-  
   try {
     // Listen for new messages
-    console.log('5. Setting up new message listener');
     const newMessageUnsubscribe = listenForNewMessages(props.chat.toString(), (message: any) => {
-      console.group('New WebSocket Message');
-      console.log('5.1 Raw message received:', message);
-      console.log('5.2 Current messages value before processing:', messages.value);
-      
       if (!message) {
         console.error('Received empty message from WebSocket');
-        console.groupEnd();
         return;
       }
       
       // Initialize messages array if it's undefined or not an array
       if (!Array.isArray(messages.value)) {
-        console.log('Initializing messages array');
         messages.value = [];
       }
       
-      // Ensure messages.value is an array before accessing length
-      const currentMessages = Array.isArray(messages.value) ? messages.value : [];
-      console.log('Processing new message. Current messages count:', currentMessages.length);
-      
       try {
-        // Ensure messages.value is an array before using some()
         const currentMessages = Array.isArray(messages.value) ? messages.value : [];
         
         const messageExists = currentMessages.some(m => 
@@ -1162,33 +1000,21 @@ const setupWebSocketListeners = () => {
           }
         }
       } catch (error) {
-        const errorObj = error as Error;
-        console.error('Error processing new message:', errorObj);
-        console.log('Message that caused error:', JSON.parse(JSON.stringify(message)));
-        console.log('Error details:', {
-          name: errorObj.name,
-          message: errorObj.message,
-          stack: errorObj.stack
-        });
-      } finally {
-        console.groupEnd();
+        console.error('Error processing new message:', error);
       }
     });
     
     // Listen for typing indicators
     const typingUnsubscribe = listenForTyping(props.chat.toString(), (event: any) => {
-      console.group('Typing Event');
-      console.log('Raw typing event:', JSON.parse(JSON.stringify(event)));
-      
       if (!event || !event.user_id) {
         console.error('Invalid typing event received:', event);
-        console.groupEnd();
         return;
       }
       
-      console.log(`User ${event.user_id} is ${event.typing ? 'typing' : 'not typing'}`);
+      // Check both is_typing and typing for backward compatibility
+      const isTypingNow = event.is_typing ?? event.typing ?? false;
       
-      if (event.typing) {
+      if (isTypingNow) {
         typingUsers.value[event.user_id] = true;
         
         // Clear previous timeout if exists
@@ -1207,22 +1033,14 @@ const setupWebSocketListeners = () => {
       
       // Trigger reactivity
       typingUsers.value = { ...typingUsers.value };
-      console.log('Updated typing users:', { ...typingUsers.value });
-      console.groupEnd();
     });
     
     // Listen for read receipts
     const readReceiptUnsubscribe = listenForReadReceipts(props.chat.toString(), (event: any) => {
-      console.group('Read Receipt');
-      console.log('Raw read receipt:', JSON.parse(JSON.stringify(event)));
-      
       if (!event || !event.message_id) {
         console.error('Invalid read receipt received:', event);
-        console.groupEnd();
         return;
       }
-      
-      console.log(`Message ${event.message_id} marked as read by user ${event.user_id}`);
       
       messages.value = messages.value.map(msg => {
         if (msg.id === event.message_id) {
@@ -1234,23 +1052,14 @@ const setupWebSocketListeners = () => {
         }
         return msg;
       });
-      
-      console.log('Updated messages with read receipt:', messages.value);
-      console.groupEnd();
     });
     
     // Listen for reaction updates
     const reactionUnsubscribe = listenForReactionUpdates(props.chat.toString(), (event: any) => {
-      console.group('Reaction Event');
-      console.log('Raw reaction event:', JSON.parse(JSON.stringify(event)));
-      
       if (!event || !event.message_id) {
         console.error('Invalid reaction event received:', event);
-        console.groupEnd();
         return;
       }
-      
-      console.log(`Reaction ${event.added ? 'added' : 'removed'} on message ${event.message_id}`);
       
       // Update the message with new reactions
       const messageIndex = messages.value.findIndex(m => String(m.id) === String(event.message_id));
@@ -1279,11 +1088,7 @@ const setupWebSocketListeners = () => {
           ...message,
           reactions: updatedReactions
         };
-        
-        console.log('Updated message reactions:', messages.value[messageIndex].reactions);
       }
-      
-      console.groupEnd();
     });
     
     // Store unsubscribe functions
@@ -1294,46 +1099,27 @@ const setupWebSocketListeners = () => {
       reaction: reactionUnsubscribe
     };
     
-    console.log('6. WebSocket listeners setup completed successfully');
-    console.groupEnd();
-    
     // Clean up WebSocket listeners on unmount
     return () => {
-      console.log('Cleaning up WebSocket listeners');
       Object.entries(unsubscribeFunctions).forEach(([name, unsubscribe]) => {
-        console.log(`Unsubscribing from ${name} listener`);
         if (typeof unsubscribe === 'function') {
           try {
             unsubscribe();
-            console.log(`Successfully unsubscribed from ${name}`);
           } catch (err) {
             console.error(`Error unsubscribing from ${name}:`, err);
           }
-        } else {
-          console.warn(`No unsubscribe function for ${name}`);
         }
       });
-      console.log('WebSocket listeners cleanup completed');
     };
   } catch (error) {
-    const errorObj = error as Error;
-    console.error('Error setting up WebSocket listeners:', errorObj);
-    console.log('Error details:', {
-      name: errorObj.name,
-      message: errorObj.message,
-      stack: errorObj.stack
-    });
-    console.groupEnd();
-    throw errorObj;
-  } finally {
-    console.groupEnd();
+    console.error('Error setting up WebSocket listeners:', error);
+    throw error;
   }
 };
 
 // Fetch messages from API
 const fetchMessages = async (params: { chatId: string; limit: number; before?: string }): Promise<{ messages: Message[]; hasMore: boolean }> => {
   try {
-    console.log('Fetching messages with params:', params);
     const response = await apiClient.get('/messages', { params });
     
     // Ensure messages are properly typed and have required fields

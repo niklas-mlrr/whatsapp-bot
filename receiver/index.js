@@ -479,7 +479,7 @@ async function start() {
     app.post('/send-reaction', async (req, res) => {
         console.log('Received send-reaction request:', req.body);
         
-        const { chat, messageId, emoji } = req.body;
+        const { chat, messageId, emoji, fromMe } = req.body;
         
         if (!sockInstance || !isConnected) {
             console.error('WhatsApp not connected');
@@ -492,20 +492,25 @@ async function start() {
         }
         
         try {
+            // Ensure chat has proper JID format (@s.whatsapp.net)
+            const chatJid = chat.includes('@s.whatsapp.net') ? chat : 
+                           chat.endsWith('@') ? `${chat}s.whatsapp.net` : 
+                           `${chat}@s.whatsapp.net`;
+            
             // Send reaction to WhatsApp
             const reactionMessage = {
                 react: {
                     text: emoji || '', // Empty string removes the reaction
                     key: {
-                        remoteJid: chat,
+                        remoteJid: chatJid,
                         id: messageId,
-                        fromMe: false
+                        fromMe: fromMe === true || fromMe === 'true' // Handle boolean or string
                     }
                 }
             };
             
             console.log('Sending reaction to WhatsApp:', reactionMessage);
-            await sockInstance.sendMessage(chat, reactionMessage);
+            await sockInstance.sendMessage(chatJid, reactionMessage);
             
             console.log('Reaction sent successfully');
             res.json({ status: 'sent' });

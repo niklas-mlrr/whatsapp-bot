@@ -74,15 +74,10 @@ export const API_CONFIG = {
   REVERB_KEY: import.meta.env.VITE_REVERB_APP_KEY || 'whatsapp-bot-key',
   REVERB_HOST: import.meta.env.VITE_REVERB_HOST || 'localhost',
   REVERB_PORT: import.meta.env.VITE_REVERB_PORT || '8080',
+  VITE_WS_URL: import.meta.env.VITE_WS_URL || 'wss://localhost'
 };
 
-// Debug logging
-console.log('[API_CONFIG] Resolved configuration:', {
-  BASE_URL: API_CONFIG.BASE_URL,
-  WS_URL: API_CONFIG.WS_URL,
-  VITE_API_URL: import.meta.env.VITE_API_URL,
-  VITE_WS_URL: import.meta.env.VITE_WS_URL,
-});
+export const API_BASE_URL = API_CONFIG.BASE_URL;
 
 // API endpoints
 export const API_ENDPOINTS = {

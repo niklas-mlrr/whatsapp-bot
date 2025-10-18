@@ -375,16 +375,31 @@ class MessageStatusController extends Controller
                 return;
             }
 
-            // Use the chat name which should be the WhatsApp JID
-            $chatJid = $chatModel->name;
+            // Get the WhatsApp JID from multiple sources:
+            // 1. First participant in the array
+            // 2. WhatsApp ID from metadata
+            // 3. Fall back to chat name (for old chats where name is the phone number)
+            $chatJid = $chatModel->participants[0] 
+                       ?? $chatModel->metadata['whatsapp_id'] 
+                       ?? $chatModel->name;
 
             $receiverUrl = env('RECEIVER_URL', 'http://localhost:3000');
             
+            Log::channel('whatsapp')->debug('Preparing to send reaction', [
+                'chat_jid' => $chatJid,
+                'message_id' => $whatsappMessageId,
+                'emoji' => $emoji,
+                'receiver_url' => $receiverUrl
+            ]);
 
+            // Determine if the message being reacted to was sent by us
+            $fromMe = $message->sender === 'me';
+            
             $response = \Illuminate\Support\Facades\Http::timeout(10)->post("{$receiverUrl}/send-reaction", [
                 'chat' => $chatJid,
                 'messageId' => $whatsappMessageId,
-                'emoji' => $emoji
+                'emoji' => $emoji,
+                'fromMe' => $fromMe
             ]);
 
             if (!$response->successful()) {
@@ -401,7 +416,8 @@ class MessageStatusController extends Controller
                     'message_id' => $message->id,
                     'whatsapp_message_id' => $whatsappMessageId,
                     'chat' => $chatJid,
-                    'emoji' => $emoji
+                    'emoji' => $emoji,
+                    'receiver_response' => $response->body()
                 ]);
             }
         } catch (\Exception $e) {

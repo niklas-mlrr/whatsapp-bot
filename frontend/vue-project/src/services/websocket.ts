@@ -110,8 +110,6 @@ export function useWebSocket() {
         },
       } as any);
 
-      console.log('Connecting to WebSocket:', websocketConfig);
-
       // Wait for connection
       await new Promise<void>((resolve, reject) => {
         if (!echo) return reject('Echo not initialized');
@@ -202,10 +200,17 @@ export function useWebSocket() {
       if (channel) {
         privateChannels.set(chatId, channel);
 
-        channel.listenForWhisper('typing', (data: TypingEvent) => {
+        // Listen for broadcast typing events from backend
+        channel.listen('.user.typing', (data: any) => {
           const callbacks = typingCallbacks.get(chatId);
           if (callbacks) {
-            callbacks.forEach(cb => cb(data));
+            // Extract user_id from the user object if needed
+            const typingEvent: TypingEvent = {
+              user_id: data.user?.id || data.user_id,
+              is_typing: data.is_typing,
+              chat_id: data.chat_id || chatId
+            };
+            callbacks.forEach(cb => cb(typingEvent));
           }
         });
       }
@@ -265,7 +270,7 @@ export function useWebSocket() {
   // Notify others that user is typing
   const notifyTyping = async (chatId: string, isTyping: boolean): Promise<void> => {
     if (!echo || !isConnected.value) {
-      console.error('WebSocket not connected');
+      // Silently skip if not connected - typing indicators are not critical
       return;
     }
 
@@ -288,7 +293,7 @@ export function useWebSocket() {
   // Mark messages as read
   const markAsRead = async (chatId: string, messageIds: string[]): Promise<void> => {
     if (!echo || !isConnected.value) {
-      console.error('WebSocket not connected');
+      // Silently skip if not connected
       return;
     }
 
