@@ -118,6 +118,23 @@ return new class extends Migration
             $table->timestamps();
         });
 
+        // Create chats table (without last_message_id foreign key to avoid circular dependency)
+        Schema::create('chats', function (Blueprint $table) {
+            $table->id();
+            $table->string('name')->nullable();
+            $table->enum('type', ['private', 'group'])->default('private');
+            $table->unsignedBigInteger('last_message_id')->nullable();
+            $table->integer('unread_count')->default(0);
+            $table->json('participants')->nullable();
+            $table->json('metadata')->nullable();
+            $table->boolean('is_group')->default(false);
+            $table->foreignId('created_by')->nullable()->constrained('users');
+            $table->boolean('is_archived')->default(false);
+            $table->boolean('is_muted')->default(false);
+            $table->timestamp('last_message_at')->nullable();
+            $table->timestamps();
+        });
+
         // Create whatsapp_messages table
         Schema::create('whatsapp_messages', function (Blueprint $table) {
             $table->id();
@@ -134,21 +151,9 @@ return new class extends Migration
             $table->timestamps();
         });
 
-        // Create chats table
-        Schema::create('chats', function (Blueprint $table) {
-            $table->id();
-            $table->string('name')->nullable();
-            $table->enum('type', ['private', 'group'])->default('private');
-            $table->foreignId('last_message_id')->nullable()->constrained('whatsapp_messages')->nullOnDelete();
-            $table->integer('unread_count')->default(0);
-            $table->json('participants')->nullable();
-            $table->json('metadata')->nullable();
-            $table->boolean('is_group')->default(false);
-            $table->foreignId('created_by')->nullable()->constrained('users');
-            $table->boolean('is_archived')->default(false);
-            $table->boolean('is_muted')->default(false);
-            $table->timestamp('last_message_at')->nullable();
-            $table->timestamps();
+        // Add foreign key constraint for last_message_id after whatsapp_messages table exists
+        Schema::table('chats', function (Blueprint $table) {
+            $table->foreign('last_message_id')->references('id')->on('whatsapp_messages')->nullOnDelete();
         });
 
         // Create chat_user pivot table
@@ -182,8 +187,14 @@ return new class extends Migration
     {
         Schema::dropIfExists('message_reads');
         Schema::dropIfExists('chat_user');
-        Schema::dropIfExists('chats');
+        
+        // Drop the foreign key constraint first
+        Schema::table('chats', function (Blueprint $table) {
+            $table->dropForeign(['last_message_id']);
+        });
+        
         Schema::dropIfExists('whatsapp_messages');
+        Schema::dropIfExists('chats');
         Schema::dropIfExists('messages');
         Schema::dropIfExists('websockets_statistics_entries');
         Schema::dropIfExists('personal_access_tokens');
