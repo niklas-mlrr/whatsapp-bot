@@ -181,7 +181,10 @@ async function start() {
             let sentMessage;
             if (type === 'text') {
                 console.log('Sending text message to', chat);
-                sentMessage = await sockInstance.sendMessage(chat, { text: content || '' });
+                sentMessage = await Promise.race([
+                    sockInstance.sendMessage(chat, { text: content || '' }),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('sendMessage timeout exceeded')), 20000)),
+                ]);
             } else if (type === 'image' && media) {
                 console.log('Processing image message for', chat);
                 try {
@@ -208,7 +211,8 @@ async function start() {
                         
                         console.log('Sending image to WhatsApp');
                         // Send the image to WhatsApp
-                        sentMessage = await sockInstance.sendMessage(
+                        sentMessage = await Promise.race([
+                            sockInstance.sendMessage(
                             chat, 
                             { 
                                 image: response.data, 
@@ -219,7 +223,9 @@ async function start() {
                                 quoted: null,
                                 upload: true
                             }
-                        );
+                        ),
+                            new Promise((_, reject) => setTimeout(() => reject(new Error('sendMessage timeout exceeded')), 20000)),
+                        ]);
                     } else if (fs.existsSync(media)) {
                         console.log('Reading local file:', media);
                         // Read the local file
@@ -227,7 +233,8 @@ async function start() {
                         const actualMimetype = mimetype || 'image/jpeg';
                         
                         console.log('Sending local file to WhatsApp');
-                        sentMessage = await sockInstance.sendMessage(
+                        sentMessage = await Promise.race([
+                            sockInstance.sendMessage(
                             chat,
                             {
                                 image: fileData,
@@ -238,7 +245,9 @@ async function start() {
                                 quoted: null,
                                 upload: true
                             }
-                        );
+                        ),
+                            new Promise((_, reject) => setTimeout(() => reject(new Error('sendMessage timeout exceeded')), 20000)),
+                        ]);
                     } else if (media.startsWith('data:')) {
                         console.log('Processing base64 image data');
                         // Handle base64 data URL
@@ -264,7 +273,10 @@ async function start() {
                         
                         // Send the message with the correct options
                         const sendOptions = { quoted: null };
-                        sentMessage = await sockInstance.sendMessage(chat, message, sendOptions);
+                        sentMessage = await Promise.race([
+                            sockInstance.sendMessage(chat, message, sendOptions),
+                            new Promise((_, reject) => setTimeout(() => reject(new Error('sendMessage timeout exceeded')), 20000)),
+                        ]);
                     } else {
                         throw new Error('Unsupported media format. Must be a URL or data URI');
                     }
@@ -313,7 +325,10 @@ async function start() {
                         documentMessage.caption = content;
                     }
 
-                    sentMessage = await sockInstance.sendMessage(chat, documentMessage, { quoted: null });
+                    sentMessage = await Promise.race([
+                        sockInstance.sendMessage(chat, documentMessage, { quoted: null }),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('sendMessage timeout exceeded')), 20000)),
+                    ]);
                 } catch (error) {
                     console.error('Error processing document:', {
                         error: error.message,
@@ -343,7 +358,10 @@ async function start() {
                         videoMessage.caption = content;
                     }
 
-                    sentMessage = await sockInstance.sendMessage(chat, videoMessage, { quoted: null });
+                    sentMessage = await Promise.race([
+                        sockInstance.sendMessage(chat, videoMessage, { quoted: null }),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('sendMessage timeout exceeded')), 20000)),
+                    ]);
                 } catch (error) {
                     console.error('Error processing video:', {
                         error: error.message,
@@ -369,7 +387,10 @@ async function start() {
                         mimetype: actualMimetype
                     };
 
-                    sentMessage = await sockInstance.sendMessage(chat, audioMessage, { quoted: null });
+                    sentMessage = await Promise.race([
+                        sockInstance.sendMessage(chat, audioMessage, { quoted: null }),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('sendMessage timeout exceeded')), 20000)),
+                    ]);
                 } catch (error) {
                     console.error('Error processing audio:', {
                         error: error.message,
