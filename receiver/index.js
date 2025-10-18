@@ -21,16 +21,21 @@ function setSocketInstance(sock) {
     // The socket is considered connected if it has a user object
     if (sock && sock.user) {
         isConnected = true;
+        awaitingInitialSync = false;
         console.log('Socket already connected and ready.');
     }
     
     // Listen for connection updates
     if (sock.ev && sock.ev.on) {
         sock.ev.on('connection.update', (update) => {
+            console.log('Connection update received:', update);
             if (update.connection === 'open') {
                 isConnected = true;
-                awaitingInitialSync = !!update?.isOnline === false;
-                console.log('Socket connected and ready.');
+                awaitingInitialSync = !(update?.receivedPendingNotifications ?? update?.isOnline ?? true);
+                console.log('Socket connected and ready.', { awaitingInitialSync });
+            } else if (update?.receivedPendingNotifications) {
+                awaitingInitialSync = false;
+                console.log('Initial sync complete.');
             } else if (update.connection === 'close') {
                 isConnected = false;
                 awaitingInitialSync = true;
@@ -52,23 +57,25 @@ async function waitForSocketReady(timeoutMs = 10000) {
 
     await Promise.race([
         new Promise((resolve) => {
-            const checkReady = () => {
-                if (!awaitingInitialSync) {
-                    sockInstance?.ev?.off?.('connection.update', checkReady);
+            if (!sockInstance?.ev?.on) {
+                resolve();
+                return;
+            }
+
+            const handler = (update) => {
+                if (update?.receivedPendingNotifications || update?.isOnline) {
+                    awaitingInitialSync = false;
+                    sockInstance.ev.off?.('connection.update', handler);
                     resolve();
                 }
             };
 
-            if (sockInstance?.ev?.on) {
-                sockInstance.ev.on('connection.update', (update) => {
-                    if (update?.receivedPendingNotifications) {
-                        awaitingInitialSync = false;
-                        resolve();
-                    }
-                });
-            }
+            sockInstance.ev.on('connection.update', handler);
 
-            checkReady();
+            if (!awaitingInitialSync) {
+                sockInstance.ev.off?.('connection.update', handler);
+                resolve();
+            }
         }),
         new Promise((_, reject) => setTimeout(() => reject(new Error('WhatsApp initial sync timeout')), timeoutMs)),
     ]);
@@ -224,7 +231,7 @@ async function start() {
             let sentMessage;
             if (type === 'text') {
                 console.log('Sending text message to', chat);
-                sentMessage = await sockInstance.sendMessage(chat, { text: content || '' });
+                sentMessage = await sockInstance.sendMessage(chat, { text: content || '' }, { waitForAck: false });
             } else if (type === 'image' && media) {
                 console.log('Processing image message for', chat);
                 try {
@@ -260,7 +267,8 @@ async function start() {
                             },
                             { 
                                 quoted: null,
-                                upload: true
+                                upload: true,
+                                waitForAck: false
                             }
                         );
                     } else if (fs.existsSync(media)) {
@@ -279,7 +287,8 @@ async function start() {
                             },
                             {
                                 quoted: null,
-                                upload: true
+                                upload: true,
+                                waitForAck: false
                             }
                         );
                     } else if (media.startsWith('data:')) {
@@ -306,7 +315,7 @@ async function start() {
                         };
                         
                         // Send the message with the correct options
-                        const sendOptions = { quoted: null };
+                        const sendOptions = { quoted: null, waitForAck: false };
                         sentMessage = await sockInstance.sendMessage(chat, message, sendOptions);
                     } else {
                         throw new Error('Unsupported media format. Must be a URL or data URI');
@@ -356,7 +365,7 @@ async function start() {
                         documentMessage.caption = content;
                     }
 
-                    sentMessage = await sockInstance.sendMessage(chat, documentMessage, { quoted: null });
+                    sentMessage = await sockInstance.sendMessage(chat, documentMessage, { quoted: null, waitForAck: false });
                 } catch (error) {
                     console.error('Error processing document:', {
                         error: error.message,
@@ -386,7 +395,7 @@ async function start() {
                         videoMessage.caption = content;
                     }
 
-                    sentMessage = await sockInstance.sendMessage(chat, videoMessage, { quoted: null });
+                    sentMessage = await sockInstance.sendMessage(chat, videoMessage, { quoted: null, waitForAck: false });
                 } catch (error) {
                     console.error('Error processing video:', {
                         error: error.message,
@@ -412,7 +421,7 @@ async function start() {
                         mimetype: actualMimetype
                     };
 
-                    sentMessage = await sockInstance.sendMessage(chat, audioMessage, { quoted: null });
+                    sentMessage = await sockInstance.sendMessage(chat, audioMessage, { quoted: null, waitForAck: false });
                 } catch (error) {
                     console.error('Error processing audio:', {
                         error: error.message,
