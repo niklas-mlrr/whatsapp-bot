@@ -136,6 +136,7 @@ return [
 
     'webhook_secret' => env('WEBHOOK_SECRET'),
     'receiver_api_key' => env('RECEIVER_API_KEY'),
+    'receiver_url' => env('RECEIVER_URL', 'http://127.0.0.1:3000'),
 
     /*
     |--------------------------------------------------------------------------

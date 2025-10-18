@@ -323,7 +323,16 @@ class WhatsAppMessageController extends Controller
 
         // Send to receiver
         try {
-            $receiverUrl = env('RECEIVER_URL');
+            $receiverUrl = config('app.receiver_url', env('RECEIVER_URL', 'http://127.0.0.1:3000'));
+
+            if (empty($receiverUrl)) {
+                \Log::error('Receiver URL is not configured.');
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Receiver URL not configured',
+                ], 500);
+            }
+            $receiverUrl = rtrim($receiverUrl, '/');
             
             \Log::info('Sending message to receiver', [
                 'receiver_url' => $receiverUrl,
