@@ -33,25 +33,64 @@
       <div class="flex-1 overflow-y-auto">
         <div v-if="loadingChats" class="text-blue-500 p-4">Chats werden geladen...</div>
         <div v-if="errorChats" class="text-red-500 p-4">{{ errorChats }}</div>
-        <ul v-if="!loadingChats && !errorChats">
-          <li v-for="chat in chats" :key="chat.id" 
-              @click="selectChat(chat)"
-              :class="['cursor-pointer px-4 py-3 border-b border-gray-100 hover:bg-green-50 relative group flex items-center justify-between', selectedChat && selectedChat.id === chat.id ? 'bg-green-100 font-bold' : '']">
-            <span class="flex-1">{{ chat.name }}</span>
-            <button 
-              @click.stop="confirmDeleteChat(chat)"
-              class="opacity-0 group-hover:opacity-100 transition-opacity p-2 hover:bg-red-100 rounded-full"
-              title="Chat löschen"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-              </svg>
-            </button>
-          </li>
-        </ul>
+        <div v-if="!loadingChats && !errorChats">
+          <!-- Approved Chats -->
+          <ul>
+            <li v-for="chat in approvedChats" :key="chat.id" 
+                @click="selectChat(chat)"
+                :class="['cursor-pointer px-4 py-3 border-b border-gray-100 hover:bg-green-50 relative group flex items-center justify-between', selectedChat && selectedChat.id === chat.id ? 'bg-green-100 font-bold' : '']">
+              <span class="flex-1">{{ chat.name }}</span>
+              <button 
+                @click.stop="confirmDeleteChat(chat)"
+                class="opacity-0 group-hover:opacity-100 transition-opacity p-2 hover:bg-red-100 rounded-full"
+                title="Chat löschen"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </button>
+            </li>
+          </ul>
+          
+          <!-- Pending Chats Section -->
+          <div v-if="pendingChats.length > 0" class="border-t-2 border-gray-300 mt-2">
+            <div class="px-4 py-2 bg-yellow-50 text-sm font-semibold text-gray-700 border-b border-gray-200">
+              Neue Nachrichten
+            </div>
+            <div v-for="chat in pendingChats" :key="chat.id" class="px-4 py-3 border-b border-gray-100 bg-yellow-50">
+              <div class="flex items-center justify-between mb-2">
+                <span class="font-medium text-gray-800">{{ chat.name }}</span>
+              </div>
+              <p class="text-xs text-gray-600 mb-3">Möchten Sie Nachrichten von dieser Nummer sehen?</p>
+              <div class="flex gap-2">
+                <button
+                  @click="approveChat(chat)"
+                  class="flex-1 px-3 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors text-sm font-semibold"
+                >
+                  Annehmen
+                </button>
+                <button
+                  @click="rejectChat(chat)"
+                  class="flex-1 px-3 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors text-sm font-semibold"
+                >
+                  Ablehnen
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
-      <!-- Kontakte Button -->
-      <div class="p-4 border-t border-gray-200">
+      <!-- Action Buttons -->
+      <div class="p-4 border-t border-gray-200 space-y-2">
+        <button
+          @click="startNewChat"
+          class="w-full py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors font-semibold flex items-center justify-center gap-2"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+          </svg>
+          Neuer Chat
+        </button>
         <button
           @click="showContactsModal = true"
           class="w-full py-3 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors font-semibold flex items-center justify-center gap-2"
@@ -197,9 +236,50 @@
     <!-- Contacts Modal -->
     <ContactsModal
       :is-open="showContactsModal"
+      :prefilled-phone="prefilledContactPhone"
+      :chat-id-to-update="chatIdToUpdate"
       @close="handleContactsModalClose"
       @chat-selected="handleChatSelected"
     />
+
+    <!-- New Chat Modal -->
+    <div v-if="showNewChatModal" class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4" @click.self="closeNewChatModal">
+      <div class="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+        <h3 class="text-xl font-bold text-gray-900 mb-4">Neuer Chat</h3>
+        
+        <form @submit.prevent="createNewChat" class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Telefonnummer</label>
+            <input
+              v-model="newChatPhone"
+              type="tel"
+              required
+              autofocus
+              class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+              placeholder="z.B. 4917646765869 oder +4917646765869"
+            />
+            <p class="text-xs text-gray-500 mt-1">Geben Sie die Telefonnummer mit oder ohne + ein</p>
+          </div>
+
+          <div class="flex gap-2 pt-4">
+            <button
+              type="button"
+              @click="closeNewChatModal"
+              class="flex-1 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              Abbrechen
+            </button>
+            <button
+              type="submit"
+              :disabled="isCreatingChat || !newChatPhone.trim()"
+              class="flex-1 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:bg-gray-300"
+            >
+              {{ isCreatingChat ? 'Erstellen...' : 'Chat erstellen' }}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -227,6 +307,10 @@ const chats = ref<any[]>([])
 const loadingChats = ref(false)
 const errorChats = ref<string | null>(null)
 const selectedChat = ref<any | null>(null)
+
+// Separate pending and approved chats
+const approvedChats = computed(() => chats.value.filter(c => !c.pending_approval))
+const pendingChats = computed(() => chats.value.filter(c => c.pending_approval))
 const input = ref('')
 const attachmentFile = ref<File | null>(null)
 const attachmentPath = ref<string | null>(null)
@@ -242,6 +326,11 @@ const messageListRef = ref<any>(null)
 const typingTimeout = ref<number | null>(null)
 const isLoggingOut = ref(false)
 const showContactsModal = ref(false)
+const prefilledContactPhone = ref<string | undefined>(undefined)
+const chatIdToUpdate = ref<string | undefined>(undefined)
+const showNewChatModal = ref(false)
+const newChatPhone = ref('')
+const isCreatingChat = ref(false)
 
 // WebSocket for typing indicators
 const { notifyTyping } = useWebSocket()
@@ -252,36 +341,36 @@ const isPhoneNumber = (name: string): boolean => {
 }
 
 // Add current chat to contacts
-const addToContacts = async () => {
+const addToContacts = () => {
   if (!selectedChat.value) return
   
-  const contactName = prompt('Kontaktname eingeben:', '')
-  if (!contactName || !contactName.trim()) return
+  // Extract phone number from the chat
+  // Try to get it from participants, metadata, or original_name
+  let phoneNumber = selectedChat.value.participants?.[0] 
+                    || selectedChat.value.metadata?.whatsapp_id 
+                    || selectedChat.value.original_name
+                    || selectedChat.value.name
   
-  try {
-    await apiClient.put(`/chats/${selectedChat.value.id}`, {
-      name: contactName.trim()
-    })
-    
-    // Refresh chats to show updated name
-    const response = await fetchChats()
-    if (response && response.data && response.data.data) {
-      chats.value = response.data.data
-      // Update selected chat with new name
-      const updatedChat = chats.value.find(c => c.id === selectedChat.value?.id)
-      if (updatedChat) {
-        selectedChat.value = updatedChat
-      }
-    }
-  } catch (error) {
-    console.error('Error adding to contacts:', error)
-    alert('Fehler beim Hinzufügen zu Kontakten')
+  // Clean up the phone number for display (remove @ suffix and normalize)
+  // Extract just the number part and format it nicely
+  phoneNumber = phoneNumber.replace(/@.*$/, '') // Remove everything after @
+  
+  // Add + prefix if it's just digits (for better UX)
+  if (/^\d+$/.test(phoneNumber)) {
+    phoneNumber = '+' + phoneNumber
   }
+  
+  // Set the prefilled phone, chat ID to update, and open the contacts modal
+  prefilledContactPhone.value = phoneNumber
+  chatIdToUpdate.value = String(selectedChat.value.id)
+  showContactsModal.value = true
 }
 
 // Handle contacts modal close - refresh chat list to show updated names
 const handleContactsModalClose = async () => {
   showContactsModal.value = false
+  prefilledContactPhone.value = undefined // Reset prefilled phone
+  chatIdToUpdate.value = undefined // Reset chat ID to update
   
   // Refresh the chat list to show updated contact names
   try {
@@ -443,9 +532,11 @@ async function sendMessageHandler() {
     // Try to get the WhatsApp JID from multiple sources:
     // 1. First participant in the array
     // 2. WhatsApp ID from metadata
-    // 3. Fall back to chat name (which might be the phone number for old chats)
+    // 3. Original name (the actual JID, not the formatted display name)
+    // 4. Fall back to chat name
     const chatJid = selectedChat.value.participants?.[0] 
                     || selectedChat.value.metadata?.whatsapp_id 
+                    || selectedChat.value.original_name
                     || selectedChat.value.name;
     console.log('Using chat JID:', chatJid);
     
@@ -627,6 +718,107 @@ const handleLogout = async () => {
   
   const authStore = useAuthStore()
   authStore.logout()
+}
+
+const startNewChat = () => {
+  showNewChatModal.value = true
+}
+
+const closeNewChatModal = () => {
+  showNewChatModal.value = false
+  newChatPhone.value = ''
+  isCreatingChat.value = false
+}
+
+const createNewChat = async () => {
+  if (!newChatPhone.value.trim()) return
+  
+  // Clean the phone number (remove spaces, dashes, etc.)
+  const cleanedNumber = newChatPhone.value.trim().replace(/[\s\-\(\)]/g, '')
+  
+  // Validate phone number (should contain only digits and optionally start with +)
+  if (!/^\+?\d+$/.test(cleanedNumber)) {
+    alert('Ungültige Telefonnummer. Bitte nur Ziffern eingeben (optional mit + am Anfang).')
+    return
+  }
+  
+  // Remove + if present for the JID format
+  const numberWithoutPlus = cleanedNumber.replace(/^\+/, '')
+  
+  // Create WhatsApp JID format
+  const whatsappJid = `${numberWithoutPlus}@s.whatsapp.net`
+  
+  isCreatingChat.value = true
+  
+  try {
+    // Create or find the chat
+    await apiClient.post('/chats', {
+      name: whatsappJid, // Will be auto-formatted to +number on display
+      participants: [whatsappJid],
+      is_group: false
+    })
+    
+    // Refresh chats to show the new chat
+    const chatsResponse = await fetchChats()
+    if (chatsResponse && chatsResponse.data && chatsResponse.data.data) {
+      chats.value = chatsResponse.data.data
+      
+      // Find and select the newly created chat
+      const newChat = chats.value.find(c => 
+        c.metadata?.whatsapp_id === whatsappJid || 
+        c.original_name === whatsappJid
+      )
+      if (newChat) {
+        selectChat(newChat)
+      }
+    }
+    
+    // Close the modal
+    closeNewChatModal()
+  } catch (error: any) {
+    console.error('Error creating new chat:', error)
+    alert(error?.response?.data?.message || 'Fehler beim Erstellen des Chats')
+  } finally {
+    isCreatingChat.value = false
+  }
+}
+
+const approveChat = async (chat: any) => {
+  try {
+    await apiClient.post(`/chats/${chat.id}/approve`)
+    
+    // Refresh chats to update the list
+    const response = await fetchChats()
+    if (response && response.data && response.data.data) {
+      chats.value = response.data.data
+      
+      // Select the approved chat
+      const approvedChat = chats.value.find(c => c.id === chat.id)
+      if (approvedChat) {
+        selectChat(approvedChat)
+      }
+    }
+  } catch (e: any) {
+    console.error('Error approving chat:', e)
+    alert(e?.response?.data?.message || 'Fehler beim Annehmen des Chats')
+  }
+}
+
+const rejectChat = async (chat: any) => {
+  try {
+    await apiClient.post(`/chats/${chat.id}/reject`)
+    
+    // Remove the chat from the list
+    chats.value = chats.value.filter(c => c.id !== chat.id)
+    
+    // If the rejected chat was selected, clear the selection
+    if (selectedChat.value && selectedChat.value.id === chat.id) {
+      selectedChat.value = null
+    }
+  } catch (e: any) {
+    console.error('Error rejecting chat:', e)
+    alert(e?.response?.data?.message || 'Fehler beim Ablehnen des Chats')
+  }
 }
 
 const confirmDeleteChat = async (chat: any) => {

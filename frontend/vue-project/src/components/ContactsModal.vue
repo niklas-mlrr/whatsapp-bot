@@ -158,6 +158,8 @@ interface Contact {
 
 interface Props {
   isOpen: boolean
+  prefilledPhone?: string
+  chatIdToUpdate?: string
 }
 
 const props = defineProps<Props>()
@@ -232,11 +234,25 @@ const saveContact = async () => {
       await apiClient.put(`/chats/${editingContact.value.id}`, {
         name: contactForm.value.name
       })
+    } else if (props.chatIdToUpdate) {
+      // Update existing chat (from "Zu Kontakten hinzufügen")
+      await apiClient.put(`/chats/${props.chatIdToUpdate}`, {
+        name: contactForm.value.name
+      })
     } else {
+      // Normalize phone number to WhatsApp JID format
+      let phoneNumber = contactForm.value.phone.trim()
+      
+      // Extract just the phone number part (before @)
+      const numberPart = phoneNumber.replace(/@.*$/, '').replace(/^\+/, '').replace(/[\s\-\(\)]/g, '')
+      
+      // Always normalize to the full WhatsApp JID format
+      phoneNumber = `${numberPart}@s.whatsapp.net`
+      
       // Create new contact (create or update chat)
       await apiClient.post('/chats', {
         name: contactForm.value.name,
-        participants: [contactForm.value.phone],
+        participants: [phoneNumber],
         is_group: false
       })
     }
@@ -259,6 +275,18 @@ const openChat = (contact: Contact) => {
 watch(() => props.isOpen, (isOpen) => {
   if (isOpen) {
     fetchContacts()
+    
+    // If a phone number is pre-filled, open the add contact form
+    if (props.prefilledPhone) {
+      showAddContact.value = true
+      contactForm.value = {
+        name: '',
+        phone: props.prefilledPhone
+      }
+    }
+  } else {
+    // Reset form when modal closes
+    closeContactForm()
   }
 })
 </script>

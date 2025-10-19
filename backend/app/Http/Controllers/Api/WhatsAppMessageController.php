@@ -209,14 +209,43 @@ class WhatsAppMessageController extends Controller
         );
 
         // 2) Resolve or create chat by WhatsApp JID stored in metadata->whatsapp_id
-        $chat = Chat::where('metadata->whatsapp_id', $data['chat'])->first();
+        // Normalize the WhatsApp JID to full format
+        $chatId = $data['chat'];
+        $normalizedChatId = $chatId;
+        if (preg_match('/^(\d+)@$/', $chatId, $matches)) {
+            // Incomplete format: add .s.whatsapp.net
+            $normalizedChatId = $matches[1] . '@s.whatsapp.net';
+        } elseif (!str_contains($chatId, '@')) {
+            // No @ at all: add full suffix
+            $normalizedChatId = $chatId . '@s.whatsapp.net';
+        }
+        
+        // Extract phone number for flexible searching
+        $phoneNumber = preg_replace('/@.*$/', '', $normalizedChatId);
+        
+        // Try to find existing chat by phone number (handles format variations)
+        $chat = Chat::where('is_group', false)
+            ->get()
+            ->first(function($c) use ($phoneNumber) {
+                $metadata = is_string($c->metadata) ? json_decode($c->metadata, true) : $c->metadata;
+                if (!$metadata || !isset($metadata['whatsapp_id'])) {
+                    return false;
+                }
+                $storedPhone = preg_replace('/@.*$/', '', $metadata['whatsapp_id']);
+                return $storedPhone === $phoneNumber;
+            });
+            
         if (!$chat) {
+            // Format the phone number for display (e.g., "+4917646765869")
+            $displayName = '+' . $phoneNumber;
+            
             $chat = Chat::create([
-                'name' => $data['chat'],
+                'name' => $displayName, // Display formatted phone number, not WhatsApp JID
                 'is_group' => false,
                 'created_by' => $user->id,
+                'participants' => [$normalizedChatId, 'me'], // Store the normalized WhatsApp JID and 'me'
                 'metadata' => [
-                    'whatsapp_id' => $data['chat'],
+                    'whatsapp_id' => $normalizedChatId,
                     'created_by' => $user->id,
                 ],
             ]);

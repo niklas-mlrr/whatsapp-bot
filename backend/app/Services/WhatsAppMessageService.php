@@ -702,24 +702,53 @@ class WhatsAppMessageService
      */
     protected function findOrCreateChat(string $chatId, string $senderId): Chat
     {
-        // First try to find existing chat
-        $chat = Chat::where('metadata->whatsapp_id', $chatId)->first();
+        // Normalize the WhatsApp JID to full format
+        // If it's in incomplete format (e.g., "4917646765869@"), normalize it
+        $normalizedChatId = $chatId;
+        if (preg_match('/^(\d+)@$/', $chatId, $matches)) {
+            // Incomplete format: add .s.whatsapp.net
+            $normalizedChatId = $matches[1] . '@s.whatsapp.net';
+        } elseif (!str_contains($chatId, '@')) {
+            // No @ at all: add full suffix
+            $normalizedChatId = $chatId . '@s.whatsapp.net';
+        }
+        
+        // Extract phone number for flexible searching
+        $phoneNumber = preg_replace('/@.*$/', '', $normalizedChatId);
+        
+        // Try to find existing chat by phone number (handles format variations)
+        $chat = Chat::where('is_group', false)
+            ->get()
+            ->first(function($c) use ($phoneNumber) {
+                $metadata = is_string($c->metadata) ? json_decode($c->metadata, true) : $c->metadata;
+                if (!$metadata || !isset($metadata['whatsapp_id'])) {
+                    return false;
+                }
+                $storedPhone = preg_replace('/@.*$/', '', $metadata['whatsapp_id']);
+                return $storedPhone === $phoneNumber;
+            });
 
         if (!$chat) {
+            // Format the phone number for display (e.g., "+4917646765869")
+            $displayName = '+' . $phoneNumber;
+            
             // Create new chat only if it doesn't exist
             $chat = Chat::create([
-                'name' => $chatId,
+                'name' => $displayName, // Display formatted phone number, not WhatsApp JID
                 'is_group' => false,
                 'created_by' => $senderId,
+                'participants' => [$normalizedChatId, 'me'], // Store the normalized WhatsApp JID and 'me'
+                'pending_approval' => true, // New chats from incoming messages need approval
                 'metadata' => [
-                    'whatsapp_id' => $chatId,
+                    'whatsapp_id' => $normalizedChatId,
                     'created_by' => $senderId
                 ]
             ]);
             
             Log::channel('whatsapp')->info('Created new chat', [
                 'chat_id' => $chat->id,
-                'whatsapp_id' => $chatId
+                'whatsapp_id' => $normalizedChatId,
+                'original_chat_id' => $chatId
             ]);
         }
 

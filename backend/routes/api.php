@@ -293,6 +293,12 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
         // Mark chat as read
         Route::post('/{chat}/read', [ChatController::class, 'markAsRead']);
 
+        // Approve pending chat
+        Route::post('/{chat}/approve', [ChatController::class, 'approve']);
+
+        // Reject pending chat
+        Route::post('/{chat}/reject', [ChatController::class, 'reject']);
+
         // Get chat messages
         Route::get('/{chat}/messages', [ChatController::class, 'messages']);
 

@@ -16,6 +16,24 @@ class ChatController extends Controller
     }
 
     /**
+     * Format WhatsApp JID to display phone number
+     * Converts "4917646765869@s.whatsapp.net" to "+4917646765869"
+     */
+    private function formatPhoneNumberForDisplay(string $jid): string
+    {
+        // Extract phone number from JID (remove @s.whatsapp.net or similar)
+        $phoneNumber = preg_replace('/@.*$/', '', $jid);
+        
+        // Add + prefix if it's a phone number (contains only digits)
+        if (preg_match('/^\d+$/', $phoneNumber)) {
+            return '+' . $phoneNumber;
+        }
+        
+        // Return as-is if it's not a phone number format
+        return $jid;
+    }
+
+    /**
      * Get all chats for the authenticated user.
      */
     public function index(Request $request)
@@ -37,6 +55,7 @@ class ChatController extends Controller
                     c.created_at,
                     c.is_archived,
                     c.is_muted,
+                    c.pending_approval,
                     c.metadata,
                     c.type,
                     c.unread_count,
@@ -93,18 +112,42 @@ class ChatController extends Controller
                     'updated_at' => $chat->updated_at,
                 ]);
                 
+                // Format display name for phone numbers
+                $displayName = $chat->name;
+                $metadata = json_decode($chat->metadata, true) ?? [];
+                
+                // If this chat has a whatsapp_id in metadata and the name equals the whatsapp_id,
+                // it means it's an auto-generated name from the JID, so format it nicely
+                if (isset($metadata['whatsapp_id']) && $chat->name === $metadata['whatsapp_id']) {
+                    $displayName = $this->formatPhoneNumberForDisplay($chat->name);
+                }
+                
+                // Parse participants array and clean it for display
+                $participants = json_decode($chat->participants, true) ?? [];
+                $cleanParticipants = [];
+                foreach ($participants as $participant) {
+                    if ($participant === 'me') {
+                        $cleanParticipants[] = 'me';
+                    } else {
+                        // Remove @s.whatsapp.net suffix for cleaner display
+                        $cleanParticipants[] = preg_replace('/@.*$/', '', $participant);
+                    }
+                }
+                
                 $formattedChats[] = [
                     'id' => $chat->id,
-                    'name' => $chat->name,
+                    'name' => $displayName, // Use formatted display name
+                    'original_name' => isset($metadata['whatsapp_id']) ? $metadata['whatsapp_id'] : $chat->name, // Full JID for technical operations
                     'is_group' => $chat->is_group,
-                    'participants' => json_decode($chat->participants, true) ?? [],
-                    'metadata' => json_decode($chat->metadata, true) ?? [],
+                    'participants' => $cleanParticipants, // Clean phone numbers without @s.whatsapp.net
+                    'metadata' => $metadata,
                     'avatar_url' => $chatModel->avatar_url,
                     'updated_at' => $chat->updated_at,
                     'created_at' => $chat->created_at,
                     'description' => null, // Description field doesn't exist in database
                     'is_archived' => $chat->is_archived,
                     'is_muted' => $chat->is_muted,
+                    'pending_approval' => (bool)($chat->pending_approval ?? false),
                     'unread_count' => $chat->unread_count,
                     'users' => [],
                     'last_message' => null
@@ -149,28 +192,63 @@ class ChatController extends Controller
             
             // For direct chats, find or create based on participants
             if (!$isGroup && count($participants) === 1) {
+                // Get the WhatsApp JID (the participant that's not 'me')
+                $whatsappJid = $participants[0];
+                
+                // Extract the phone number part (before @) to handle different formats
+                $phoneNumber = preg_replace('/@.*$/', '', $whatsappJid);
+                
                 // Add 'me' as the second participant
                 $participants[] = 'me';
                 sort($participants);
                 
-                // Find existing chat with these participants
+                // Find existing chat by whatsapp_id in metadata
+                // We need to check for different format variations
                 $chat = Chat::where('is_group', false)
-                    ->where('participants', json_encode($participants))
-                    ->first();
+                    ->get()
+                    ->first(function($c) use ($phoneNumber) {
+                        $metadata = is_string($c->metadata) ? json_decode($c->metadata, true) : $c->metadata;
+                        if (!$metadata || !isset($metadata['whatsapp_id'])) {
+                            return false;
+                        }
+                        // Extract phone number from stored whatsapp_id
+                        $storedPhone = preg_replace('/@.*$/', '', $metadata['whatsapp_id']);
+                        return $storedPhone === $phoneNumber;
+                    });
                 
                 if ($chat) {
-                    // Update existing chat name
-                    $chat->update(['name' => $validated['name']]);
+                    // Update existing chat name, participants, and normalize metadata
+                    $metadata = $chat->metadata ? (is_array($chat->metadata) ? $chat->metadata : json_decode($chat->metadata, true)) : [];
+                    $metadata['whatsapp_id'] = $whatsappJid; // Normalize to the new format
+                    
+                    $chat->update([
+                        'name' => $validated['name'],
+                        'participants' => $participants,
+                        'metadata' => $metadata
+                    ]);
                 } else {
                     // Create new chat
+                    $user = User::getFirstUser();
+                    
+                    // If the name looks like a WhatsApp JID, format it as a phone number
+                    $displayName = $validated['name'];
+                    if (preg_match('/^(\d+)@/', $displayName, $matches)) {
+                        // It's a WhatsApp JID, format as +number
+                        $displayName = '+' . $matches[1];
+                    }
+                    
                     $chat = Chat::create([
-                        'name' => $validated['name'],
+                        'name' => $displayName,
                         'is_group' => false,
                         'participants' => $participants,
+                        'created_by' => $user->id,
+                        'metadata' => [
+                            'whatsapp_id' => $whatsappJid,
+                            'created_by' => $user->id
+                        ]
                     ]);
                     
                     // Attach the app user to the chat
-                    $user = User::getFirstUser();
                     $chat->users()->attach($user->id);
                 }
             } else {
@@ -297,6 +375,123 @@ class ChatController extends Controller
         ], 501);
     }
 
+    /**
+     * Approve a pending chat
+     */
+    public function approve(Request $request, $chatId)
+    {
+        try {
+            $chat = Chat::findOrFail($chatId);
+            
+            $chat->update(['pending_approval' => false]);
+            
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Chat approved successfully',
+                'data' => $chat
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Error approving chat: ' . $e->getMessage(), [
+                'chat_id' => $chatId,
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to approve chat: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Reject a pending chat (delete it and its messages)
+     */
+    public function reject(Request $request, $chatId)
+    {
+        try {
+            DB::beginTransaction();
+            
+            try {
+                // Get message IDs for this chat to delete message_reads
+                $messageIds = DB::select("SELECT id FROM whatsapp_messages WHERE chat_id = ?", [$chatId]);
+                $messageIdArray = array_column($messageIds, 'id');
+                
+                // Delete message_reads for messages in this chat
+                if (!empty($messageIdArray)) {
+                    $placeholders = implode(',', array_fill(0, count($messageIdArray), '?'));
+                    DB::delete("DELETE FROM message_reads WHERE message_id IN ($placeholders)", $messageIdArray);
+                }
+                
+                // Delete messages associated with this chat
+                DB::delete("DELETE FROM whatsapp_messages WHERE chat_id = ?", [$chatId]);
+                
+                // Delete legacy messages if any
+                $chat = DB::selectOne("SELECT metadata FROM chats WHERE id = ?", [$chatId]);
+                if ($chat && $chat->metadata) {
+                    $metadata = json_decode($chat->metadata, true);
+                    if (isset($metadata['whatsapp_id'])) {
+                        DB::delete("DELETE FROM messages WHERE chat = ?", [$metadata['whatsapp_id']]);
+                    }
+                }
+                
+                // Get users associated with this chat before deleting relationships
+                $chatUsers = DB::select("SELECT user_id FROM chat_user WHERE chat_id = ?", [$chatId]);
+                $chatUserIds = array_column($chatUsers, 'user_id');
+                
+                // Delete chat_user relationships
+                DB::delete("DELETE FROM chat_user WHERE chat_id = ?", [$chatId]);
+                
+                // Delete the chat itself
+                DB::delete("DELETE FROM chats WHERE id = ?", [$chatId]);
+                
+                // Clean up orphaned users (users with no remaining chats)
+                $mainUser = \App\Models\User::getFirstUser();
+                $deletedUsers = 0;
+                foreach ($chatUserIds as $userId) {
+                    if ($mainUser && $userId == $mainUser->id) {
+                        continue;
+                    }
+                    
+                    $hasOtherChats = DB::selectOne(
+                        "SELECT COUNT(*) as count FROM chat_user WHERE user_id = ?", 
+                        [$userId]
+                    );
+                    
+                    if ($hasOtherChats && $hasOtherChats->count == 0) {
+                        DB::delete("DELETE FROM users WHERE id = ?", [$userId]);
+                        $deletedUsers++;
+                    }
+                }
+                
+                DB::commit();
+                
+                \Log::info('Pending chat rejected and deleted', [
+                    'chat_id' => $chatId,
+                    'deleted_messages' => count($messageIdArray),
+                    'deleted_users' => $deletedUsers
+                ]);
+                
+                return response()->json([
+                    'status' => 'success',
+                    'message' => 'Chat rejected and deleted successfully'
+                ]);
+            } catch (\Exception $e) {
+                DB::rollBack();
+                throw $e;
+            }
+        } catch (\Exception $e) {
+            \Log::error('Error rejecting chat: ' . $e->getMessage(), [
+                'chat_id' => $chatId,
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to reject chat: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
     public function destroy(Request $request, $chatId)
     {
         try {
@@ -328,8 +523,32 @@ class ChatController extends Controller
             DB::beginTransaction();
             
             try {
+                // Get message IDs for this chat to delete message_reads
+                $messageIds = DB::select("SELECT id FROM whatsapp_messages WHERE chat_id = ?", [$chatId]);
+                $messageIdArray = array_column($messageIds, 'id');
+                
+                // Delete message_reads for messages in this chat
+                if (!empty($messageIdArray)) {
+                    $placeholders = implode(',', array_fill(0, count($messageIdArray), '?'));
+                    DB::delete("DELETE FROM message_reads WHERE message_id IN ($placeholders)", $messageIdArray);
+                }
+                
                 // Delete messages associated with this chat
                 DB::delete("DELETE FROM whatsapp_messages WHERE chat_id = ?", [$chatId]);
+                
+                // Delete legacy messages if any (using chat field as string identifier)
+                // Get the chat to find its WhatsApp ID
+                $chat = DB::selectOne("SELECT metadata FROM chats WHERE id = ?", [$chatId]);
+                if ($chat && $chat->metadata) {
+                    $metadata = json_decode($chat->metadata, true);
+                    if (isset($metadata['whatsapp_id'])) {
+                        DB::delete("DELETE FROM messages WHERE chat = ?", [$metadata['whatsapp_id']]);
+                    }
+                }
+                
+                // Get users associated with this chat before deleting relationships
+                $chatUsers = DB::select("SELECT user_id FROM chat_user WHERE chat_id = ?", [$chatId]);
+                $chatUserIds = array_column($chatUsers, 'user_id');
                 
                 // Delete chat_user relationships
                 DB::delete("DELETE FROM chat_user WHERE chat_id = ?", [$chatId]);
@@ -337,11 +556,37 @@ class ChatController extends Controller
                 // Delete the chat itself
                 DB::delete("DELETE FROM chats WHERE id = ?", [$chatId]);
                 
+                // Clean up orphaned users (users with no remaining chats)
+                // But don't delete the main app user
+                $mainUser = \App\Models\User::getFirstUser();
+                $deletedUsers = 0;
+                foreach ($chatUserIds as $userId) {
+                    // Skip the main app user
+                    if ($mainUser && $userId == $mainUser->id) {
+                        continue;
+                    }
+                    
+                    // Check if this user has any other chats
+                    $hasOtherChats = DB::selectOne(
+                        "SELECT COUNT(*) as count FROM chat_user WHERE user_id = ?", 
+                        [$userId]
+                    );
+                    
+                    // If user has no other chats, delete them
+                    if ($hasOtherChats && $hasOtherChats->count == 0) {
+                        DB::delete("DELETE FROM users WHERE id = ?", [$userId]);
+                        $deletedUsers++;
+                        \Log::info('Deleted orphaned user', ['user_id' => $userId]);
+                    }
+                }
+                
                 DB::commit();
                 
                 \Log::info('Chat deleted successfully', [
                     'chat_id' => $chatId,
-                    'user_id' => $user->id ?? 'unknown'
+                    'user_id' => $user->id ?? 'unknown',
+                    'deleted_messages' => count($messageIdArray),
+                    'deleted_users' => $deletedUsers
                 ]);
                 
                 return response()->json([
