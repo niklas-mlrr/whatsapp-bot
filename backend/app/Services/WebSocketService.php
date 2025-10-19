@@ -61,4 +61,31 @@ class WebSocketService
             ]);
         }
     }
+
+    public function newChatCreated(\App\Models\Chat $chat): void
+    {
+        try {
+            // Broadcast to a global channel that all users listen to
+            Broadcast::event('chats', 'chat.created', [
+                'chat' => [
+                    'id' => $chat->id,
+                    'name' => $chat->name,
+                    'pending_approval' => $chat->pending_approval,
+                    'is_group' => $chat->is_group,
+                    'created_at' => $chat->created_at,
+                ],
+                'event' => 'chat.created',
+            ]);
+            
+            Log::info('New chat broadcast sent', [
+                'chat_id' => $chat->id,
+                'pending_approval' => $chat->pending_approval
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Failed to send new chat notification', [
+                'error' => $e->getMessage(),
+                'chat_id' => $chat->id,
+            ]);
+        }
+    }
 }

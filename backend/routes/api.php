@@ -350,3 +350,87 @@ Route::get('/debug-chats', function () {
         ], 500);
     }
 });
+
+// Test endpoint to approve a chat
+Route::get('/test-approve/{chatId}', function ($chatId) {
+    try {
+        $chat = \App\Models\Chat::findOrFail($chatId);
+        
+        \Log::info('Before update', [
+            'chat_id' => $chat->id,
+            'pending_approval' => $chat->pending_approval,
+            'fillable' => $chat->getFillable()
+        ]);
+        
+        $chat->update(['pending_approval' => false]);
+        
+        $chat->refresh();
+        
+        \Log::info('After update', [
+            'chat_id' => $chat->id,
+            'pending_approval' => $chat->pending_approval
+        ]);
+        
+        return response()->json([
+            'status' => 'success',
+            'chat_id' => $chat->id,
+            'pending_approval' => $chat->pending_approval,
+            'fillable' => $chat->getFillable()
+        ]);
+    } catch (\Exception $e) {
+        return response()->json([
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString()
+        ], 500);
+    }
+});
+
+// Test endpoint to simulate incoming message from new number
+Route::get('/test-pending-chat', function () {
+    try {
+        // Use a random number to ensure it's truly new
+        $randomNumber = '49' . rand(1000000000, 9999999999);
+        $testPhone = $randomNumber . '@s.whatsapp.net';
+        
+        // Simulate what happens when a message arrives
+        $messageService = app(\App\Services\WhatsAppMessageService::class);
+        
+        // Create a test message data
+        $messageData = new \App\DataTransferObjects\WhatsAppMessageData(
+            sender: $testPhone,
+            chat: $testPhone,
+            type: 'text',
+            content: 'Test message from new number',
+            sending_time: now()->toDateTimeString(),
+            messageId: 'test_' . time()
+        );
+        
+        $messageService->handle($messageData);
+        
+        // Check if chat was created with pending_approval
+        $chat = \App\Models\Chat::where('is_group', false)
+            ->get()
+            ->first(function($c) use ($testPhone) {
+                $metadata = is_string($c->metadata) ? json_decode($c->metadata, true) : $c->metadata;
+                if (!$metadata || !isset($metadata['whatsapp_id'])) {
+                    return false;
+                }
+                return $metadata['whatsapp_id'] === $testPhone;
+            });
+        
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Test message processed from ' . $testPhone,
+            'chat_created' => $chat ? true : false,
+            'pending_approval' => $chat ? (bool)$chat->pending_approval : null,
+            'chat_id' => $chat ? $chat->id : null,
+            'chat_name' => $chat ? $chat->name : null,
+            'test_phone' => $testPhone
+        ]);
+    } catch (\Exception $e) {
+        return response()->json([
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString()
+        ], 500);
+    }
+});

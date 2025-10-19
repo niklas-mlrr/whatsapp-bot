@@ -34,6 +34,34 @@
         <div v-if="loadingChats" class="text-blue-500 p-4">Chats werden geladen...</div>
         <div v-if="errorChats" class="text-red-500 p-4">{{ errorChats }}</div>
         <div v-if="!loadingChats && !errorChats">
+          <!-- Pending Chats Section (shown at top) -->
+          <div v-if="pendingChats.length > 0" class="border-b-2 border-gray-300">
+            <div class="px-4 py-2 bg-yellow-50 text-sm font-semibold text-gray-700 border-b border-gray-200">
+              Neue Nachrichten
+            </div>
+            <div v-for="chat in pendingChats" :key="chat.id" class="px-4 py-3 border-b border-gray-100 bg-yellow-50">
+              <div class="flex items-center justify-between mb-2">
+                <span class="font-medium text-gray-800">{{ chat.name }}</span>
+              </div>
+              <p v-if="chat.last_message_preview" class="text-sm text-gray-700 mb-2 italic">{{ chat.last_message_preview }}</p>
+              <b class="text-sm text-gray-600 mb-3">Möchtest du diesen Chat zulassen?</b>
+              <div class="flex gap-2">
+                <button
+                  @click="approveChat(chat)"
+                  class="flex-1 px-3 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors text-sm font-semibold"
+                >
+                  Annehmen
+                </button>
+                <button
+                  @click="rejectChat(chat)"
+                  class="flex-1 px-3 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors text-sm font-semibold"
+                >
+                  Löschen
+                </button>
+              </div>
+            </div>
+          </div>
+          
           <!-- Approved Chats -->
           <ul>
             <li v-for="chat in approvedChats" :key="chat.id" 
@@ -51,33 +79,6 @@
               </button>
             </li>
           </ul>
-          
-          <!-- Pending Chats Section -->
-          <div v-if="pendingChats.length > 0" class="border-t-2 border-gray-300 mt-2">
-            <div class="px-4 py-2 bg-yellow-50 text-sm font-semibold text-gray-700 border-b border-gray-200">
-              Neue Nachrichten
-            </div>
-            <div v-for="chat in pendingChats" :key="chat.id" class="px-4 py-3 border-b border-gray-100 bg-yellow-50">
-              <div class="flex items-center justify-between mb-2">
-                <span class="font-medium text-gray-800">{{ chat.name }}</span>
-              </div>
-              <p class="text-xs text-gray-600 mb-3">Möchten Sie Nachrichten von dieser Nummer sehen?</p>
-              <div class="flex gap-2">
-                <button
-                  @click="approveChat(chat)"
-                  class="flex-1 px-3 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors text-sm font-semibold"
-                >
-                  Annehmen
-                </button>
-                <button
-                  @click="rejectChat(chat)"
-                  class="flex-1 px-3 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors text-sm font-semibold"
-                >
-                  Ablehnen
-                </button>
-              </div>
-            </div>
-          </div>
         </div>
       </div>
       <!-- Action Buttons -->
@@ -284,7 +285,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import MessageList from '../components/MessageList.vue'
@@ -332,8 +333,8 @@ const showNewChatModal = ref(false)
 const newChatPhone = ref('')
 const isCreatingChat = ref(false)
 
-// WebSocket for typing indicators
-const { notifyTyping } = useWebSocket()
+// WebSocket for typing indicators and new chat notifications
+const { notifyTyping, connect: connectWebSocket } = useWebSocket()
 
 // Check if a string looks like a phone number (contains numbers, +, _, or -)
 const isPhoneNumber = (name: string): boolean => {
@@ -867,6 +868,16 @@ const checkAuthAndRedirect = async () => {
   return true
 }
 
+// Set up polling interval variable at component level
+let pollInterval: number | null = null
+
+// Clean up interval when component unmounts
+onUnmounted(() => {
+  if (pollInterval) {
+    clearInterval(pollInterval)
+  }
+})
+
 onMounted(async () => {
   const isAuthenticated = await checkAuthAndRedirect()
   
@@ -898,5 +909,29 @@ onMounted(async () => {
   } finally {
     loadingChats.value = false
   }
+  
+  // Set up periodic polling for new chats (every 5 seconds)
+  pollInterval = setInterval(async () => {
+    try {
+      const response = await fetchChats()
+      if (response && response.data && response.data.data) {
+        const newChats = response.data.data
+        
+        // Check if there are any new pending chats
+        const currentPendingCount = pendingChats.value.length
+        const newPendingCount = newChats.filter((c: any) => c.pending_approval).length
+        
+        // Update the chats list
+        chats.value = newChats
+        
+        // Log if new pending chats appeared
+        if (newPendingCount > currentPendingCount) {
+          console.log('New pending chat detected!')
+        }
+      }
+    } catch (error) {
+      console.error('Error polling for new chats:', error)
+    }
+  }, 5000) // Poll every 5 seconds
 })
 </script>

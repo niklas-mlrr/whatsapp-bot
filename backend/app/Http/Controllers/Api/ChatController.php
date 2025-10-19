@@ -134,6 +134,30 @@ class ChatController extends Controller
                     }
                 }
                 
+                // Get last message preview for pending chats
+                $lastMessagePreview = null;
+                if ($chat->pending_approval) {
+                    $lastMsg = DB::selectOne("
+                        SELECT content, type, created_at 
+                        FROM whatsapp_messages 
+                        WHERE chat_id = ? 
+                        ORDER BY created_at DESC 
+                        LIMIT 1
+                    ", [$chat->id]);
+                    
+                    if ($lastMsg) {
+                        $preview = $lastMsg->content;
+                        if ($lastMsg->type !== 'text') {
+                            $preview = ucfirst($lastMsg->type); // e.g., "Image", "Video", "Document"
+                        }
+                        // Truncate to 50 characters
+                        if (strlen($preview) > 50) {
+                            $preview = substr($preview, 0, 50) . '...';
+                        }
+                        $lastMessagePreview = $preview;
+                    }
+                }
+                
                 $formattedChats[] = [
                     'id' => $chat->id,
                     'name' => $displayName, // Use formatted display name
@@ -150,7 +174,8 @@ class ChatController extends Controller
                     'pending_approval' => (bool)($chat->pending_approval ?? false),
                     'unread_count' => $chat->unread_count,
                     'users' => [],
-                    'last_message' => null
+                    'last_message' => null,
+                    'last_message_preview' => $lastMessagePreview
                 ];
             }
 
@@ -381,24 +406,57 @@ class ChatController extends Controller
     public function approve(Request $request, $chatId)
     {
         try {
+            \Log::info('Approve chat request received', [
+                'chat_id' => $chatId,
+                'user_id' => $request->user()->id ?? 'none',
+                'request_data' => $request->all()
+            ]);
+            
             $chat = Chat::findOrFail($chatId);
             
+            \Log::info('Chat found, updating', [
+                'chat_id' => $chat->id,
+                'current_pending_approval' => $chat->pending_approval
+            ]);
+            
             $chat->update(['pending_approval' => false]);
+            
+            \Log::info('Chat updated successfully', [
+                'chat_id' => $chat->id,
+                'new_pending_approval' => $chat->pending_approval
+            ]);
             
             return response()->json([
                 'status' => 'success',
                 'message' => 'Chat approved successfully',
-                'data' => $chat
+                'data' => [
+                    'id' => $chat->id,
+                    'name' => $chat->name,
+                    'pending_approval' => $chat->pending_approval,
+                    'is_group' => $chat->is_group,
+                    'updated_at' => $chat->updated_at
+                ]
             ]);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            \Log::error('Chat not found: ' . $e->getMessage(), [
+                'chat_id' => $chatId
+            ]);
+            
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Chat not found'
+            ], 404);
         } catch (\Exception $e) {
             \Log::error('Error approving chat: ' . $e->getMessage(), [
                 'chat_id' => $chatId,
+                'error_class' => get_class($e),
                 'trace' => $e->getTraceAsString()
             ]);
             
             return response()->json([
                 'status' => 'error',
-                'message' => 'Failed to approve chat: ' . $e->getMessage()
+                'message' => 'Failed to approve chat: ' . $e->getMessage(),
+                'error_type' => get_class($e)
             ], 500);
         }
     }
@@ -445,21 +503,58 @@ class ChatController extends Controller
                 DB::delete("DELETE FROM chats WHERE id = ?", [$chatId]);
                 
                 // Clean up orphaned users (users with no remaining chats)
+                // CRITICAL: Only delete WhatsApp-only users, NEVER admin/app users
                 $mainUser = \App\Models\User::getFirstUser();
                 $deletedUsers = 0;
                 foreach ($chatUserIds as $userId) {
+                    // SAFEGUARD 1: Skip the main app user
                     if ($mainUser && $userId == $mainUser->id) {
                         continue;
                     }
                     
+                    // SAFEGUARD 2: Get user details to check if they're an admin/app user
+                    $userToDelete = DB::selectOne(
+                        "SELECT id, password, name FROM users WHERE id = ?", 
+                        [$userId]
+                    );
+                    
+                    if (!$userToDelete) {
+                        continue; // User doesn't exist
+                    }
+                    
+                    // SAFEGUARD 3: NEVER delete users named "Admin"
+                    if ($userToDelete->name === 'Admin') {
+                        \Log::warning('Prevented deletion of Admin user', [
+                            'user_id' => $userId,
+                            'name' => $userToDelete->name
+                        ]);
+                        continue;
+                    }
+                    
+                    // SAFEGUARD 4: NEVER delete users with non-WhatsApp names
+                    // Only auto-generated WhatsApp users have the name "WhatsApp User"
+                    if ($userToDelete->name !== 'WhatsApp User') {
+                        \Log::warning('Prevented deletion of non-WhatsApp user', [
+                            'user_id' => $userId,
+                            'name' => $userToDelete->name
+                        ]);
+                        continue;
+                    }
+                    
+                    // Check if this user has any other chats
                     $hasOtherChats = DB::selectOne(
                         "SELECT COUNT(*) as count FROM chat_user WHERE user_id = ?", 
                         [$userId]
                     );
                     
+                    // If user has no other chats, delete them (only WhatsApp-only users reach here)
                     if ($hasOtherChats && $hasOtherChats->count == 0) {
                         DB::delete("DELETE FROM users WHERE id = ?", [$userId]);
                         $deletedUsers++;
+                        \Log::info('Deleted orphaned WhatsApp user', [
+                            'user_id' => $userId,
+                            'name' => $userToDelete->name
+                        ]);
                     }
                 }
                 
@@ -557,12 +652,41 @@ class ChatController extends Controller
                 DB::delete("DELETE FROM chats WHERE id = ?", [$chatId]);
                 
                 // Clean up orphaned users (users with no remaining chats)
-                // But don't delete the main app user
+                // CRITICAL: Only delete WhatsApp-only users, NEVER admin/app users
                 $mainUser = \App\Models\User::getFirstUser();
                 $deletedUsers = 0;
                 foreach ($chatUserIds as $userId) {
-                    // Skip the main app user
+                    // SAFEGUARD 1: Skip the main app user
                     if ($mainUser && $userId == $mainUser->id) {
+                        continue;
+                    }
+                    
+                    // SAFEGUARD 2: Get user details to check if they're an admin/app user
+                    $userToDelete = DB::selectOne(
+                        "SELECT id, password, name FROM users WHERE id = ?", 
+                        [$userId]
+                    );
+                    
+                    if (!$userToDelete) {
+                        continue; // User doesn't exist
+                    }
+                    
+                    // SAFEGUARD 3: NEVER delete users named "Admin"
+                    if ($userToDelete->name === 'Admin') {
+                        \Log::warning('Prevented deletion of Admin user', [
+                            'user_id' => $userId,
+                            'name' => $userToDelete->name
+                        ]);
+                        continue;
+                    }
+                    
+                    // SAFEGUARD 4: NEVER delete users with non-WhatsApp names
+                    // Only auto-generated WhatsApp users have the name "WhatsApp User"
+                    if ($userToDelete->name !== 'WhatsApp User') {
+                        \Log::warning('Prevented deletion of non-WhatsApp user', [
+                            'user_id' => $userId,
+                            'name' => $userToDelete->name
+                        ]);
                         continue;
                     }
                     
@@ -572,11 +696,14 @@ class ChatController extends Controller
                         [$userId]
                     );
                     
-                    // If user has no other chats, delete them
+                    // If user has no other chats, delete them (only WhatsApp-only users reach here)
                     if ($hasOtherChats && $hasOtherChats->count == 0) {
                         DB::delete("DELETE FROM users WHERE id = ?", [$userId]);
                         $deletedUsers++;
-                        \Log::info('Deleted orphaned user', ['user_id' => $userId]);
+                        \Log::info('Deleted orphaned WhatsApp user', [
+                            'user_id' => $userId,
+                            'name' => $userToDelete->name
+                        ]);
                     }
                 }
                 

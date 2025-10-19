@@ -750,6 +750,9 @@ class WhatsAppMessageService
                 'whatsapp_id' => $normalizedChatId,
                 'original_chat_id' => $chatId
             ]);
+            
+            // Broadcast new chat event via WebSocket
+            $this->webSocketService->newChatCreated($chat);
         }
 
         // Ensure sender is connected to chat

@@ -132,20 +132,25 @@ class User extends Authenticatable
 
     /**
      * Get the first user or create one if none exists
+     * Prioritizes admin users (users with non-WhatsApp names) over WhatsApp users
      *
      * @return \App\Models\User
      */
     public static function getFirstUser()
     {
-        // First try to find a user with the admin123 password
-        $users = static::all();
-        foreach ($users as $user) {
-            if (Hash::check('admin123', $user->password)) {
-                return $user;
-            }
+        // First, try to find a user named "Admin" (the main admin user)
+        $adminUser = static::where('name', 'Admin')->first();
+        if ($adminUser) {
+            return $adminUser;
         }
         
-        // If no user with admin123 password exists, get the first user
+        // If no "Admin" user exists, try to find a user with a non-WhatsApp name
+        $namedUser = static::where('name', '!=', 'WhatsApp User')->first();
+        if ($namedUser) {
+            return $namedUser;
+        }
+        
+        // Fall back to the first user in the database
         $user = static::first();
         
         // If no user exists at all, create a default admin user
