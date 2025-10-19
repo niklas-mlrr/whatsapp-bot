@@ -67,7 +67,17 @@
             <li v-for="chat in approvedChats" :key="chat.id" 
                 @click="selectChat(chat)"
                 :class="['cursor-pointer px-4 py-3 border-b border-gray-100 hover:bg-green-50 relative group flex items-center justify-between', selectedChat && selectedChat.id === chat.id ? 'bg-green-100 font-bold' : '']">
-              <span class="flex-1">{{ chat.name }}</span>
+              <div class="flex items-center gap-2 flex-1">
+                <span class="flex-1">{{ chat.name }}</span>
+                <!-- Unread message indicator -->
+                <span 
+                  v-if="chat.unread_count && chat.unread_count > 0 && (!selectedChat || selectedChat.id !== chat.id)"
+                  class="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 bg-green-500 text-white text-xs font-bold rounded-full"
+                  :title="`${chat.unread_count} ungelesene Nachricht${chat.unread_count > 1 ? 'en' : ''}`"
+                >
+                  {{ chat.unread_count > 99 ? '99+' : chat.unread_count }}
+                </span>
+              </div>
               <button 
                 @click.stop="confirmDeleteChat(chat)"
                 class="opacity-0 group-hover:opacity-100 transition-opacity p-2 hover:bg-red-100 rounded-full"
@@ -487,12 +497,32 @@ const currentUserForChat = computed(() => {
 
 function selectChat(chat: any) {
   selectedChat.value = chat
+  
+  // Mark chat as read when selected
+  if (chat.unread_count && chat.unread_count > 0) {
+    markChatAsRead(chat.id)
+  }
+  
   // Scroll to bottom after chat loads
   setTimeout(() => {
     if (messageListRef.value && messageListRef.value.scrollToBottom) {
       messageListRef.value.scrollToBottom()
     }
   }, 300)
+}
+
+const markChatAsRead = async (chatId: string) => {
+  try {
+    await apiClient.post(`/chats/${chatId}/read`)
+    
+    // Update the local chat's unread count
+    const chat = chats.value.find(c => c.id === chatId)
+    if (chat) {
+      chat.unread_count = 0
+    }
+  } catch (error) {
+    console.error('Error marking chat as read:', error)
+  }
 }
 
 async function sendMessageHandler() {
@@ -892,6 +922,12 @@ onMounted(async () => {
     
     if (response && response.data && response.data.data) {
       chats.value = response.data.data
+      console.log('Loaded chats:', chats.value.map(c => ({ 
+        id: c.id, 
+        name: c.name, 
+        unread_count: c.unread_count,
+        participants: c.participants 
+      })))
     } else {
       console.error('Invalid response format:', response)
       errorChats.value = 'Ungültiges Antwortformat vom Server'

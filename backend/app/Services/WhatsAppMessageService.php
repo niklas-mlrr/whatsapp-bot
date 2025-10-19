@@ -85,11 +85,17 @@ class WhatsAppMessageService
                         'last_message_at' => $message->sending_time ?? now(),
                     ]);
                     
+                    // Increment unread count for incoming messages
+                    if ($message->direction === 'incoming') {
+                        $chat->incrementUnreadCount();
+                    }
+                    
                     Log::channel('whatsapp')->info('Message saved successfully', [
                         'message_id' => $message->id,
                         'sender' => $data->sender,
                         'chat' => $data->chat,
                         'type' => $data->type,
+                        'unread_count' => $chat->unread_count,
                     ]);
                 }
             }, 3); // 3 attempts for the transaction

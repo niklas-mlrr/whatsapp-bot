@@ -395,9 +395,36 @@ class ChatController extends Controller
 
     public function markAsRead($chatId)
     {
-        return response()->json([
-            'message' => 'Feature temporarily disabled',
-        ], 501);
+        try {
+            $chat = Chat::findOrFail($chatId);
+            
+            // Reset the unread count
+            $chat->markAsRead();
+            
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Chat marked as read',
+                'data' => [
+                    'id' => $chat->id,
+                    'unread_count' => $chat->unread_count
+                ]
+            ]);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Chat not found'
+            ], 404);
+        } catch (\Exception $e) {
+            \Log::error('Error marking chat as read: ' . $e->getMessage(), [
+                'chat_id' => $chatId,
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to mark chat as read: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     /**

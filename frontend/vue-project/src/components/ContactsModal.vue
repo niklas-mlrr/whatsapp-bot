@@ -181,13 +181,37 @@ const contactForm = ref({
 })
 
 const filteredContacts = computed(() => {
-  if (!searchQuery.value) return contacts.value
+  // Define the user's own number
+  const ownNumber = '4915908115183'
   
-  const query = searchQuery.value.toLowerCase()
-  return contacts.value.filter(contact =>
-    contact.name.toLowerCase().includes(query) ||
-    contact.phone.includes(query)
-  )
+  // Filter contacts based on search query
+  let filtered = contacts.value
+  if (searchQuery.value) {
+    const query = searchQuery.value.toLowerCase()
+    filtered = contacts.value.filter(contact =>
+      contact.name.toLowerCase().includes(query) ||
+      contact.phone.includes(query)
+    )
+  }
+  
+  // Sort contacts: own number first, then alphabetically by name
+  return filtered.sort((a, b) => {
+    // Extract phone number without special characters for comparison
+    const phoneA = a.phone.replace(/[^0-9]/g, '')
+    const phoneB = b.phone.replace(/[^0-9]/g, '')
+    
+    // Check if either contact is the user's own number
+    const isOwnA = phoneA === ownNumber || phoneA === `+${ownNumber}`
+    const isOwnB = phoneB === ownNumber || phoneB === `+${ownNumber}`
+    
+    // If A is own number, it comes first
+    if (isOwnA && !isOwnB) return -1
+    // If B is own number, it comes first
+    if (!isOwnA && isOwnB) return 1
+    
+    // Otherwise, sort alphabetically by name
+    return a.name.localeCompare(b.name)
+  })
 })
 
 const fetchContacts = async () => {
@@ -195,13 +219,27 @@ const fetchContacts = async () => {
   try {
     const response = await apiClient.get('/chats')
     // Filter chats that have custom names (contacts)
+    // Include chats that don't look like auto-generated names (not just phone numbers)
     contacts.value = response.data.data
-      .filter((chat: any) => chat.name && !chat.name.includes('_') && !chat.is_group)
+      .filter((chat: any) => {
+        if (!chat.name || chat.is_group) return false
+        
+        // Include if name doesn't look like a phone number (has letters or is a custom name)
+        // OR if it's the user's own number
+        const isPhoneNumberFormat = /^[+\d\s\-_@.]+$/.test(chat.name)
+        const phoneNumber = chat.participants?.[0]?.replace(/[^0-9]/g, '') || ''
+        const isOwnNumber = phoneNumber === '4915908115183'
+        
+        // Include if it's NOT a phone number format (custom name) OR if it's the user's own number
+        return !isPhoneNumberFormat || isOwnNumber
+      })
       .map((chat: any) => ({
         id: chat.id,
         name: chat.name,
         phone: chat.participants?.[0] || ''
       }))
+    
+    console.log('Fetched contacts:', contacts.value)
   } catch (error) {
     console.error('Error fetching contacts:', error)
   } finally {
