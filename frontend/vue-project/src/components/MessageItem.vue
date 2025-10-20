@@ -14,7 +14,7 @@
     </div>
 
     <!-- Message content -->
-    <div class="flex flex-col max-w-[80%] relative" :class="{ 'items-end': isMe, 'items-start': !isMe }">
+    <div class="flex flex-col max-w-[85%] md:max-w-[80%] relative" :class="{ 'items-end': isMe, 'items-start': !isMe }">
       <!-- Sender name (for group chats) -->
       <div v-if="showSenderName" class="text-xs text-gray-500 dark:text-gray-400 mb-0.5 px-2">
         {{ message.sender }}
@@ -49,7 +49,7 @@
             <img 
               :src="imageSrc" 
               :alt="message.content || 'Image'" 
-              class="max-h-64 max-w-full rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
+              class="max-h-48 md:max-h-64 max-w-full rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
               @click="openMediaViewer"
               @load="handleImageLoad"
               @error="handleImageError"
@@ -138,7 +138,7 @@
             <video 
               :src="mediaUrl" 
               :poster="message.thumbnail || ''"
-              class="max-h-64 max-w-full rounded-lg cursor-pointer"
+              class="max-h-48 md:max-h-64 max-w-full rounded-lg cursor-pointer"
               controls
               @click="toggleVideoPlayback"
             ></video>

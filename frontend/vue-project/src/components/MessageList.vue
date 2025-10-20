@@ -16,7 +16,7 @@
     <div 
       v-else
       ref="scrollContainer" 
-      class="flex-1 overflow-y-auto p-4 space-y-4 bg-white dark:bg-zinc-900"
+      class="flex-1 overflow-y-auto p-3 md:p-4 space-y-3 md:space-y-4 bg-white dark:bg-zinc-900"
       @scroll="handleScroll"
     >
       <!-- Load more messages button -->
@@ -90,7 +90,7 @@
       <button
         v-if="!isScrolledToBottom"
         @click="scrollToBottom({ behavior: 'smooth' })"
-        class="fixed bottom-24 right-6 bg-blue-500 text-white rounded-full p-3 shadow-lg hover:bg-blue-600 transition-colors"
+        class="fixed bottom-20 md:bottom-24 right-4 md:right-6 bg-blue-500 text-white rounded-full p-2 md:p-3 shadow-lg hover:bg-blue-600 transition-colors z-10"
       >
         ↓
       </button>

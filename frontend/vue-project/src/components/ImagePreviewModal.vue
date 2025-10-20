@@ -12,13 +12,13 @@
         
         <!-- Image container -->
         <div 
-          class="relative z-10 flex items-center justify-center w-[85vw] h-[85vh]"
+          class="relative z-10 flex items-center justify-center w-[95vw] md:w-[85vw] h-[90vh] md:h-[85vh]"
           @click.stop
         >
           <!-- Close button -->
           <button
             @click="close"
-            class="absolute top-4 right-4 z-20 bg-white/10 hover:bg-white/20 text-white rounded-full p-3 transition-all duration-200 backdrop-blur-md"
+            class="absolute top-2 right-2 md:top-4 md:right-4 z-20 bg-white/10 hover:bg-white/20 text-white rounded-full p-2 md:p-3 transition-all duration-200 backdrop-blur-md"
             title="Close (Esc)"
           >
             <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -30,10 +30,10 @@
           <button
             v-if="hasPrevious"
             @click.stop="previous"
-            class="absolute left-4 z-20 bg-white/10 hover:bg-white/20 text-white rounded-full p-3 transition-all duration-200 backdrop-blur-md"
+            class="absolute left-2 md:left-4 z-20 bg-white/10 hover:bg-white/20 text-white rounded-full p-2 md:p-3 transition-all duration-200 backdrop-blur-md"
             title="Previous image"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 md:h-6 md:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
             </svg>
           </button>
@@ -41,7 +41,7 @@
           <button
             v-if="hasNext"
             @click.stop="next"
-            class="absolute right-4 z-20 bg-white/10 hover:bg-white/20 text-white rounded-full p-3 transition-all duration-200 backdrop-blur-md"
+            class="absolute right-2 md:right-4 z-20 bg-white/10 hover:bg-white/20 text-white rounded-full p-2 md:p-3 transition-all duration-200 backdrop-blur-md"
             title="Next image"
           >
             <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -61,7 +61,7 @@
               v-show="!isLoading"
               :src="imageSrc"
               :alt="caption || 'Image preview'"
-              class="max-w-full max-h-[calc(85vh-4rem)] object-contain rounded-lg shadow-2xl"
+              class="max-w-full max-h-[calc(90vh-4rem)] md:max-h-[calc(85vh-4rem)] object-contain rounded-lg shadow-2xl"
               @load="handleImageLoad"
               @error="handleImageError"
             />
@@ -69,7 +69,7 @@
             <!-- Caption -->
             <div 
               v-if="caption && !isLoading"
-              class="mt-4 px-6 py-3 bg-white/10 backdrop-blur-md rounded-lg text-white text-center max-w-2xl"
+              class="mt-2 md:mt-4 px-4 md:px-6 py-2 md:py-3 bg-white/10 backdrop-blur-md rounded-lg text-white text-center max-w-2xl text-sm md:text-base"
             >
               {{ caption }}
             </div>
@@ -80,7 +80,7 @@
             v-if="!isLoading"
             :href="imageSrc"
             :download="downloadFilename"
-            class="absolute bottom-4 right-4 z-20 bg-white/10 hover:bg-white/20 text-white rounded-full p-3 transition-all duration-200 backdrop-blur-md"
+            class="absolute bottom-2 right-2 md:bottom-4 md:right-4 z-20 bg-white/10 hover:bg-white/20 text-white rounded-full p-2 md:p-3 transition-all duration-200 backdrop-blur-md"
             title="Download image"
             @click.stop
           >

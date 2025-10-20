@@ -1,5 +1,17 @@
 <template>
   <div class="h-screen bg-gray-100 dark:bg-black flex flex-row overflow-hidden relative">
+    <!-- Mobile menu button (shown when sidebar is hidden) -->
+    <button
+      v-if="!showSidebarOnMobile && selectedChat"
+      @click="showSidebarOnMobile = true"
+      class="md:hidden fixed top-20 left-4 z-40 bg-green-500 text-white rounded-full p-3 shadow-lg hover:bg-green-600 transition-colors"
+      aria-label="Open chat list"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+      </svg>
+    </button>
+    
     <!-- Logout overlay -->
     <div v-if="isLoggingOut" class="absolute inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
       <div class="bg-white rounded-lg p-8 flex flex-col items-center gap-4 shadow-xl">
@@ -10,10 +22,35 @@
         <p class="text-lg font-semibold text-gray-800">Abmelden...</p>
       </div>
     </div>
+    <!-- Mobile sidebar backdrop -->
+    <div
+      v-if="showSidebarOnMobile"
+      @click="showSidebarOnMobile = false"
+      class="md:hidden fixed inset-0 bg-black bg-opacity-50 z-20 transition-opacity"
+    ></div>
+    
     <!-- Sidebar -->
-    <aside class="w-80 bg-white dark:bg-zinc-800 border-r border-gray-200 dark:border-zinc-700 flex flex-col h-full">
+    <aside :class="[
+      'bg-white dark:bg-zinc-800 border-r border-gray-200 dark:border-zinc-700 flex flex-col h-full transition-transform duration-300',
+      'w-full md:w-80',
+      'fixed md:relative z-30 inset-y-0 left-0',
+      showSidebarOnMobile ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+    ]">
       <div class="p-4 font-bold text-lg border-b border-gray-200 dark:border-zinc-700 flex items-center justify-between dark:text-white">
-        <span>Chats</span>
+        <div class="flex items-center gap-3">
+          <!-- Close sidebar button (mobile only) -->
+          <button
+            v-if="selectedChat"
+            @click="showSidebarOnMobile = false"
+            class="md:hidden p-2 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-lg transition-colors"
+            aria-label="Close sidebar"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+          <span>Chats</span>
+        </div>
         <div class="flex items-center gap-2">
           <!-- Dark mode toggle -->
           <button 
@@ -133,7 +170,7 @@
     <!-- Main chat area -->
     <main class="flex-1 flex flex-col h-full overflow-hidden">
       <!-- Chat header (only shown when chat is selected) -->
-      <div v-if="selectedChat" class="flex items-center gap-3 px-6 py-4 bg-white dark:bg-zinc-900 border-b border-gray-200 dark:border-zinc-800 shadow-sm min-h-[64px] sticky top-0 z-10">
+      <div v-if="selectedChat" class="flex items-center gap-3 px-4 md:px-6 py-3 md:py-4 bg-white dark:bg-zinc-900 border-b border-gray-200 dark:border-zinc-800 shadow-sm min-h-[56px] md:min-h-[64px] sticky top-0 z-10">
         <div class="w-10 h-10 rounded-full bg-green-300 flex items-center justify-center text-green-700 font-bold text-lg">
           <span>{{ selectedChat.name.slice(0,2).toUpperCase() }}</span>
         </div>
@@ -145,7 +182,7 @@
         <button
           v-if="isPhoneNumber(selectedChat.name)"
           @click="addToContacts"
-          class="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors text-sm"
+          class="flex items-center gap-2 px-3 md:px-4 py-1.5 md:py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors text-xs md:text-sm"
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
@@ -247,7 +284,7 @@
           </div>
         </div>
         
-        <form @submit.prevent="sendMessageHandler" class="flex items-center gap-2 px-6 py-4 relative">
+        <form @submit.prevent="sendMessageHandler" class="flex items-center gap-2 px-3 md:px-6 py-3 md:py-4 relative">
         <textarea
           ref="messageInput"
           v-model="input"
@@ -276,7 +313,7 @@
         <button
           type="submit"
           :disabled="!canSend"
-          class="bg-green-500 dark:bg-green-600 text-white rounded-full px-6 py-2 font-semibold hover:bg-green-600 dark:hover:bg-green-500 disabled:bg-gray-300 dark:disabled:bg-zinc-700 disabled:cursor-not-allowed flex items-center gap-2 min-w-[80px] justify-center"
+          class="bg-green-500 dark:bg-green-600 text-white rounded-full px-4 md:px-6 py-2 font-semibold hover:bg-green-600 dark:hover:bg-green-500 disabled:bg-gray-300 dark:disabled:bg-zinc-700 disabled:cursor-not-allowed flex items-center gap-2 min-w-[70px] md:min-w-[80px] justify-center text-sm md:text-base"
         >
           <svg v-if="isSending" class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -366,6 +403,7 @@ const chats = ref<any[]>([])
 const loadingChats = ref(false)
 const errorChats = ref<string | null>(null)
 const selectedChat = ref<any | null>(null)
+const showSidebarOnMobile = ref(true)
 
 // Separate pending and approved chats
 const approvedChats = computed(() => {
@@ -637,6 +675,8 @@ const currentUserForChat = computed(() => {
 
 async function selectChat(chat: any) {
   selectedChat.value = chat
+  // Hide sidebar on mobile when chat is selected
+  showSidebarOnMobile.value = false
   
   // Load the last read message ID from database and set it in MessageList
   try {

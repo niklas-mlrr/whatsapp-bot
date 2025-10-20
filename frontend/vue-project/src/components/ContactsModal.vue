@@ -1,9 +1,9 @@
 <template>
-  <div v-if="isOpen" class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4" @click.self="$emit('close')">
-    <div class="bg-white dark:bg-zinc-900 rounded-lg shadow-xl max-w-2xl w-full max-h-[80vh] flex flex-col">
+  <div v-if="isOpen" class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-2 md:p-4" @click.self="$emit('close')">
+    <div class="bg-white dark:bg-zinc-900 rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] md:max-h-[80vh] flex flex-col">
       <!-- Header -->
-      <div class="p-6 border-b border-gray-200 dark:border-zinc-800 flex items-center justify-between">
-        <h2 class="text-2xl font-bold text-gray-900 dark:text-gray-100">Kontakte</h2>
+      <div class="p-4 md:p-6 border-b border-gray-200 dark:border-zinc-800 flex items-center justify-between">
+        <h2 class="text-xl md:text-2xl font-bold text-gray-900 dark:text-gray-100">Kontakte</h2>
         <button @click="$emit('close')" class="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300">
           <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
@@ -33,9 +33,9 @@
 
         <div v-else class="space-y-2">
           <!-- Own Number Info Box -->
-          <div class="mb-4 p-4 bg-green-50 dark:bg-green-900/20 border-2 border-green-200 dark:border-green-800 rounded-lg">
-            <div class="flex items-center gap-3">
-              <div class="w-12 h-12 rounded-full bg-green-500 dark:bg-green-700 flex items-center justify-center text-white font-bold text-lg shadow-md">
+          <div class="mb-4 p-3 md:p-4 bg-green-50 dark:bg-green-900/20 border-2 border-green-200 dark:border-green-800 rounded-lg">
+            <div class="flex items-center gap-2 md:gap-3">
+              <div class="w-10 h-10 md:w-12 md:h-12 rounded-full bg-green-500 dark:bg-green-700 flex items-center justify-center text-white font-bold text-base md:text-lg shadow-md">
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                 </svg>
@@ -51,10 +51,10 @@
           <div
             v-for="contact in filteredContacts"
             :key="contact.id"
-            class="flex items-center justify-between p-4 bg-gray-50 dark:bg-zinc-800 rounded-lg hover:bg-gray-100 dark:hover:bg-zinc-700 transition-colors"
+            class="flex flex-col sm:flex-row items-start sm:items-center gap-3 p-3 md:p-4 bg-gray-50 dark:bg-zinc-800 rounded-lg hover:bg-gray-100 dark:hover:bg-zinc-700 transition-colors"
           >
-            <div class="flex items-center gap-3 flex-1">
-              <div class="w-12 h-12 rounded-full bg-green-300 dark:bg-green-800 flex items-center justify-center text-green-700 dark:text-green-200 font-bold text-lg">
+            <div class="flex items-center gap-2 md:gap-3 flex-1 w-full sm:w-auto">
+              <div class="w-10 h-10 md:w-12 md:h-12 rounded-full bg-green-300 dark:bg-green-800 flex items-center justify-center text-green-700 dark:text-green-200 font-bold text-base md:text-lg flex-shrink-0">
                 {{ contact.name.slice(0, 2).toUpperCase() }}
               </div>
               <div class="flex-1">
@@ -73,7 +73,7 @@
               </button>
               <button
                 @click="openChat(contact)"
-                class="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors"
+                class="px-3 md:px-4 py-1.5 md:py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors text-sm md:text-base whitespace-nowrap"
               >
                 Chat öffnen
               </button>
