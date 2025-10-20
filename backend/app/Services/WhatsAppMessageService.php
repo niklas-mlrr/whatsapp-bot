@@ -609,15 +609,26 @@ class WhatsAppMessageService
     private function getImageDimensions(string $imageData): ?array
     {
         try {
+            // Check if GD extension is loaded
+            if (!extension_loaded('gd')) {
+                Log::channel('whatsapp')->warning('GD extension not loaded, cannot get image dimensions');
+                return null;
+            }
+            
             $image = \imagecreatefromstring($imageData);
             if ($image === false) {
                 return null;
             }
             
-            return [
+            $dimensions = [
                 'width' => \imagesx($image),
                 'height' => \imagesy($image),
             ];
+            
+            // Free up memory
+            \imagedestroy($image);
+            
+            return $dimensions;
             
         } catch (\Exception $e) {
             Log::channel('whatsapp')->error('Error getting image dimensions', [

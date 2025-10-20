@@ -162,6 +162,56 @@ async function connectToWhatsApp() {
             handleMessages(sock, m);
         });
 
+        // Listen for message status updates (delivery and read receipts)
+        sock.ev.on('messages.update', async (updates) => {
+            for (const update of updates) {
+                try {
+                    const { key, update: statusUpdate } = update;
+                    
+                    // Log the update for debugging
+                    logger.debug({ key, statusUpdate }, 'Message status update received');
+                    
+                    // Check if this is a status update (delivered/read)
+                    if (statusUpdate?.status) {
+                        const status = statusUpdate.status;
+                        const messageId = key.id;
+                        
+                        logger.info({ messageId, status }, 'Message status changed');
+                        
+                        // Send status update to backend
+                        const apiClient = require('./apiClient');
+                        await apiClient.updateMessageStatus(messageId, status);
+                    }
+                } catch (error) {
+                    logger.error({ error, update }, 'Error processing message status update');
+                }
+            }
+        });
+
+        // Listen for message receipts (alternative event for read receipts)
+        sock.ev.on('message-receipt.update', async (receipts) => {
+            for (const receipt of receipts) {
+                try {
+                    const { key, receipt: receiptInfo } = receipt;
+                    
+                    logger.debug({ key, receiptInfo }, 'Message receipt update received');
+                    
+                    if (receiptInfo?.readTimestamp || receiptInfo?.deliveredTimestamp) {
+                        const messageId = key.id;
+                        const status = receiptInfo.readTimestamp ? 'read' : 'delivered';
+                        
+                        logger.info({ messageId, status, receiptInfo }, 'Message receipt status changed');
+                        
+                        // Send status update to backend
+                        const apiClient = require('./apiClient');
+                        await apiClient.updateMessageStatus(messageId, status);
+                    }
+                } catch (error) {
+                    logger.error({ error, receipt }, 'Error processing message receipt update');
+                }
+            }
+        });
+
         // Store the current socket
         currentSocket = sock;
         return sock;

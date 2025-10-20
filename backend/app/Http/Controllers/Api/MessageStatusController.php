@@ -217,6 +217,97 @@ class MessageStatusController extends Controller
     }
 
     /**
+     * Update message status by WhatsApp message ID (called by receiver)
+     */
+    public function updateStatusByWhatsAppId(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'whatsapp_message_id' => 'required|string',
+            'status' => 'required|in:sent,delivered,read,failed',
+            'error' => 'nullable|string|max:1000',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Validation failed',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        try {
+            $whatsappMessageId = $request->input('whatsapp_message_id');
+            $status = $request->input('status');
+
+            // Find message by WhatsApp message ID in metadata
+            $message = WhatsAppMessage::where('metadata->message_id', $whatsappMessageId)->first();
+
+            if (!$message) {
+                Log::channel('whatsapp')->warning('Message not found for status update', [
+                    'whatsapp_message_id' => $whatsappMessageId,
+                    'status' => $status,
+                ]);
+                
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Message not found',
+                ], 404);
+            }
+
+            $updateData = ['status' => $status];
+
+            // Set read_at timestamp if status is 'read' and not already set
+            if ($status === 'read' && !$message->read_at) {
+                $updateData['read_at'] = now();
+            }
+
+            // Add error message if provided and status is failed
+            if ($status === 'failed' && $request->has('error')) {
+                $updateData['metadata'] = array_merge(
+                    $message->metadata ?? [],
+                    ['error' => $request->input('error')]
+                );
+            }
+
+            $message->update($updateData);
+
+            // Notify via WebSocket
+            $this->webSocketService->messageStatusUpdated($message);
+
+            Log::channel('whatsapp')->info('Message status updated from receiver', [
+                'message_id' => $message->id,
+                'whatsapp_message_id' => $whatsappMessageId,
+                'status' => $status,
+            ]);
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Message status updated',
+                'data' => [
+                    'message_id' => $message->id,
+                    'whatsapp_message_id' => $whatsappMessageId,
+                    'status' => $message->status,
+                    'read_at' => $message->read_at?->toIso8601String(),
+                ],
+            ]);
+
+        } catch (\Exception $e) {
+            Log::channel('whatsapp')->error('Error updating message status by WhatsApp ID', [
+                'error' => $e->getMessage(),
+                'whatsapp_message_id' => $request->input('whatsapp_message_id'),
+                'status' => $request->input('status'),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to update message status',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
      * Add or update a reaction to a message
      */
     public function addReaction(string $messageId, Request $request): JsonResponse

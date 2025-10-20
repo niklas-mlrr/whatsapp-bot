@@ -31,11 +31,19 @@ class WebSocketService
     public function messageStatusUpdated(WhatsAppMessage $message): void
     {
         try {
-            Broadcast::event('chat.' . $message->chat, 'message-status-updated', [
+            Broadcast::event('chat.' . $message->chat_id, 'message-status-updated', [
                 'message_id' => $message->id,
                 'status' => $message->status,
                 'read_at' => $message->read_at?->toIso8601String(),
+                'is_read' => (bool) $message->read_at,
                 'event' => 'message-status-updated',
+            ]);
+            
+            Log::info('Message status update broadcast sent', [
+                'message_id' => $message->id,
+                'chat_id' => $message->chat_id,
+                'status' => $message->status,
+                'read_at' => $message->read_at?->toIso8601String(),
             ]);
         } catch (\Exception $e) {
             Log::error('Failed to send message status update', [
@@ -48,7 +56,7 @@ class WebSocketService
     public function messageReactionUpdated(WhatsAppMessage $message, string $userId, ?string $reaction): void
     {
         try {
-            Broadcast::event('chat.' . $message->chat, 'message-reaction-updated', [
+            Broadcast::event('chat.' . $message->chat_id, 'message-reaction-updated', [
                 'message_id' => $message->id,
                 'user_id' => $userId,
                 'reaction' => $reaction,

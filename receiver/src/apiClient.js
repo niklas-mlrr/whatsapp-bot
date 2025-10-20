@@ -240,10 +240,51 @@ const sendToPHP = async (payload) => {
     }
 };
 
+/**
+ * Updates the status of a message in the backend.
+ * @param {string} whatsappMessageId - The WhatsApp message ID.
+ * @param {string} status - The new status (sent, delivered, read, failed).
+ * @returns {Promise<Object>} The response from the backend.
+ */
+const updateMessageStatus = async (whatsappMessageId, status) => {
+    try {
+        logger.info({ whatsappMessageId, status }, 'Updating message status in backend');
+        
+        // Find the message by WhatsApp message ID and update its status
+        const response = await apiClient.post('/messages/update-status', {
+            whatsapp_message_id: whatsappMessageId,
+            status: status,
+        });
+        
+        if (response.status >= 400) {
+            logger.warn({ 
+                whatsappMessageId, 
+                status, 
+                responseStatus: response.status,
+                responseData: response.data 
+            }, 'Failed to update message status');
+            return null;
+        }
+        
+        logger.debug({ whatsappMessageId, status }, 'Message status updated successfully');
+        return response.data;
+    } catch (error) {
+        logger.error({ 
+            error: error.message, 
+            stack: error.stack,
+            whatsappMessageId,
+            status,
+        }, 'Error updating message status');
+        // Don't throw - status updates are not critical
+        return null;
+    }
+};
+
 module.exports = { 
     sendToBackend, 
     sendMessage, 
     uploadFile,
     sendToPHP,
+    updateMessageStatus,
     apiClient,
 };

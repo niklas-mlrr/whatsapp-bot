@@ -205,6 +205,9 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
 
     // Mark multiple messages as read
     Route::post('/messages/read', [MessageStatusController::class, 'markMultipleAsRead']);
+    
+    // Update message status by WhatsApp message ID (called by receiver)
+    Route::post('/messages/update-status', [MessageStatusController::class, 'updateStatusByWhatsAppId']);
 
     // Message status
     Route::prefix('messages/{message}')->group(function () {

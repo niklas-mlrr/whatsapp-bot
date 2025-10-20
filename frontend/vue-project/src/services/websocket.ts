@@ -246,6 +246,15 @@ export function useWebSocket() {
       if (channel) {
         privateChannels.set(chatId, channel);
 
+        // Listen for message status updates (includes read receipts)
+        channel.listen('.message-status-updated', (data: any) => {
+          const callbacks = readReceiptCallbacks.get(chatId);
+          if (callbacks) {
+            callbacks.forEach(cb => cb(data));
+          }
+        });
+        
+        // Also listen for legacy .message.read events for backward compatibility
         channel.listen('.message.read', (data: any) => {
           const callbacks = readReceiptCallbacks.get(chatId);
           if (callbacks) {

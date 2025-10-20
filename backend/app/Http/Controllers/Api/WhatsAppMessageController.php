@@ -517,13 +517,14 @@ class WhatsAppMessageController extends Controller
                 }
             }
             
-            // If we get here, the message was sent successfully
+            // If we get here, the message was sent successfully to WhatsApp
+            // Set status to 'delivered' since the receiver confirmed it was sent
             $message = WhatsAppMessage::create([
                 'sender_id' => $user->id,
                 'chat_id' => $chat->id,
                 'reply_to_message_id' => $replyToMessageId,
                 'type' => $data['type'],
-                'status' => 'sent',
+                'status' => 'delivered', // Changed from 'sent' to 'delivered' since receiver confirmed delivery
                 'content' => $data['content'] ?? '',
                 'media_url' => $mediaUrl,
                 'media_type' => $data['mimetype'] ?? null,

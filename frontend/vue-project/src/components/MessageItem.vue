@@ -220,38 +220,45 @@
         
         <!-- Message status and time -->
         <div class="flex items-center justify-end gap-1.5 mt-1">
-          <!-- Message status icons -->
-          <span v-if="isMe" class="text-xs">
-            <template v-if="message.isSending">
-              <svg class="w-3 h-3 text-gray-400 inline-block" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-              </svg>
-            </template>
-            <template v-else-if="message.isFailed">
-              <svg class="w-3 h-3 text-red-500 inline-block" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-              </svg>
-            </template>
-            <template v-else-if="message.isDelivered">
-              <svg class="w-3 h-3 text-gray-400 inline-block" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-              </svg>
-            </template>
-            <template v-else-if="message.isRead">
-              <svg class="w-3 h-3 text-blue-500 inline-block" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-              </svg>
-            </template>
-          </span>
-          
           <!-- Message time -->
           <span class="text-xs text-gray-400">
             {{ formattedTime }}
           </span>
           
-          <!-- Sending indicator -->
-          <span v-if="message.isSending" class="text-xs text-gray-400 italic">
-            sending...
+          <!-- Message status icons (WhatsApp-style checks) -->
+          <span v-if="isMe" class="flex items-center">
+            <!-- Clock icon for sending -->
+            <template v-if="message.isSending || messageStatus === 'sending'">
+              <svg class="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+              </svg>
+            </template>
+            <!-- Error icon for failed -->
+            <template v-else-if="message.isFailed || messageStatus === 'failed'">
+              <svg class="w-3 h-3 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+              </svg>
+            </template>
+            <!-- Single grey check for sent -->
+            <template v-else-if="messageStatus === 'sent'">
+              <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"></path>
+              </svg>
+            </template>
+            <!-- Double grey checks for delivered -->
+            <template v-else-if="messageStatus === 'delivered'">
+              <svg class="w-4 h-4 text-gray-400" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M1.5 13l4 4L15.5 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M7.5 13l4 4L21.5 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </template>
+            <!-- Double blue checks for read -->
+            <template v-else-if="messageStatus === 'read'">
+              <svg class="w-4 h-4 text-blue-500" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M1.5 13l4 4L15.5 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M7.5 13l4 4L21.5 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </template>
           </span>
         </div>
       </div>
@@ -262,22 +269,21 @@
           v-for="(emoji, userId) in message.reactions" 
           :key="userId"
           @click="handleReactionClick(emoji)"
-          class="text-sm bg-gray-100 hover:bg-gray-200 rounded-full px-2 py-0.5 transition-colors cursor-pointer border border-gray-200 flex items-center gap-1"
-          :class="{ 'bg-blue-100 border-blue-300': isMyReaction(userId) }"
+          class="text-sm bg-gray-100 dark:bg-zinc-700 hover:bg-gray-200 dark:hover:bg-zinc-600 rounded-full px-2 py-0.5 transition-colors cursor-pointer border border-gray-200 dark:border-zinc-600 flex items-center gap-1"
           :title="getReactionTooltip(userId)"
         >
           <span>{{ emoji }}</span>
-          <span v-if="getReactionCount(emoji) > 1" class="text-xs text-gray-600">
+          <span v-if="getReactionCount(emoji) > 1" class="text-xs text-gray-600 dark:text-gray-300">
             {{ getReactionCount(emoji) }}
           </span>
         </button>
         <button 
           @click="toggleReactionPicker"
           data-reaction-button
-          class="text-sm bg-gray-50 hover:bg-gray-100 rounded-full px-2 py-0.5 transition-colors cursor-pointer border border-gray-200"
+          class="text-sm bg-gray-50 dark:bg-zinc-800 hover:bg-gray-100 dark:hover:bg-zinc-700 rounded-full px-2 py-0.5 transition-colors cursor-pointer border border-gray-200 dark:border-zinc-600"
           title="Add reaction"
         >
-          <span class="text-gray-400">+</span>
+          <span class="text-gray-400 dark:text-gray-500">+</span>
         </button>
       </div>
       
@@ -285,19 +291,19 @@
       <!-- Reaction picker -->
       <div 
         v-if="showReactionPicker" 
-        class="reaction-picker absolute z-50 bg-white rounded-lg shadow-2xl border border-gray-200"
+        class="reaction-picker absolute z-50 bg-white dark:bg-zinc-800 rounded-lg shadow-2xl border border-gray-200 dark:border-zinc-700"
         :class="isMe ? 'right-0' : 'left-0'"
         style="bottom: calc(100% + 4px);"
       >
         <!-- Quick reactions section -->
-        <div class="p-3 border-b border-gray-200">
-          <div class="text-xs font-semibold text-gray-500 mb-2">Häufig verwendet</div>
+        <div class="p-3 border-b border-gray-200 dark:border-zinc-700">
+          <div class="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2">Häufig verwendet</div>
           <div class="flex flex-wrap gap-1">
             <button
               v-for="emoji in quickReactions"
               :key="emoji"
               @click="addReaction(emoji)"
-              class="text-2xl hover:bg-gray-100 rounded p-1.5 transition-colors"
+              class="text-2xl hover:bg-gray-100 dark:hover:bg-zinc-700 rounded p-1.5 transition-colors"
               :title="emoji"
             >
               {{ emoji }}
@@ -308,7 +314,7 @@
         <!-- All emojis section with categories -->
         <div class="emoji-scroll-container overflow-y-auto p-3" style="max-height: 300px; width: 320px;">
           <div v-for="(emojis, category) in emojiCategories" :key="category" class="mb-4 last:mb-0">
-            <div class="text-xs font-semibold text-gray-500 mb-2 sticky bg-white py-2 z-10" style="top: -12px;">
+            <div class="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2 sticky bg-white dark:bg-zinc-800 py-2 z-10" style="top: -12px;">
               {{ category }}
             </div>
             <div class="grid grid-cols-8 gap-1">
@@ -316,7 +322,7 @@
                 v-for="emoji in emojis"
                 :key="emoji"
                 @click="addReaction(emoji)"
-                class="text-2xl hover:bg-gray-100 rounded p-1 transition-colors flex items-center justify-center"
+                class="text-2xl hover:bg-gray-100 dark:hover:bg-zinc-700 rounded p-1 transition-colors flex items-center justify-center"
                 :title="emoji"
               >
                 {{ emoji }}
@@ -416,17 +422,7 @@ const props = defineProps<{
   }
 }>()
 
-// Debug logging for document messages
-if (props.message.type === 'document') {
-  console.log('MessageItem - Document message:', {
-    id: props.message.id,
-    filename: props.message.filename,
-    size: props.message.size,
-    content: props.message.content,
-    mimetype: props.message.mimetype,
-    fullMessage: props.message
-  })
-}
+// Document messages are handled in the template
 
 const emit = defineEmits<{
   'open-image-preview': [payload: { src: string; caption?: string }]
@@ -554,7 +550,6 @@ const imageSrc = computed(() => {
         const parsed = JSON.parse(metadata);
         return parsed?.media_path ?? null;
       } catch (error) {
-        console.error('Failed to parse metadata JSON:', error);
         return null;
       }
     }
@@ -604,6 +599,61 @@ const bubbleClass = computed(() => {
 // Reaction computed properties
 const hasReactions = computed(() => {
   return props.message.reactions && Object.keys(props.message.reactions).length > 0
+})
+
+// Message status computed property
+const messageStatus = computed((): 'sent' | 'delivered' | 'read' | 'sending' | 'failed' => {
+  // Handle sending/failed states first
+  if (props.message.isSending) {
+    return 'sending'
+  }
+  if (props.message.isFailed) {
+    return 'failed'
+  }
+  
+  // Only show status for messages sent by me
+  if (!isMe.value) {
+    return 'sent' // Don't show status for received messages
+  }
+  
+  // Check if message has been read
+  const hasReadAt = !!(props.message.read_at || props.message.is_read || props.message.isRead)
+  
+  // Check if there's an explicit status from backend
+  const backendStatus = props.message.status
+  
+  // Debug log for status determination (only for my messages)
+  if (isMe.value) {
+    console.log(`[READ RECEIPTS] Message ${props.message.id}:`, {
+      isMe: isMe.value,
+      raw_status: backendStatus,
+      read_at: props.message.read_at,
+      is_read: props.message.is_read,
+      read_by: props.message.read_by,
+      has_id: !!props.message.id,
+      temp_id: props.message.temp_id,
+      computed_final: hasReadAt ? 'read' : (backendStatus === 'read' ? 'read' : (backendStatus === 'delivered' ? 'delivered' : (props.message.id && !props.message.temp_id ? 'delivered' : 'sent')))
+    })
+  }
+  
+  // Priority 1: Check if message has been read
+  if (hasReadAt || backendStatus === 'read') {
+    return 'read'
+  }
+  
+  // Priority 2: Check explicit delivered status from backend
+  if (backendStatus === 'delivered') {
+    return 'delivered'
+  }
+  
+  // Priority 3: If message has a database ID (not temp), assume it's delivered
+  // This is reasonable because the message was successfully saved and retrieved from the database
+  if (props.message.id && !props.message.temp_id && !props.message.isSending) {
+    return 'delivered'
+  }
+  
+  // Default to 'sent' for new/temporary messages
+  return 'sent'
 })
 
 // Methods
@@ -656,15 +706,6 @@ function getCurrentUserId(): string | number | null {
 function getQuotedSender(): string {
   const quoted = props.message.quoted_message || props.message.reply_to_message
   
-  // Log when checking for quoted message
-  console.log('[MessageItem] getQuotedSender - Message ID:', props.message.id, {
-    has_quoted_message: !!props.message.quoted_message,
-    has_reply_to_message: !!props.message.reply_to_message,
-    reply_to_message_id: props.message.reply_to_message_id,
-    quoted_data: quoted,
-    full_message: props.message
-  })
-  
   if (!quoted) return ''
   
   // Try to get sender name from various possible fields
@@ -716,8 +757,8 @@ function toggleAudioPlayback() {
       .then(() => {
         isPlayingAudio.value = true
       })
-      .catch(error => {
-        console.error('Error playing audio:', error)
+      .catch(() => {
+        // Audio playback failed
       })
   }
 }
@@ -768,7 +809,7 @@ function handleImageLoad() {
 
 function handleImageError() {
   isImageLoading.value = false
-  console.error('Failed to load image:', imageSrc.value)
+  // Image failed to load
 }
 
 function openMediaViewer(event: Event) {

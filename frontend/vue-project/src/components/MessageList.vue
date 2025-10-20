@@ -47,11 +47,11 @@
 
           <!-- Unread messages indicator -->
           <div v-if="needsUnreadIndicator(index)" class="flex items-center my-4 select-none">
-            <div class="flex-1 h-px bg-green-400"></div>
-            <div class="mx-3 text-xs font-semibold text-green-600 bg-green-100 border border-green-300 rounded-full px-4 py-1">
+            <div class="flex-1 h-px bg-gray-300 dark:bg-gray-600"></div>
+            <div class="mx-3 text-xs font-semibold text-gray-700 dark:text-gray-300 bg-gray-200 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-full px-4 py-1">
               Neue Nachrichten
             </div>
-            <div class="flex-1 h-px bg-green-400"></div>
+            <div class="flex-1 h-px bg-gray-300 dark:bg-gray-600"></div>
           </div>
 
           <!-- Message item -->
@@ -593,15 +593,6 @@ const startPolling = () => {
 
 // Process and normalize message data to ensure required fields exist
 const normalizeMessage = (msg: any): Message => {
-  // Log if message has reply data
-  if (msg.reply_to_message_id || msg.quoted_message || msg.reply_to_message) {
-    console.log('[MessageList] Message with reply data:', {
-      id: msg.id,
-      reply_to_message_id: msg.reply_to_message_id,
-      quoted_message: msg.quoted_message,
-      reply_to_message: msg.reply_to_message
-    })
-  }
   
   // Safely interpret is_from_me from various backend types
   const parseIsFromMe = (val: unknown): boolean | undefined => {
@@ -670,46 +661,10 @@ const fetchLatestMessages = async () => {
       }
     });
     
-    // Log raw response to check for quoted_message data
-    console.log('[MessageList] Raw API response:', response?.data?.data)
-    
-    // Check if any messages have reply data
-    if (Array.isArray(response?.data?.data)) {
-      const messagesWithReply = response.data.data.filter((msg: any) => 
-        msg.reply_to_message_id || msg.quoted_message || msg.reply_to_message
-      )
-      if (messagesWithReply.length > 0) {
-        console.log('[MessageList] 🔍 Found messages with reply data:', messagesWithReply)
-        messagesWithReply.forEach((msg: any) => {
-          console.log('[MessageList] 📧 Message with reply:', {
-            id: msg.id,
-            content: msg.content?.substring(0, 50),
-            reply_to_message_id: msg.reply_to_message_id,
-            quoted_message: msg.quoted_message,
-            reply_to_message: msg.reply_to_message,
-            full_message: msg
-          })
-        })
-      } else {
-        console.log('[MessageList] ⚠️ No messages with reply data found in response')
-      }
-    }
-    
     // Process and normalize the messages
     const newMessages = Array.isArray(response?.data?.data) 
       ? response.data.data.map(normalizeMessage) 
       : [];
-    
-    // Log normalized messages to see if quoted_message is preserved
-    console.log('[MessageList] Normalized messages:', newMessages)
-    
-    // Check normalized messages for reply data
-    const normalizedWithReply = newMessages.filter((msg: any) => 
-      msg.reply_to_message_id || msg.quoted_message || msg.reply_to_message
-    )
-    if (normalizedWithReply.length > 0) {
-      console.log('[MessageList] ✅ Normalized messages with reply data:', normalizedWithReply)
-    }
     
     // Set loading to false as soon as we have the response
     loading.value = false;
@@ -932,7 +887,6 @@ const resolveMessageImageSrc = (message: Message): string => {
         const parsed = JSON.parse(metadata);
         return parsed?.media_path ?? null;
       } catch (error) {
-        console.error('Failed to parse metadata JSON:', error);
         return null;
       }
     }
@@ -1180,7 +1134,6 @@ const setupWebSocketListeners = () => {
     // Listen for new messages
     const newMessageUnsubscribe = listenForNewMessages(props.chat.toString(), (message: any) => {
       if (!message) {
-        console.error('Received empty message from WebSocket');
         return;
       }
       
@@ -1221,7 +1174,6 @@ const setupWebSocketListeners = () => {
     // Listen for typing indicators
     const typingUnsubscribe = listenForTyping(props.chat.toString(), (event: any) => {
       if (!event || !event.user_id) {
-        console.error('Invalid typing event received:', event);
         return;
       }
       
@@ -1252,7 +1204,6 @@ const setupWebSocketListeners = () => {
     // Listen for read receipts
     const readReceiptUnsubscribe = listenForReadReceipts(props.chat.toString(), (event: any) => {
       if (!event || !event.message_id) {
-        console.error('Invalid read receipt received:', event);
         return;
       }
       
@@ -1271,7 +1222,6 @@ const setupWebSocketListeners = () => {
     // Listen for reaction updates
     const reactionUnsubscribe = listenForReactionUpdates(props.chat.toString(), (event: any) => {
       if (!event || !event.message_id) {
-        console.error('Invalid reaction event received:', event);
         return;
       }
       
@@ -1320,7 +1270,7 @@ const setupWebSocketListeners = () => {
           try {
             unsubscribe();
           } catch (err) {
-            console.error(`Error unsubscribing from ${name}:`, err);
+            // Unsubscribe error
           }
         }
       });
