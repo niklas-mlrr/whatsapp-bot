@@ -57,31 +57,6 @@ if (config('app.env') !== 'production') {
     }
 });
 
-// Test endpoint to check GD extension in web context
-Route::get('/test-gd', function () {
-    $gdLoaded = extension_loaded('gd');
-    $gdInfo = function_exists('gd_info') ? gd_info() : null;
-    $loadedExtensions = get_loaded_extensions();
-    
-    // Get PHP configuration paths
-    $phpInfo = [
-        'php_version' => phpversion(),
-        'php_sapi' => php_sapi_name(),
-        'loaded_ini' => php_ini_loaded_file(),
-        'scanned_ini_dir' => php_ini_scanned_files(),
-    ];
-    
-    return response()->json([
-        'gd_loaded' => $gdLoaded,
-        'gd_info' => $gdInfo,
-        'php_info' => $phpInfo,
-        'loaded_extensions' => $loadedExtensions,
-        'imagecreatefromstring_exists' => function_exists('imagecreatefromstring'),
-        'imagesx_exists' => function_exists('imagesx'),
-        'imagesy_exists' => function_exists('imagesy'),
-    ]);
-});
-
 // Simple test endpoint for chats
 Route::get('/test-chats', function () {
     try {
@@ -198,6 +173,32 @@ Route::get('/test-tables', function () {
 // ============================================================================
 // PRODUCTION ENDPOINTS - Always available
 // ============================================================================
+
+// GD Extension diagnostic endpoint (always available for troubleshooting)
+Route::get('/test-gd', function () {
+    $gdLoaded = extension_loaded('gd');
+    $gdInfo = function_exists('gd_info') ? gd_info() : null;
+    $loadedExtensions = get_loaded_extensions();
+    
+    // Get PHP configuration paths
+    $phpInfo = [
+        'php_version' => phpversion(),
+        'php_sapi' => php_sapi_name(),
+        'loaded_ini' => php_ini_loaded_file(),
+        'scanned_ini_dir' => php_ini_scanned_files(),
+        'app_env' => config('app.env'),
+    ];
+    
+    return response()->json([
+        'gd_loaded' => $gdLoaded,
+        'gd_info' => $gdInfo,
+        'php_info' => $phpInfo,
+        'loaded_extensions' => $loadedExtensions,
+        'imagecreatefromstring_exists' => function_exists('imagecreatefromstring'),
+        'imagesx_exists' => function_exists('imagesx'),
+        'imagesy_exists' => function_exists('imagesy'),
+    ]);
+});
 
 // Webhook endpoint (temporarily without middleware for testing)
 // TODO: Re-enable middleware after testing
