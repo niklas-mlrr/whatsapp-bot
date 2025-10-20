@@ -179,6 +179,11 @@ Route::get('/test-tables', function () {
 Route::post('/whatsapp/webhook', [WhatsAppWebhookController::class, 'handle'])->name('whatsapp.webhook');
 Route::post('/whatsapp-webhook', [WhatsAppWebhookController::class, 'handle']);
 
+// Internal endpoint for receiver to fetch messages (uses webhook secret auth)
+Route::middleware(['verify.webhook'])->group(function () {
+    Route::get('/internal/messages/{id}', [WhatsAppMessageController::class, 'show']);
+});
+
 // Simple auth check endpoint
 Route::get('/check-auth', function () {
     // Single-user setup: always report authenticated (token-based checks still apply on protected routes)
@@ -286,6 +291,10 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
 
         // Leave a chat
         Route::post('/{chat}/leave', [ChatController::class, 'leaveChat']);
+
+        // Last read message tracking
+        Route::post('/{chat}/last-read', [ChatController::class, 'saveLastRead']);
+        Route::get('/{chat}/last-read', [ChatController::class, 'getLastRead']);
 
         // Mute/unmute chat
         Route::post('/{chat}/mute', [ChatController::class, 'toggleMute']);

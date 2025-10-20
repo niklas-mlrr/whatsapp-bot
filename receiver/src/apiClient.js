@@ -222,6 +222,7 @@ const sendToPHP = async (payload) => {
             reactedMessageId: payload.reactedMessageId || null,
             emoji: payload.emoji || null,
             senderJid: payload.senderJid || null,
+            quotedMessage: payload.quotedMessage || null,  // Include quoted message data
         };
         
         logger.debug({ messageData: { ...messageData, media: messageData.media ? '[base64 data]' : null } }, 'Sending message data to backend');

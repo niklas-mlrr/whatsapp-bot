@@ -53,6 +53,10 @@ class WhatsAppMessageRequest extends FormRequest
             'reactedMessageId' => ['nullable', 'string'],
             'emoji' => ['nullable', 'string'],
             'senderJid' => ['nullable', 'string'],
+            'quotedMessage' => ['nullable', 'array'],
+            'quotedMessage.quotedMessageId' => ['nullable', 'string'],
+            'quotedMessage.quotedContent' => ['nullable', 'string'],
+            'quotedMessage.quotedSender' => ['nullable', 'string'],
         ];
 
         // Add required validation for either 'from' or 'sender'

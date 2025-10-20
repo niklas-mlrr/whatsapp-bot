@@ -8,7 +8,7 @@
   
   <div class="flex flex-col h-full" v-else>
     <!-- Loading indicator -->
-    <div v-if="loading" class="flex-1 flex items-center justify-center">
+    <div v-if="loading" class="flex-1 flex items-center justify-center bg-white dark:bg-zinc-900">
       <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
     </div>
     
@@ -16,7 +16,7 @@
     <div 
       v-else
       ref="scrollContainer" 
-      class="flex-1 overflow-y-auto p-4 space-y-4"
+      class="flex-1 overflow-y-auto p-4 space-y-4 bg-white dark:bg-zinc-900"
       @scroll="handleScroll"
     >
       <!-- Load more messages button -->
@@ -45,6 +45,15 @@
             <div class="flex-1 h-px bg-gray-200"></div>
           </div>
 
+          <!-- Unread messages indicator -->
+          <div v-if="needsUnreadIndicator(index)" class="flex items-center my-4 select-none">
+            <div class="flex-1 h-px bg-green-400"></div>
+            <div class="mx-3 text-xs font-semibold text-green-600 bg-green-100 border border-green-300 rounded-full px-4 py-1">
+              Neue Nachrichten
+            </div>
+            <div class="flex-1 h-px bg-green-400"></div>
+          </div>
+
           <!-- Message item -->
           <MessageItem 
             v-if="message"
@@ -57,6 +66,7 @@
             @open-image-preview="handleOpenImagePreview"
             @add-reaction="handleAddReaction"
             @remove-reaction="handleRemoveReaction"
+            @reply-to-message="handleReplyToMessage"
           />
         </template>
       </template>
@@ -149,6 +159,10 @@ interface Message {
   is_group?: boolean | string | number;
   description?: string;
   avatar_url?: string | null;
+  // Reply/Quote fields
+  reply_to_message_id?: string | number;
+  quoted_message?: any;
+  reply_to_message?: any;
   // Optional backend/client flags for ownership
   is_from_me?: boolean;
   is_mine?: boolean;
@@ -194,7 +208,7 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['load-more', 'message-read', 'typing']);
+const emit = defineEmits(['load-more', 'message-read', 'typing', 'reply-to-message']);
 
 // State
 const messages = ref<Message[]>([]);
@@ -216,7 +230,11 @@ const isTyping = computed(() => {
   return Object.values(typingUsers.value).some(typing => typing === true);
 });
 const error = ref<Error | null>(null);
-const isInitialLoad = ref(true);
+// Use a plain variable instead of ref to avoid triggering reactivity/re-renders
+let isInitialLoad = true;
+let initialLoadTimeoutSet = false; // Flag to ensure timeout is only set once
+const lastReadMessageId = ref<string | null>(null);
+const firstUnreadMessageId = ref<string | null>(null);
 
 // Image preview state
 const imagePreviewOpen = ref(false);
@@ -353,6 +371,15 @@ const formatDayLabel = (dateString: string): string => {
   if (isSameDay(d, today)) return 'Today';
   if (isSameDay(d, yesterday)) return 'Yesterday';
   return d.toLocaleDateString([], { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' });
+};
+
+// Check if unread indicator is needed before this message
+const needsUnreadIndicator = (index: number): boolean => {
+  if (!sortedMessages.value || sortedMessages.value.length === 0) return false;
+  if (!firstUnreadMessageId.value) return false;
+  
+  const message = sortedMessages.value[index];
+  return message.id === firstUnreadMessageId.value;
 };
 
 // WebSocket event handlers
@@ -509,6 +536,14 @@ const handleScroll = () => {
     markVisibleMessagesAsRead();
   }
   
+  // Mark that initial load is complete after first scroll (only set timeout once)
+  if (!initialLoadTimeoutSet) {
+    initialLoadTimeoutSet = true;
+    setTimeout(() => {
+      isInitialLoad = false;
+    }, 2000);
+  }
+  
   // Load more messages when scrolling near the top
   if (scrollTop < 100 && hasMoreMessages.value && !isLoadingMore.value) {
     loadMoreMessages();
@@ -558,6 +593,16 @@ const startPolling = () => {
 
 // Process and normalize message data to ensure required fields exist
 const normalizeMessage = (msg: any): Message => {
+  // Log if message has reply data
+  if (msg.reply_to_message_id || msg.quoted_message || msg.reply_to_message) {
+    console.log('[MessageList] Message with reply data:', {
+      id: msg.id,
+      reply_to_message_id: msg.reply_to_message_id,
+      quoted_message: msg.quoted_message,
+      reply_to_message: msg.reply_to_message
+    })
+  }
+  
   // Safely interpret is_from_me from various backend types
   const parseIsFromMe = (val: unknown): boolean | undefined => {
     if (val === undefined || val === null) return undefined;
@@ -594,6 +639,10 @@ const normalizeMessage = (msg: any): Message => {
     size: msg.size || undefined,
     reactions: msg.reactions || {},
     metadata: msg.metadata || {},
+    // IMPORTANT: Preserve reply/quote data
+    reply_to_message_id: msg.reply_to_message_id || undefined,
+    quoted_message: msg.quoted_message || undefined,
+    reply_to_message: msg.reply_to_message || undefined,
     // Preserve backend flag for alignment/styling using safe boolean parsing
     ...(normalizedIsFromMe !== undefined ? { is_from_me: normalizedIsFromMe } : {}),
     // Stable flag the template can rely on
@@ -609,8 +658,9 @@ const fetchLatestMessages = async () => {
   }
   
   try {
-    // Only show loading spinner on initial load, not during polling
-    if (isInitialLoad.value) {
+    // Only show loading spinner on the very first load (when messages array is empty)
+    // Don't show it during polling or after initial load
+    if (isInitialLoad && messages.value.length === 0) {
       loading.value = true;
     }
     
@@ -620,10 +670,49 @@ const fetchLatestMessages = async () => {
       }
     });
     
+    // Log raw response to check for quoted_message data
+    console.log('[MessageList] Raw API response:', response?.data?.data)
+    
+    // Check if any messages have reply data
+    if (Array.isArray(response?.data?.data)) {
+      const messagesWithReply = response.data.data.filter((msg: any) => 
+        msg.reply_to_message_id || msg.quoted_message || msg.reply_to_message
+      )
+      if (messagesWithReply.length > 0) {
+        console.log('[MessageList] 🔍 Found messages with reply data:', messagesWithReply)
+        messagesWithReply.forEach((msg: any) => {
+          console.log('[MessageList] 📧 Message with reply:', {
+            id: msg.id,
+            content: msg.content?.substring(0, 50),
+            reply_to_message_id: msg.reply_to_message_id,
+            quoted_message: msg.quoted_message,
+            reply_to_message: msg.reply_to_message,
+            full_message: msg
+          })
+        })
+      } else {
+        console.log('[MessageList] ⚠️ No messages with reply data found in response')
+      }
+    }
+    
     // Process and normalize the messages
     const newMessages = Array.isArray(response?.data?.data) 
       ? response.data.data.map(normalizeMessage) 
       : [];
+    
+    // Log normalized messages to see if quoted_message is preserved
+    console.log('[MessageList] Normalized messages:', newMessages)
+    
+    // Check normalized messages for reply data
+    const normalizedWithReply = newMessages.filter((msg: any) => 
+      msg.reply_to_message_id || msg.quoted_message || msg.reply_to_message
+    )
+    if (normalizedWithReply.length > 0) {
+      console.log('[MessageList] ✅ Normalized messages with reply data:', normalizedWithReply)
+    }
+    
+    // Set loading to false as soon as we have the response
+    loading.value = false;
     
     if (newMessages.length > 0) {
       // Store the current scroll position
@@ -693,10 +782,9 @@ const fetchLatestMessages = async () => {
     }
     pollInterval.value = window.setTimeout(fetchLatestMessages, 10000); // Retry after 10 seconds
   } finally {
-    if (isInitialLoad.value) {
-      loading.value = false;
-      isInitialLoad.value = false;
-    }
+    // Always set loading to false after fetching, regardless of isInitialLoad
+    loading.value = false;
+    // Don't set isInitialLoad to false here - let the scroll handler control it after 2 seconds
   }
 };
 
@@ -768,6 +856,11 @@ const handleRemoveReaction = async (payload: { messageId: string | number }) => 
   } catch (error) {
     console.error('Error removing reaction:', error);
   }
+};
+
+// Reply handler
+const handleReplyToMessage = (message: any) => {
+  emit('reply-to-message', message);
 };
 
 // Image preview handlers
@@ -854,9 +947,23 @@ const resolveMessageImageSrc = (message: Message): string => {
 };
 
 // Lifecycle hooks
-function handleVisibilityChange() {
+async function handleVisibilityChange() {
   if (document.visibilityState === 'visible') {
     markVisibleMessagesAsRead();
+  } else if (document.visibilityState === 'hidden') {
+    // Save last read message when page becomes hidden
+    if (props.chat && messages.value.length > 0) {
+      const lastMessage = messages.value[messages.value.length - 1];
+      if (lastMessage && lastMessage.id) {
+        try {
+          await apiClient.post(`/chats/${props.chat}/last-read`, {
+            message_id: lastMessage.id
+          });
+        } catch (error) {
+          console.error('Failed to save last read on visibility change:', error);
+        }
+      }
+    }
   }
 }
 
@@ -864,28 +971,55 @@ function handleWindowFocus() {
   markVisibleMessagesAsRead();
 }
 
+// Save last read message before page unloads
+const handleBeforeUnload = () => {
+  if (props.chat && messages.value.length > 0) {
+    const lastMessage = messages.value[messages.value.length - 1];
+    if (lastMessage && lastMessage.id) {
+      // Use fetch with keepalive for reliable delivery during page unload
+      try {
+        fetch(`${import.meta.env.VITE_API_BASE_URL}/chats/${props.chat}/last-read`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({ message_id: lastMessage.id }),
+          keepalive: true // Ensures request completes even if page is closing
+        });
+      } catch (error) {
+        console.error('Failed to save on unload:', error);
+      }
+    }
+  }
+};
+
 onMounted(async () => {
-  try {
-    window.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('focus', handleWindowFocus);
-    
-    await initWebSocket();
-    
-    // Always start polling as a fallback mechanism
-    startPolling();
-    
-    loading.value = false;
-  } catch (error) {
-    console.error('Error initializing MessageList:', error);
-    
-    loading.value = false;
-    
-    // Start polling as fallback
+  if (props.chat) {
     try {
-      await fetchLatestMessages();
+      // Add event listeners for visibility and focus
+      window.addEventListener('visibilitychange', handleVisibilityChange);
+      window.addEventListener('focus', handleWindowFocus);
+      window.addEventListener('beforeunload', handleBeforeUnload);
+      
+      await initWebSocket();
+      
+      // Always start polling as a fallback mechanism
       startPolling();
-    } catch (fetchError) {
-      console.error('Error in fallback polling:', fetchError);
+      
+      loading.value = false;
+    } catch (error) {
+      console.error('Error initializing MessageList:', error);
+      
+      loading.value = false;
+      
+      // Start polling as fallback
+      try {
+        await fetchLatestMessages();
+        startPolling();
+      } catch (fetchError) {
+        console.error('Error in fallback polling:', fetchError);
+      }
     }
   }
 });
@@ -893,8 +1027,38 @@ onMounted(async () => {
 // Watch for chat changes and scroll to bottom when messages load
 watch(() => props.chat, async (newChatId, oldChatId) => {
   if (newChatId && newChatId !== oldChatId) {
+    
+    // Save the last read message for the old chat before switching
+    if (oldChatId && messages.value.length > 0) {
+      const lastMessage = messages.value[messages.value.length - 1];
+      if (lastMessage && lastMessage.id) {
+        try {
+          await apiClient.post(`/chats/${oldChatId}/last-read`, {
+            message_id: lastMessage.id
+          });
+        } catch (error) {
+          console.error('Failed to save last read message:', error);
+        }
+      }
+    }
+    
     // Reset messages first
     messages.value = [];
+    lastReadMessageId.value = null;
+    firstUnreadMessageId.value = null;
+    isInitialLoad = true; // Reset initial load flag for new chat
+    initialLoadTimeoutSet = false; // Reset timeout flag for new chat
+    
+    // Load the last read message ID from database
+    try {
+      const response = await apiClient.get(`/chats/${newChatId}/last-read`);
+      if (response.data && response.data.last_read_message_id) {
+        lastReadMessageId.value = response.data.last_read_message_id;
+      }
+    } catch (error) {
+      console.error('Failed to load last read message:', error);
+    }
+    
     // Wait for messages to be fetched
     await nextTick();
     // Give more time for the DOM to update and render all messages
@@ -914,17 +1078,66 @@ watch(messages, (newMessages, oldMessages) => {
   }
 }, { deep: true });
 
+// Watch for sorted messages to calculate unread indicator
+watch(sortedMessages, (sorted) => {
+  if (sorted.length === 0) {
+    return;
+  }
+  
+  // If there's a lastReadMessageId, show indicator after that message
+  if (lastReadMessageId.value) {
+    const lastReadIndex = sorted.findIndex(m => m.id === lastReadMessageId.value);
+    
+    if (lastReadIndex !== -1 && lastReadIndex < sorted.length - 1) {
+      // The first unread message is the one after the last read message
+      const firstUnread = sorted[lastReadIndex + 1];
+      const isFromMe = isMine(firstUnread);
+      
+      if (firstUnread && !isFromMe) {
+        firstUnreadMessageId.value = firstUnread.id;
+      } else {
+        firstUnreadMessageId.value = null;
+      }
+    } else {
+      firstUnreadMessageId.value = null;
+    }
+  } else {
+    // No lastReadMessageId means first time opening this chat
+    // Show indicator for the first message that's not from me
+    const firstNotFromMe = sorted.find(m => !isMine(m));
+    if (firstNotFromMe) {
+      firstUnreadMessageId.value = firstNotFromMe.id;
+    }
+  }
+}, { deep: true });
+
 // Clean up on unmount
-onUnmounted(() => {
+onUnmounted(async () => {
+  // Save last read message before unmounting
+  if (props.chat && messages.value.length > 0) {
+    const lastMessage = messages.value[messages.value.length - 1];
+    if (lastMessage && lastMessage.id) {
+      try {
+        await apiClient.post(`/chats/${props.chat}/last-read`, {
+          message_id: lastMessage.id
+        });
+      } catch (error) {
+        console.error('Failed to save last read message on unmount:', error);
+      }
+    }
+  }
+  
   // Clean up any remaining timeouts or intervals
   Object.entries(typingTimeouts.value).forEach(([userId, timeoutId]) => {
     clearTimeout(timeoutId);
   });
   
+  // Clear polling interval
   if (pollInterval.value) {
     clearInterval(pollInterval.value);
   }
   
+  // Clear reconnect timeout
   if (reconnectTimeout.value) {
     clearTimeout(reconnectTimeout.value);
   }
@@ -935,6 +1148,7 @@ onUnmounted(() => {
   // Remove event listeners
   window.removeEventListener('visibilitychange', handleVisibilityChange);
   window.removeEventListener('focus', handleWindowFocus);
+  window.removeEventListener('beforeunload', handleBeforeUnload);
 });
 
 // Handle WebSocket disconnection and reconnection
@@ -1136,8 +1350,6 @@ const fetchMessages = async (params: { chatId: string; limit: number; before?: s
       ...msg
     }));
     
-    console.log(`Fetched ${messages.length} messages`);
-    
     return {
       messages,
       hasMore: response.data.meta?.has_more || false
@@ -1158,7 +1370,12 @@ defineExpose({
   },
   removeTemporaryMessage: () => {
     messages.value = messages.value.filter(m => !(m as any).isTemporary);
-  }
+  },
+  setLastReadMessageId: (messageId: string) => {
+    lastReadMessageId.value = messageId;
+  },
+  scrollContainer,
+  isScrolledToBottom
 });
 
 </script>

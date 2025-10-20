@@ -1,5 +1,5 @@
 <template>
-  <div class="h-screen bg-gray-100 flex flex-row overflow-hidden relative">
+  <div class="h-screen bg-gray-100 dark:bg-black flex flex-row overflow-hidden relative">
     <!-- Logout overlay -->
     <div v-if="isLoggingOut" class="absolute inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
       <div class="bg-white rounded-lg p-8 flex flex-col items-center gap-4 shadow-xl">
@@ -11,40 +11,57 @@
       </div>
     </div>
     <!-- Sidebar -->
-    <aside class="w-80 bg-white border-r border-gray-200 flex flex-col h-full">
-      <div class="p-4 font-bold text-lg border-b border-gray-200 flex items-center justify-between">
+    <aside class="w-80 bg-white dark:bg-zinc-800 border-r border-gray-200 dark:border-zinc-700 flex flex-col h-full">
+      <div class="p-4 font-bold text-lg border-b border-gray-200 dark:border-zinc-700 flex items-center justify-between dark:text-white">
         <span>Chats</span>
-        <button 
-          @click="handleLogout"
-          :disabled="isLoggingOut"
-          class="flex items-center gap-2 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          title="Abmelden"
-        >
-          <svg v-if="!isLoggingOut" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-          </svg>
-          <svg v-else class="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-          </svg>
-          <span>Abmelden</span>
-        </button>
+        <div class="flex items-center gap-2">
+          <!-- Dark mode toggle -->
+          <button 
+            @click="themeStore.toggleDarkMode()"
+            class="p-2 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-lg transition-colors"
+            :title="themeStore.isDarkMode ? 'Light Mode' : 'Dark Mode'"
+          >
+            <!-- Sun icon for light mode -->
+            <svg v-if="themeStore.isDarkMode" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+            </svg>
+            <!-- Moon icon for dark mode -->
+            <svg v-else xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+            </svg>
+          </button>
+          <button 
+            @click="handleLogout"
+            :disabled="isLoggingOut"
+            class="flex items-center gap-2 px-3 py-1.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Abmelden"
+          >
+            <svg v-if="!isLoggingOut" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+            </svg>
+            <svg v-else class="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span>Abmelden</span>
+          </button>
+        </div>
       </div>
       <div class="flex-1 overflow-y-auto">
-        <div v-if="loadingChats" class="text-blue-500 p-4">Chats werden geladen...</div>
-        <div v-if="errorChats" class="text-red-500 p-4">{{ errorChats }}</div>
+        <div v-if="loadingChats" class="text-blue-500 dark:text-gray-400 p-4">Chats werden geladen...</div>
+        <div v-if="errorChats" class="text-red-500 dark:text-red-300 p-4">{{ errorChats }}</div>
         <div v-if="!loadingChats && !errorChats">
           <!-- Pending Chats Section (shown at top) -->
-          <div v-if="pendingChats.length > 0" class="border-b-2 border-gray-300">
-            <div class="px-4 py-2 bg-yellow-50 text-sm font-semibold text-gray-700 border-b border-gray-200">
+          <div v-if="pendingChats.length > 0" class="border-b-2 border-gray-300 dark:border-zinc-600">
+            <div class="neue-nachrichten-indicator px-4 py-2 bg-yellow-100 text-sm font-semibold text-gray-800 border-b border-gray-200 dark:bg-zinc-900 dark:text-yellow-400 dark:border-zinc-700">
               Neue Nachrichten
             </div>
-            <div v-for="chat in pendingChats" :key="chat.id" class="px-4 py-3 border-b border-gray-100 bg-yellow-50">
+            <div v-for="chat in pendingChats" :key="chat.id" class="px-4 py-3 border-b border-gray-100 dark:border-zinc-700 bg-yellow-50 dark:bg-yellow-900/10">
               <div class="flex items-center justify-between mb-2">
-                <span class="font-medium text-gray-800">{{ chat.name }}</span>
+                <span class="font-medium text-gray-800 dark:text-gray-200">{{ chat.name }}</span>
               </div>
-              <p v-if="chat.last_message_preview" class="text-sm text-gray-700 mb-2 italic">{{ chat.last_message_preview }}</p>
-              <b class="text-sm text-gray-600 mb-3">Möchtest du diesen Chat zulassen?</b>
+              <p v-if="chat.last_message_preview" class="text-sm text-gray-700 dark:text-gray-300 mb-2 italic">{{ chat.last_message_preview }}</p>
+              <b class="text-sm text-gray-600 dark:text-gray-400 mb-3">Möchtest du diesen Chat zulassen?</b>
               <div class="flex gap-2">
                 <button
                   @click="approveChat(chat)"
@@ -66,7 +83,7 @@
           <ul>
             <li v-for="chat in approvedChats" :key="chat.id" 
                 @click="selectChat(chat)"
-                :class="['cursor-pointer px-4 py-3 border-b border-gray-100 hover:bg-green-50 relative group flex items-center justify-between', selectedChat && selectedChat.id === chat.id ? 'bg-green-100 font-bold' : '']">
+                :class="['cursor-pointer px-4 py-3 border-b border-gray-100 dark:border-zinc-700 hover:bg-green-50 dark:hover:bg-zinc-700 relative group flex items-center justify-between dark:text-gray-200', selectedChat && selectedChat.id === chat.id ? 'bg-green-100 dark:bg-green-900/20 font-bold' : '']">
               <div class="flex items-center gap-2 flex-1">
                 <span class="flex-1">{{ chat.name }}</span>
                 <!-- Unread message indicator -->
@@ -92,10 +109,10 @@
         </div>
       </div>
       <!-- Action Buttons -->
-      <div class="p-4 border-t border-gray-200 space-y-2">
+      <div class="p-4 border-t border-gray-200 dark:border-zinc-700 space-y-2">
         <button
           @click="startNewChat"
-          class="w-full py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors font-semibold flex items-center justify-center gap-2"
+          class="w-full py-3 bg-blue-500 dark:bg-zinc-700 text-white rounded-lg hover:bg-blue-600 dark:hover:bg-zinc-600 transition-colors font-semibold flex items-center justify-center gap-2"
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
@@ -104,7 +121,7 @@
         </button>
         <button
           @click="showContactsModal = true"
-          class="w-full py-3 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors font-semibold flex items-center justify-center gap-2"
+          class="w-full py-3 bg-green-600 dark:bg-green-700 text-white rounded-lg hover:bg-green-600 dark:hover:bg-green-600 transition-colors font-semibold flex items-center justify-center gap-2"
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
@@ -115,18 +132,18 @@
     </aside>
     <!-- Main chat area -->
     <main class="flex-1 flex flex-col h-full overflow-hidden">
-      <!-- Chat header -->
-      <div class="flex items-center gap-3 px-6 py-4 bg-white border-b border-gray-200 shadow-sm min-h-[64px] sticky top-0 z-10">
+      <!-- Chat header (only shown when chat is selected) -->
+      <div v-if="selectedChat" class="flex items-center gap-3 px-6 py-4 bg-white dark:bg-zinc-900 border-b border-gray-200 dark:border-zinc-800 shadow-sm min-h-[64px] sticky top-0 z-10">
         <div class="w-10 h-10 rounded-full bg-green-300 flex items-center justify-center text-green-700 font-bold text-lg">
-          <span v-if="selectedChat">{{ selectedChat.name.slice(0,2).toUpperCase() }}</span>
+          <span>{{ selectedChat.name.slice(0,2).toUpperCase() }}</span>
         </div>
         <div class="flex flex-col flex-1">
-          <span class="font-semibold text-lg text-gray-900">{{ selectedChat ? selectedChat.name : 'Wähle einen Chat' }}</span>
-          <span class="text-xs text-gray-400">Online</span>
+          <span class="font-semibold text-lg text-gray-900 dark:text-gray-100">{{ selectedChat.name }}</span>
+          <span class="text-xs text-gray-400 dark:text-gray-500">Online</span>
         </div>
         <!-- Add to contacts button (shown when chat name looks like a phone number) -->
         <button
-          v-if="selectedChat && isPhoneNumber(selectedChat.name)"
+          v-if="isPhoneNumber(selectedChat.name)"
           @click="addToContacts"
           class="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors text-sm"
         >
@@ -141,13 +158,15 @@
       <div class="flex-1 overflow-y-auto">
         <MessageList 
           v-if="selectedChat"
+          :key="selectedChat.id"
           ref="messageListRef" 
           :chat="selectedChat.id"
           :current-user="currentUserForChat"
           :is-group-chat="!!selectedChat.is_group"
           :members="membersForChat"
+          @reply-to-message="handleReplyToMessage"
         />
-        <div v-else class="flex items-center justify-center h-full text-gray-500">
+        <div v-else class="flex items-center justify-center h-full text-gray-500 dark:text-gray-400 bg-white dark:bg-zinc-800">
           <div v-if="loadingChats" class="text-center">
             Laden...
             <br>
@@ -160,9 +179,31 @@
       </div>
       
       <!-- Message input -->
-      <div class="sticky bottom-0 bg-white border-t border-gray-200 z-10">
+      <div class="flex-shrink-0 bg-white dark:bg-zinc-900 border-t border-gray-200 dark:border-zinc-800 z-10">
+        <!-- Reply preview -->
+        <div v-if="replyToMessage" class="bg-gray-50 dark:bg-zinc-800 px-6 py-3 border-b border-gray-200 dark:border-zinc-700 flex items-start gap-3">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 mb-1">
+              <svg class="w-4 h-4 text-gray-500 dark:text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"></path>
+              </svg>
+              <span class="text-xs font-semibold text-gray-600 dark:text-gray-400">Antwort an {{ replyToMessage.sender }}</span>
+            </div>
+            <p class="text-sm text-gray-700 dark:text-gray-300 truncate">{{ replyToMessage.content || '[Medien]' }}</p>
+          </div>
+          <button
+            @click="clearReplyToMessage"
+            class="flex-shrink-0 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 transition-colors"
+            title="Antwort entfernen"
+          >
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+            </svg>
+          </button>
+        </div>
+        
         <!-- Attachment preview -->
-        <div v-if="attachmentPreviewVisible" class="relative bg-gray-50 p-3 border-b border-gray-200">
+        <div v-if="attachmentPreviewVisible" class="relative bg-gray-50 dark:bg-zinc-800 p-3 border-b border-gray-200 dark:border-zinc-700">
           <div v-if="isImageAttachment" class="max-w-[220px] relative">
             <img :src="attachmentPreviewUrl || undefined" alt="Preview" class="max-h-36 rounded-lg" />
             <button
@@ -179,19 +220,19 @@
               <span class="text-xs bg-black bg-opacity-60 text-white px-2 py-0.5 rounded-full">Wird hochgeladen...</span>
             </div>
           </div>
-          <div v-else class="relative flex items-start gap-3 bg-white border border-gray-200 rounded-lg p-4 pr-12 max-w-lg">
-            <div class="p-2 bg-gray-100 rounded-full">
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <div v-else class="relative flex items-start gap-3 bg-white dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700 rounded-lg p-4 pr-12 max-w-lg">
+            <div class="p-2 bg-gray-100 dark:bg-zinc-700 rounded-full">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-gray-600 dark:text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 10l5 5m0 0l5-5m-5 5V6" />
               </svg>
             </div>
             <div class="min-w-0">
-              <p class="text-sm font-semibold text-gray-800 truncate">{{ attachmentDisplayName }}</p>
-              <p class="text-xs text-gray-500">
+              <p class="text-sm font-semibold text-gray-800 dark:text-gray-200 truncate">{{ attachmentDisplayName }}</p>
+              <p class="text-xs text-gray-500 dark:text-gray-400">
                 {{ formattedAttachmentSize }}
                 <span v-if="attachmentDisplayMimetype"> • {{ attachmentDisplayMimetype }}</span>
               </p>
-              <p v-if="isUploadingAttachment" class="text-xs text-blue-500 mt-1">Wird hochgeladen...</p>
+              <p v-if="isUploadingAttachment" class="text-xs text-gray-500 mt-1">Wird hochgeladen...</p>
             </div>
             <button
               type="button"
@@ -207,22 +248,25 @@
         </div>
         
         <form @submit.prevent="sendMessageHandler" class="flex items-center gap-2 px-6 py-4 relative">
-        <input
+        <textarea
+          ref="messageInput"
           v-model="input"
           :disabled="!selectedChat"
-          type="text"
+          rows="1"
           placeholder="Nachricht eingeben"
-          class="flex-1 rounded-full border border-gray-300 px-4 py-2 focus:outline-none focus:ring-2 focus:ring-green-400 disabled:bg-gray-100 disabled:cursor-not-allowed"
-        />
+          @input="adjustTextareaHeight"
+          @keydown.enter.exact.prevent="sendMessageHandler"
+          :class="textareaClasses"
+        ></textarea>
         <div class="relative">
           <button type="button" @click="openMenu" :disabled="!selectedChat"
-            class="inline-block w-10 h-10 bg-green-500 rounded-full flex items-center justify-center text-white ml-2 focus:outline-none disabled:bg-gray-200">
+            class="inline-block w-10 h-10 bg-green-500 dark:bg-green-600 rounded-full flex items-center justify-center text-white ml-2 focus:outline-none disabled:bg-gray-200 dark:disabled:bg-zinc-700 hover:bg-green-600 dark:hover:bg-green-500">
             <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" /></svg>
           </button>
-          <div v-if="showMenu" class="absolute left-0 bottom-12 z-10 bg-white border border-gray-200 rounded shadow-lg min-w-[160px]">
+          <div v-if="showMenu" class="absolute left-0 bottom-12 z-10 bg-white dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700 rounded shadow-lg min-w-[160px]">
             <ul>
-              <li @click="selectAddImage" class="px-4 py-2 hover:bg-green-50 cursor-pointer">Bild hinzufügen</li>
-              <li @click="selectAddFile" class="px-4 py-2 hover:bg-green-50 cursor-pointer">Datei hinzufügen</li>
+              <li @click="selectAddImage" class="px-4 py-2 hover:bg-green-50 dark:hover:bg-zinc-700 cursor-pointer dark:text-gray-200">Bild hinzufügen</li>
+              <li @click="selectAddFile" class="px-4 py-2 hover:bg-green-50 dark:hover:bg-zinc-700 cursor-pointer dark:text-gray-200">Datei hinzufügen</li>
               <!-- Future: <li class='px-4 py-2 hover:bg-green-50 cursor-pointer'>Create poll</li> -->
             </ul>
           </div>
@@ -232,7 +276,7 @@
         <button
           type="submit"
           :disabled="!canSend"
-          class="bg-green-500 text-white rounded-full px-6 py-2 font-semibold disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center gap-2 min-w-[80px] justify-center"
+          class="bg-green-500 dark:bg-green-600 text-white rounded-full px-6 py-2 font-semibold hover:bg-green-600 dark:hover:bg-green-500 disabled:bg-gray-300 dark:disabled:bg-zinc-700 disabled:cursor-not-allowed flex items-center gap-2 min-w-[80px] justify-center"
         >
           <svg v-if="isSending" class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -255,35 +299,35 @@
 
     <!-- New Chat Modal -->
     <div v-if="showNewChatModal" class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4" @click.self="closeNewChatModal">
-      <div class="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
-        <h3 class="text-xl font-bold text-gray-900 mb-4">Neuer Chat</h3>
+      <div class="bg-white dark:bg-zinc-900 rounded-lg shadow-xl max-w-md w-full p-6">
+        <h3 class="text-xl font-bold text-gray-900 dark:text-gray-100 mb-4">Neuer Chat</h3>
         
         <form @submit.prevent="createNewChat" class="space-y-4">
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Telefonnummer</label>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Telefonnummer</label>
             <input
               v-model="newChatPhone"
               type="tel"
               required
               autofocus
-              class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+              class="w-full px-4 py-2 border border-gray-300 dark:border-zinc-700 rounded-lg bg-white dark:bg-zinc-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-400"
               placeholder="z.B. 4917646765869 oder +4917646765869"
             />
-            <p class="text-xs text-gray-500 mt-1">Geben Sie die Telefonnummer mit oder ohne + ein</p>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Geben Sie die Telefonnummer mit oder ohne + ein</p>
           </div>
 
           <div class="flex gap-2 pt-4">
             <button
               type="button"
               @click="closeNewChatModal"
-              class="flex-1 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+              class="flex-1 py-2 border border-gray-300 dark:border-zinc-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors"
             >
               Abbrechen
             </button>
             <button
               type="submit"
               :disabled="isCreatingChat || !newChatPhone.trim()"
-              class="flex-1 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:bg-gray-300"
+              class="flex-1 py-2 bg-blue-500 dark:bg-blue-600 text-white rounded-lg hover:bg-blue-600 dark:hover:bg-blue-500 transition-colors disabled:bg-gray-300 dark:disabled:bg-zinc-700"
             >
               {{ isCreatingChat ? 'Erstellen...' : 'Chat erstellen' }}
             </button>
@@ -295,14 +339,18 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { useThemeStore } from '@/stores/theme'
 import MessageList from '../components/MessageList.vue'
 import ContactsModal from '../components/ContactsModal.vue'
 import { fetchChats, sendMessage, uploadFile, deleteChat } from '../api/messages'
 import { useWebSocket } from '@/services/websocket'
 import apiClient from '@/services/api'
+
+// Initialize theme store
+const themeStore = useThemeStore()
 
 // Base current user from auth (fallback)
 const currentUser = ref({
@@ -320,7 +368,53 @@ const errorChats = ref<string | null>(null)
 const selectedChat = ref<any | null>(null)
 
 // Separate pending and approved chats
-const approvedChats = computed(() => chats.value.filter(c => !c.pending_approval))
+const approvedChats = computed(() => {
+  const approved = chats.value.filter(c => !c.pending_approval)
+  
+  // Sort to put own number at the top
+  const sorted = approved.sort((a, b) => {
+    // Check multiple variations of the number
+    const checkIsOwn = (chat: any) => {
+      const patterns = ['1590 8115183', '15908115183', '4915908115183', '+4915908115183', '49 1590 8115183']
+      
+      // Check name
+      if (chat.name && patterns.some((p: string) => chat.name.includes(p))) {
+        return true
+      }
+      
+      // Check participants array
+      if (Array.isArray(chat.participants)) {
+        for (const participant of chat.participants) {
+          const participantStr = String(participant)
+          if (patterns.some((p: string) => participantStr.includes(p))) {
+            return true
+          }
+        }
+      }
+      
+      // Check metadata
+      if (chat.metadata?.whatsapp_id && patterns.some((p: string) => chat.metadata.whatsapp_id.includes(p))) {
+        return true
+      }
+      
+      // Check original_name
+      if (chat.original_name && patterns.some((p: string) => chat.original_name.includes(p))) {
+        return true
+      }
+      
+      return false
+    }
+    
+    const aIsOwn = checkIsOwn(a)
+    const bIsOwn = checkIsOwn(b)
+    
+    if (aIsOwn && !bIsOwn) return -1
+    if (!aIsOwn && bIsOwn) return 1
+    return 0
+  })
+  
+  return sorted
+})
 const pendingChats = computed(() => chats.value.filter(c => c.pending_approval))
 const input = ref('')
 const attachmentFile = ref<File | null>(null)
@@ -342,6 +436,9 @@ const chatIdToUpdate = ref<string | undefined>(undefined)
 const showNewChatModal = ref(false)
 const newChatPhone = ref('')
 const isCreatingChat = ref(false)
+const messageInput = ref<HTMLTextAreaElement | null>(null)
+const textareaHeight = ref<number>(40) // Start with min height (2.5rem = 40px)
+const replyToMessage = ref<any | null>(null)
 
 // WebSocket for typing indicators and new chat notifications
 const { notifyTyping, connect: connectWebSocket } = useWebSocket()
@@ -389,10 +486,10 @@ const handleContactsModalClose = async () => {
     if (response && response.data && response.data.data) {
       chats.value = response.data.data
       
-      // Update selected chat if it was renamed
+      // Update selected chat if it was renamed (only update if name changed to avoid remounting)
       if (selectedChat.value) {
         const updatedChat = chats.value.find(c => c.id === selectedChat.value?.id)
-        if (updatedChat) {
+        if (updatedChat && updatedChat.name !== selectedChat.value.name) {
           selectedChat.value = updatedChat
         }
       }
@@ -435,6 +532,11 @@ watch(input, (newVal: string, oldVal: string) => {
     }
     notifyTyping(selectedChat.value.id.toString(), false)
   }
+  
+  // Adjust textarea height when input changes
+  nextTick(() => {
+    adjustTextareaHeight()
+  })
 })
 
 const isImageAttachment = computed(() => {
@@ -474,6 +576,44 @@ const canSend = computed(() => {
   return (hasText || hasAttachment) && hasChat && notSending && notUploading
 })
 
+// Computed property for textarea classes with dynamic corner radius and scrollbar
+const textareaClasses = computed(() => {
+  const baseClasses = [
+    'flex-1',
+    'resize-none',
+    'border',
+    'border-gray-300',
+    'dark:border-zinc-700',
+    'px-4',
+    'py-2',
+    'bg-white',
+    'dark:bg-zinc-800',
+    'text-gray-900',
+    'dark:text-gray-100',
+    'placeholder-gray-400',
+    'dark:placeholder-gray-500',
+    'focus:outline-none',
+    'focus:ring-2',
+    'focus:ring-green-400',
+    'disabled:bg-gray-100',
+    'dark:disabled:bg-zinc-700',
+    'disabled:cursor-not-allowed',
+    'min-h-[2.5rem]',
+    'max-h-60'
+  ]
+  
+  // Dynamic overflow based on height - only show scrollbar when at max height
+  const showScrollbar = textareaHeight.value >= 235 // Close to max height (240px)
+  baseClasses.push(showScrollbar ? 'overflow-y-auto' : 'overflow-y-hidden')
+  
+  // Dynamic corner radius based on height
+  // If height is close to minimum (single line), use rounded-full, otherwise rounded-lg
+  const isSingleLine = textareaHeight.value <= 45 // Slightly above min height to account for padding
+  baseClasses.push(isSingleLine ? 'rounded-full' : 'rounded-lg')
+  
+  return baseClasses.join(' ')
+})
+
 // Normalized members for the selected chat (id, name, phone)
 type Member = { id: string; name: string; phone?: string }
 const membersForChat = computed<Member[]>(() => {
@@ -495,8 +635,23 @@ const currentUserForChat = computed(() => {
   return { id: currentUser.value.id, name: currentUser.value.name }
 })
 
-function selectChat(chat: any) {
+async function selectChat(chat: any) {
   selectedChat.value = chat
+  
+  // Load the last read message ID from database and set it in MessageList
+  try {
+    const response = await apiClient.get(`/chats/${chat.id}/last-read`)
+    const lastReadId = response.data?.last_read_message_id
+    
+    // Set lastReadMessageId after a delay to ensure MessageList component is mounted
+    setTimeout(() => {
+      if (lastReadId && messageListRef.value && messageListRef.value.setLastReadMessageId) {
+        messageListRef.value.setLastReadMessageId(lastReadId)
+      }
+    }, 100)
+  } catch (error) {
+    console.error('Failed to load last read message:', error)
+  }
   
   // Mark chat as read when selected
   if (chat.unread_count && chat.unread_count > 0) {
@@ -536,6 +691,7 @@ async function sendMessageHandler() {
   const messageAttachmentPreviewUrl = attachmentPreviewUrl.value
   const messageAttachmentName = attachmentName.value
   const messageAttachmentSize = attachmentSize.value
+  const messageReplyTo = replyToMessage.value
   
   isSending.value = true
   
@@ -556,10 +712,6 @@ async function sendMessageHandler() {
     
     // Get the WhatsApp JID (phone number) from chat participants
     // For direct chats, use the first participant (the other person's number)
-    console.log('Selected chat object:', selectedChat.value);
-    console.log('Participants array:', selectedChat.value.participants);
-    console.log('Metadata:', selectedChat.value.metadata);
-    
     // Try to get the WhatsApp JID from multiple sources:
     // 1. First participant in the array
     // 2. WhatsApp ID from metadata
@@ -569,7 +721,6 @@ async function sendMessageHandler() {
                     || selectedChat.value.metadata?.whatsapp_id 
                     || selectedChat.value.original_name
                     || selectedChat.value.name;
-    console.log('Using chat JID:', chatJid);
     
     let payload: any = {
       sender: 'me',
@@ -587,9 +738,16 @@ async function sendMessageHandler() {
       payload.size = typeof messageAttachmentSize === 'number' ? messageAttachmentSize : undefined;
     }
     
+    // If replying to a message, include the reference
+    if (messageReplyTo) {
+      payload.reply_to_message_id = messageReplyTo.id;
+      console.log('[MessagesView] Sending message with reply_to_message_id:', messageReplyTo.id, 'Full payload:', payload)
+    }
+    
     // Clear input immediately to show responsiveness
     input.value = ''
     clearAttachmentState()
+    clearReplyToMessage()
     
     // Stop typing indicator
     if (typingTimeout.value) {
@@ -877,6 +1035,20 @@ const confirmDeleteChat = async (chat: any) => {
   }
 }
 
+const handleReplyToMessage = (message: any) => {
+  console.log('[MessagesView] Setting reply to message:', message)
+  replyToMessage.value = message
+  // Focus the input field
+  nextTick(() => {
+    messageInput.value?.focus()
+  })
+}
+
+const clearReplyToMessage = () => {
+  console.log('[MessagesView] Clearing reply to message')
+  replyToMessage.value = null
+}
+
 const checkAuthAndRedirect = async () => {
   const authStore = useAuthStore()
   const router = useRouter()
@@ -922,12 +1094,6 @@ onMounted(async () => {
     
     if (response && response.data && response.data.data) {
       chats.value = response.data.data
-      console.log('Loaded chats:', chats.value.map(c => ({ 
-        id: c.id, 
-        name: c.name, 
-        unread_count: c.unread_count,
-        participants: c.participants 
-      })))
     } else {
       console.error('Invalid response format:', response)
       errorChats.value = 'Ungültiges Antwortformat vom Server'
@@ -960,14 +1126,86 @@ onMounted(async () => {
         // Update the chats list
         chats.value = newChats
         
-        // Log if new pending chats appeared
-        if (newPendingCount > currentPendingCount) {
-          console.log('New pending chat detected!')
-        }
+        // Update complete
       }
     } catch (error) {
       console.error('Error polling for new chats:', error)
     }
   }, 5000) // Poll every 5 seconds
 })
+
+// Method to adjust textarea height based on content
+const adjustTextareaHeight = () => {
+  const textarea = messageInput.value
+  if (textarea) {
+    // Store the old height to detect changes
+    const oldHeight = textareaHeight.value
+    
+    // Reset height to auto to get the correct scrollHeight
+    textarea.style.height = 'auto'
+    // Set height to scrollHeight, but cap at max-height (15rem = 240px, which is about 10 lines)
+    const maxHeight = 240 // 15rem in pixels
+    const scrollHeight = textarea.scrollHeight
+    const newHeight = Math.min(scrollHeight, maxHeight)
+    textarea.style.height = newHeight + 'px'
+    
+    // Update the reactive height for dynamic styling
+    textareaHeight.value = newHeight
+    
+    // If the textarea expanded and the user is at the bottom, scroll down to keep messages visible
+    if (newHeight > oldHeight && messageListRef.value) {
+      // Check if user is scrolled to bottom using the exposed ref
+      const isScrolledToBottomRef = messageListRef.value.isScrolledToBottom
+      
+      // The ref is auto-unwrapped when accessed from template ref, so it's already a boolean
+      const isAtBottom = typeof isScrolledToBottomRef === 'object' ? isScrolledToBottomRef.value : isScrolledToBottomRef
+      
+      if (isAtBottom) {
+        // Small delay to ensure layout has updated
+        nextTick(() => {
+          messageListRef.value?.scrollToBottom?.({ behavior: 'smooth' })
+        })
+      }
+    }
+  }
+}
+
+onMounted(() => {
+  // Initial height adjustment
+  nextTick(() => {
+    adjustTextareaHeight()
+  })
+})
 </script>
+
+<style scoped>
+/* Custom minimalistic scrollbar for the message input textarea */
+textarea::-webkit-scrollbar {
+  width: 6px;
+}
+
+textarea::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+textarea::-webkit-scrollbar-thumb {
+  background: #d1d5db; /* Light grey */
+  border-radius: 3px;
+}
+
+textarea::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af; /* Darker grey on hover */
+}
+
+/* Firefox scrollbar styling */
+textarea {
+  scrollbar-width: thin;
+  scrollbar-color: #d1d5db transparent;
+}
+
+/* Force dark mode for Neue Nachrichten indicator */
+:deep(.dark) .neue-nachrichten-indicator {
+  background-color: #18181b !important; /* zinc-900 */
+  color: #facc15 !important; /* yellow-400 */
+}
+</style>

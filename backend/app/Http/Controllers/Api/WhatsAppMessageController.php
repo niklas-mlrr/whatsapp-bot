@@ -184,6 +184,12 @@ class WhatsAppMessageController extends Controller
             'sending_time' => 'nullable|date',
             'filename' => 'nullable|string',
             'size' => 'nullable|integer',
+            'reply_to_message_id' => 'nullable|integer|exists:whatsapp_messages,id',
+            // Quoted message from WhatsApp (incoming)
+            'quotedMessage' => 'nullable|array',
+            'quotedMessage.quotedMessageId' => 'nullable|string',
+            'quotedMessage.quotedContent' => 'nullable|string',
+            'quotedMessage.quotedSender' => 'nullable|string',
             // Reaction-specific fields
             'reactedMessageId' => 'nullable|string',
             'emoji' => 'nullable|string',
@@ -383,6 +389,22 @@ class WhatsAppMessageController extends Controller
             if (!empty($data['size'])) {
                 $sendPayload['size'] = $data['size'];
             }
+            
+            // Include reply_to_message_id if this is a reply
+            if (!empty($data['reply_to_message_id'])) {
+                // Fetch the quoted message to get its WhatsApp message ID
+                $quotedMessage = WhatsAppMessage::find($data['reply_to_message_id']);
+                if ($quotedMessage && isset($quotedMessage->metadata['message_id'])) {
+                    $sendPayload['quoted_message_whatsapp_id'] = $quotedMessage->metadata['message_id'];
+                    $sendPayload['quoted_message_content'] = $quotedMessage->content ?? '';
+                    $sendPayload['quoted_message_sender'] = $quotedMessage->metadata['sender'] ?? $quotedMessage->sender;
+                    
+                    \Log::info('Including quoted message data in payload', [
+                        'quoted_db_id' => $data['reply_to_message_id'],
+                        'quoted_whatsapp_id' => $quotedMessage->metadata['message_id']
+                    ]);
+                }
+            }
 
             // If this is an image message, include the full path to the media
             $requiresMediaBase64 = in_array($data['type'], ['image', 'document', 'video', 'audio']);
@@ -475,10 +497,31 @@ class WhatsAppMessageController extends Controller
                 $metadata['message_id'] = $whatsappMessageId;
             }
             
+            // Handle quoted message from incoming WhatsApp messages
+            $replyToMessageId = $data['reply_to_message_id'] ?? null;
+            if (!$replyToMessageId && isset($data['quotedMessage']['quotedMessageId'])) {
+                // Try to find the quoted message by its WhatsApp message ID
+                $quotedWhatsAppId = $data['quotedMessage']['quotedMessageId'];
+                $quotedMessage = WhatsAppMessage::where('metadata->message_id', $quotedWhatsAppId)->first();
+                
+                if ($quotedMessage) {
+                    $replyToMessageId = $quotedMessage->id;
+                    \Log::info('Linked quoted message from WhatsApp', [
+                        'quoted_whatsapp_id' => $quotedWhatsAppId,
+                        'quoted_db_id' => $quotedMessage->id
+                    ]);
+                } else {
+                    \Log::warning('Could not find quoted message', [
+                        'quoted_whatsapp_id' => $quotedWhatsAppId
+                    ]);
+                }
+            }
+            
             // If we get here, the message was sent successfully
             $message = WhatsAppMessage::create([
                 'sender_id' => $user->id,
                 'chat_id' => $chat->id,
+                'reply_to_message_id' => $replyToMessageId,
                 'type' => $data['type'],
                 'status' => 'sent',
                 'content' => $data['content'] ?? '',

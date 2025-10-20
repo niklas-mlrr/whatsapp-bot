@@ -209,7 +209,8 @@ async function start() {
             contentLength: req.body.content?.length,
             mediaType: req.body.media ? 'present' : 'missing',
             mimetype: req.body.mimetype,
-            filename: req.body.filename
+            filename: req.body.filename,
+            quoted_message_whatsapp_id: req.body.quoted_message_whatsapp_id
         });
 
         if (!sockInstance) {
@@ -231,7 +232,7 @@ async function start() {
             return res.status(503).json({ error: 'WhatsApp initial sync incomplete', details: syncError.message });
         }
 
-        const { chat, type, content, media, mimetype, filename } = req.body;
+        const { chat, type, content, media, mimetype, filename, quoted_message_whatsapp_id, quoted_message_content, quoted_message_sender } = req.body;
         const targetChat = resolveChatJid(chat);
 
         // Validate required fields
@@ -242,10 +243,33 @@ async function start() {
         }
 
         try {
+            // Build quoted message if replying (using data from payload to avoid deadlock)
+            let quotedMessage = null;
+            if (quoted_message_whatsapp_id) {
+                console.log('Building quoted message from payload:', {
+                    whatsapp_message_id: quoted_message_whatsapp_id,
+                    content: quoted_message_content,
+                    sender: quoted_message_sender
+                });
+                
+                // Build the quoted message key
+                quotedMessage = {
+                    key: {
+                        remoteJid: targetChat,
+                        id: quoted_message_whatsapp_id,
+                        fromMe: quoted_message_sender === 'me'
+                    },
+                    message: {
+                        conversation: quoted_message_content || ''
+                    }
+                };
+            }
+            
             let sentMessage;
             if (type === 'text') {
-                console.log('Sending text message to', chat);
-                sentMessage = await sockInstance.sendMessage(targetChat, { text: content || '' }, { waitForAck: false });
+                console.log('Sending text message to', chat, quotedMessage ? 'with quote' : '');
+                const messageOptions = quotedMessage ? { quoted: quotedMessage } : {};
+                sentMessage = await sockInstance.sendMessage(targetChat, { text: content || '' }, { ...messageOptions, waitForAck: false });
             } else if (type === 'image' && media) {
                 console.log('Processing image message for', chat);
                 try {
@@ -272,6 +296,7 @@ async function start() {
                         
                         console.log('Sending image to WhatsApp');
                         // Send the image to WhatsApp
+                        const messageOptions = quotedMessage ? { quoted: quotedMessage, upload: true, waitForAck: false } : { quoted: null, upload: true, waitForAck: false };
                         sentMessage = await sockInstance.sendMessage(
                             targetChat, 
                             { 
@@ -279,11 +304,7 @@ async function start() {
                                 mimetype: actualMimetype,
                                 caption: content || '' 
                             },
-                            { 
-                                quoted: null,
-                                upload: true,
-                                waitForAck: false
-                            }
+                            messageOptions
                         );
                     } else if (fs.existsSync(media)) {
                         console.log('Reading local file:', media);
@@ -292,6 +313,7 @@ async function start() {
                         const actualMimetype = mimetype || 'image/jpeg';
                         
                         console.log('Sending local file to WhatsApp');
+                        const messageOptions = quotedMessage ? { quoted: quotedMessage, upload: true, waitForAck: false } : { quoted: null, upload: true, waitForAck: false };
                         sentMessage = await sockInstance.sendMessage(
                             targetChat,
                             {
@@ -299,11 +321,7 @@ async function start() {
                                 mimetype: actualMimetype,
                                 caption: content || ''
                             },
-                            {
-                                quoted: null,
-                                upload: true,
-                                waitForAck: false
-                            }
+                            messageOptions
                         );
                     } else if (media.startsWith('data:')) {
                         console.log('Processing base64 image data');
@@ -329,7 +347,7 @@ async function start() {
                         };
                         
                         // Send the message with the correct options
-                        const sendOptions = { quoted: null, waitForAck: false };
+                        const sendOptions = quotedMessage ? { quoted: quotedMessage, waitForAck: false } : { quoted: null, waitForAck: false };
                         sentMessage = await sockInstance.sendMessage(targetChat, message, sendOptions);
                     } else {
                         throw new Error('Unsupported media format. Must be a URL or data URI');
@@ -379,7 +397,8 @@ async function start() {
                         documentMessage.caption = content;
                     }
 
-                    sentMessage = await sockInstance.sendMessage(targetChat, documentMessage, { quoted: null, waitForAck: false });
+                    const messageOptions = quotedMessage ? { quoted: quotedMessage, waitForAck: false } : { quoted: null, waitForAck: false };
+                    sentMessage = await sockInstance.sendMessage(targetChat, documentMessage, messageOptions);
                 } catch (error) {
                     console.error('Error processing document:', {
                         error: error.message,
@@ -409,7 +428,8 @@ async function start() {
                         videoMessage.caption = content;
                     }
 
-                    sentMessage = await sockInstance.sendMessage(targetChat, videoMessage, { quoted: null, waitForAck: false });
+                    const messageOptions = quotedMessage ? { quoted: quotedMessage, waitForAck: false } : { quoted: null, waitForAck: false };
+                    sentMessage = await sockInstance.sendMessage(targetChat, videoMessage, messageOptions);
                 } catch (error) {
                     console.error('Error processing video:', {
                         error: error.message,
@@ -435,7 +455,8 @@ async function start() {
                         mimetype: actualMimetype
                     };
 
-                    sentMessage = await sockInstance.sendMessage(targetChat, audioMessage, { quoted: null, waitForAck: false });
+                    const messageOptions = quotedMessage ? { quoted: quotedMessage, waitForAck: false } : { quoted: null, waitForAck: false };
+                    sentMessage = await sockInstance.sendMessage(targetChat, audioMessage, messageOptions);
                 } catch (error) {
                     console.error('Error processing audio:', {
                         error: error.message,

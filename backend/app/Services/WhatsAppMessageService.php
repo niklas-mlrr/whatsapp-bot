@@ -124,7 +124,11 @@ class WhatsAppMessageService
     {
         Log::channel('whatsapp')->info("Text message received from '{$data->sender}'", [
             'message' => $data->content,
+            'has_quoted_message' => !empty($data->quotedMessage),
         ]);
+
+        // Resolve reply_to_message_id if this is a reply
+        $replyToMessageId = $this->resolveReplyToMessageId($data->quotedMessage);
 
         return WhatsAppMessage::create([
             'sender' => $data->sender,
@@ -135,6 +139,7 @@ class WhatsAppMessageService
             'direction' => 'incoming',
             'status' => 'delivered',
             'content' => $this->sanitizeContent($data->content),
+            'reply_to_message_id' => $replyToMessageId,
             'sending_time' => $data->sending_time ?? now(),
             'metadata' => [
                 'original_content' => $data->content,
@@ -177,6 +182,9 @@ class WhatsAppMessageService
                 $extension
             );
 
+            // Resolve reply_to_message_id if this is a reply
+            $replyToMessageId = $this->resolveReplyToMessageId($data->quotedMessage);
+
             return WhatsAppMessage::create([
                 'sender' => $data->sender,
                 'sender_id' => $data->sender_id,
@@ -189,6 +197,7 @@ class WhatsAppMessageService
                 'media' => $filename,
                 'media_url' => $filename,
                 'mimetype' => $data->mimetype,
+                'reply_to_message_id' => $replyToMessageId,
                 'sending_time' => $data->sending_time ?? now(),
                 'metadata' => [
                     'original_mimetype' => $data->mimetype,
@@ -238,6 +247,9 @@ class WhatsAppMessageService
             // Generate thumbnail for the video
             $thumbnailPath = $this->generateVideoThumbnail(storage_path('app/public/' . $filename), $filename);
 
+            // Resolve reply_to_message_id if this is a reply
+            $replyToMessageId = $this->resolveReplyToMessageId($data->quotedMessage);
+
             return WhatsAppMessage::create([
                 'sender' => $data->sender,
                 'sender_id' => $data->sender_id,
@@ -250,6 +262,7 @@ class WhatsAppMessageService
                 'media' => $filename,
                 'media_url' => $filename,
                 'mimetype' => $data->mimetype,
+                'reply_to_message_id' => $replyToMessageId,
                 'sending_time' => $data->sending_time ?? now(),
                 'metadata' => [
                     'original_mimetype' => $data->mimetype,
@@ -297,6 +310,9 @@ class WhatsAppMessageService
                 throw new \Exception('Failed to save audio to storage');
             }
 
+            // Resolve reply_to_message_id if this is a reply
+            $replyToMessageId = $this->resolveReplyToMessageId($data->quotedMessage);
+
             return WhatsAppMessage::create([
                 'sender' => $data->sender,
                 'sender_id' => $data->sender_id,
@@ -309,6 +325,7 @@ class WhatsAppMessageService
                 'media' => $filename,
                 'media_url' => $filename,
                 'mimetype' => $data->mimetype,
+                'reply_to_message_id' => $replyToMessageId,
                 'sending_time' => $data->sending_time ?? now(),
                 'metadata' => [
                     'original_mimetype' => $data->mimetype,
@@ -355,6 +372,9 @@ class WhatsAppMessageService
                 throw new \Exception('Failed to save document to storage');
             }
 
+            // Resolve reply_to_message_id if this is a reply
+            $replyToMessageId = $this->resolveReplyToMessageId($data->quotedMessage);
+
             return WhatsAppMessage::create([
                 'sender' => $data->sender,
                 'sender_id' => $data->sender_id,
@@ -367,6 +387,7 @@ class WhatsAppMessageService
                 'media' => $filename,
                 'media_url' => $filename,
                 'mimetype' => $data->mimetype,
+                'reply_to_message_id' => $replyToMessageId,
                 'sending_time' => $data->sending_time ?? now(),
                 'metadata' => [
                     'original_mimetype' => $data->mimetype,
@@ -834,6 +855,34 @@ class WhatsAppMessageService
             // If we still can't find the user, rethrow the exception
             throw $e;
         }
+    }
+    
+    /**
+     * Resolve the reply_to_message_id from quotedMessage data
+     */
+    private function resolveReplyToMessageId(?array $quotedMessage): ?int
+    {
+        if (!$quotedMessage || !isset($quotedMessage['quotedMessageId'])) {
+            return null;
+        }
+        
+        // Try to find the quoted message by its WhatsApp message ID
+        $quotedWhatsAppId = $quotedMessage['quotedMessageId'];
+        $quotedMsg = WhatsAppMessage::where('metadata->message_id', $quotedWhatsAppId)->first();
+        
+        if ($quotedMsg) {
+            Log::channel('whatsapp')->info('Linked quoted message from WhatsApp', [
+                'quoted_whatsapp_id' => $quotedWhatsAppId,
+                'quoted_db_id' => $quotedMsg->id
+            ]);
+            return $quotedMsg->id;
+        }
+        
+        Log::channel('whatsapp')->warning('Could not find quoted message', [
+            'quoted_whatsapp_id' => $quotedWhatsAppId
+        ]);
+        
+        return null;
     }
     
     /**

@@ -20,6 +20,7 @@ class WhatsAppMessage extends Model
     protected $fillable = [
         'sender_id',
         'chat_id',
+        'reply_to_message_id',
         'type',
         'status',
         'content',
@@ -46,6 +47,7 @@ class WhatsAppMessage extends Model
         'sender',
         'chat',
         'direction',
+        'quoted_message',
     ];
 
     protected static function boot()
@@ -168,6 +170,14 @@ class WhatsAppMessage extends Model
     {
         return $this->belongsTo(Chat::class, 'chat_id');
     }
+    
+    /**
+     * Get the message this message is replying to.
+     */
+    public function replyToMessage(): BelongsTo
+    {
+        return $this->belongsTo(WhatsAppMessage::class, 'reply_to_message_id');
+    }
 
     // Accessors & Mutators
     public function getIsReadAttribute(): bool
@@ -266,6 +276,30 @@ class WhatsAppMessage extends Model
             return 'outgoing';
         }
         return 'incoming';
+    }
+    
+    /**
+     * Get the quoted message data.
+     */
+    public function getQuotedMessageAttribute(): ?array
+    {
+        if (!$this->reply_to_message_id) {
+            return null;
+        }
+        
+        $quotedMsg = $this->replyToMessage;
+        if (!$quotedMsg) {
+            return null;
+        }
+        
+        return [
+            'id' => $quotedMsg->id,
+            'content' => $quotedMsg->content,
+            'type' => $quotedMsg->type,
+            'sender' => $quotedMsg->sender,
+            'sender_name' => $quotedMsg->sender_name,
+            'created_at' => $quotedMsg->created_at,
+        ];
     }
     
     // Helper Methods

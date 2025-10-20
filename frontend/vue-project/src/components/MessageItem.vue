@@ -7,7 +7,7 @@
     <!-- Sender avatar (left side for received messages) -->
     <div 
       v-if="!isMe" 
-      class="flex-shrink-0 w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-gray-600 font-bold text-sm mr-2 shadow-sm"
+      class="flex-shrink-0 w-8 h-8 rounded-full bg-gray-200 dark:bg-zinc-700 flex items-center justify-center text-gray-600 dark:text-gray-300 font-bold text-sm mr-2 shadow-sm"
       :title="message.sender"
     >
       {{ senderInitials }}
@@ -16,7 +16,7 @@
     <!-- Message content -->
     <div class="flex flex-col max-w-[80%] relative" :class="{ 'items-end': isMe, 'items-start': !isMe }">
       <!-- Sender name (for group chats) -->
-      <div v-if="showSenderName" class="text-xs text-gray-500 mb-0.5 px-2">
+      <div v-if="showSenderName" class="text-xs text-gray-500 dark:text-gray-400 mb-0.5 px-2">
         {{ message.sender }}
       </div>
       
@@ -25,6 +25,17 @@
         :class="bubbleClass"
         class="relative"
       >
+        <!-- Reply reference (if this message is a reply) -->
+        <div v-if="message.quoted_message || message.reply_to_message" class="mb-2 pb-2 border-l-4 border-gray-300 dark:border-gray-600 pl-2 bg-gray-50 dark:bg-zinc-700/50 rounded-r text-xs">
+          <div class="flex items-center gap-1 mb-1">
+            <svg class="w-3 h-3 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"></path>
+            </svg>
+            <span class="font-semibold text-gray-600 dark:text-gray-300">{{ getQuotedSender() }}</span>
+          </div>
+          <p class="text-gray-600 dark:text-gray-400 line-clamp-2">{{ getQuotedContent() }}</p>
+        </div>
+        
         <!-- Message content based on type -->
         <template v-if="message.type === 'text' || !message.type">
           <span class="whitespace-pre-wrap break-words">
@@ -60,18 +71,18 @@
             <a 
               :href="documentUrl" 
               target="_blank" 
-              class="flex items-center p-2 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+              class="flex items-center p-2 bg-gray-100 dark:bg-zinc-700 rounded-lg hover:bg-gray-200 dark:hover:bg-zinc-600 transition-colors"
             >
-              <div class="p-2 bg-gray-200 rounded-lg mr-3">
-                <svg class="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <div class="p-2 bg-gray-200 dark:bg-zinc-600 rounded-lg mr-3">
+                <svg class="w-6 h-6 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
                 </svg>
               </div>
               <div class="flex-1 min-w-0">
-                <p class="text-sm font-medium text-gray-900 truncate">
+                <p class="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
                   {{ message.filename || 'Attachment' }}
                 </p>
-                <p class="text-xs text-gray-500">
+                <p class="text-xs text-gray-500 dark:text-gray-400">
                   <span v-if="message.size">{{ formatFileSize(message.size) }}</span>
                   <span v-if="message.size && message.mimetype"> • </span>
                   <span>{{ message.mimetype || 'File' }}</span>
@@ -88,10 +99,10 @@
         <!-- Audio message -->
         <template v-else-if="message.type === 'audio' || message.mimetype?.startsWith('audio/')">
           <div>
-            <div class="flex items-center p-2 bg-gray-100 rounded-lg">
+            <div class="flex items-center p-2 bg-gray-100 dark:bg-zinc-700 rounded-lg">
               <button 
                 @click="toggleAudioPlayback"
-                class="p-2 bg-gray-200 rounded-full mr-3 focus:outline-none hover:bg-gray-300 transition-colors"
+                class="p-2 bg-gray-200 dark:bg-zinc-600 rounded-full mr-3 focus:outline-none hover:bg-gray-300 dark:hover:bg-zinc-500 transition-colors"
               >
                 <svg v-if="!isPlayingAudio" class="w-6 h-6 text-gray-700" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
                   <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"></path>
@@ -316,11 +327,22 @@
       </div>
     </div>
     
+    <!-- Reply button (shown on hover) -->
+    <button
+      @click="handleReplyClick"
+      class="opacity-0 group-hover:opacity-100 transition-opacity ml-1 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-400"
+      title="Antworten"
+    >
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"></path>
+      </svg>
+    </button>
+    
     <!-- Add reaction button (shown on hover) -->
     <button
       @click="toggleReactionPicker"
       data-reaction-button
-      class="opacity-0 group-hover:opacity-100 transition-opacity ml-1 text-gray-400 hover:text-gray-600"
+      class="opacity-0 group-hover:opacity-100 transition-opacity ml-1 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-400"
       title="Add reaction"
     >
       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -410,6 +432,7 @@ const emit = defineEmits<{
   'open-image-preview': [payload: { src: string; caption?: string }]
   'add-reaction': [payload: { messageId: string | number; emoji: string }]
   'remove-reaction': [payload: { messageId: string | number }]
+  'reply-to-message': [message: any]
 }>()
 
 // Refs
@@ -562,8 +585,8 @@ const bubbleClass = computed(() => {
     'relative transition-all duration-200',
     'max-w-full',
     isMe.value 
-      ? 'bg-green-100 text-green-900 self-end rounded-tr-none' 
-      : 'bg-white text-gray-900 self-start rounded-tl-none border border-gray-200'
+      ? 'bg-green-100 dark:bg-green-900/80 text-green-900 dark:text-green-100 self-end rounded-tr-none' 
+      : 'bg-white dark:bg-zinc-800 text-gray-900 dark:text-gray-100 self-start rounded-tl-none border border-gray-200 dark:border-zinc-700'
   ]
   
   // Add additional classes based on message state
@@ -572,7 +595,7 @@ const bubbleClass = computed(() => {
   }
   
   if (props.message.isFailed) {
-    baseClasses.push('border-red-200 bg-red-50')
+    baseClasses.push('border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/10')
   }
   
   return baseClasses.join(' ')
@@ -584,6 +607,11 @@ const hasReactions = computed(() => {
 })
 
 // Methods
+// Reply method
+function handleReplyClick() {
+  emit('reply-to-message', props.message)
+}
+
 // Reaction methods
 function toggleReactionPicker() {
   showReactionPicker.value = !showReactionPicker.value
@@ -622,6 +650,41 @@ function getReactionCount(emoji: string): number {
 function getCurrentUserId(): string | number | null {
   // Return the current logged-in user's ID, not the message sender's ID
   return props.currentUser?.id || null
+}
+
+// Reply/quoted message helpers
+function getQuotedSender(): string {
+  const quoted = props.message.quoted_message || props.message.reply_to_message
+  
+  // Log when checking for quoted message
+  console.log('[MessageItem] getQuotedSender - Message ID:', props.message.id, {
+    has_quoted_message: !!props.message.quoted_message,
+    has_reply_to_message: !!props.message.reply_to_message,
+    reply_to_message_id: props.message.reply_to_message_id,
+    quoted_data: quoted,
+    full_message: props.message
+  })
+  
+  if (!quoted) return ''
+  
+  // Try to get sender name from various possible fields
+  if (typeof quoted.sender === 'string') return quoted.sender
+  if (quoted.sender?.name) return quoted.sender.name
+  if (quoted.sender_name) return quoted.sender_name
+  return 'Unknown'
+}
+
+function getQuotedContent(): string {
+  const quoted = props.message.quoted_message || props.message.reply_to_message
+  if (!quoted) return ''
+  
+  // Return content or indicate media type
+  if (quoted.content) return quoted.content
+  if (quoted.type === 'image') return '📷 Bild'
+  if (quoted.type === 'video') return '🎥 Video'
+  if (quoted.type === 'audio') return '🎵 Audio'
+  if (quoted.type === 'document') return '📄 Dokument'
+  return '[Nachricht]'
 }
 
 function formatFileSize(bytes: number = 0) {

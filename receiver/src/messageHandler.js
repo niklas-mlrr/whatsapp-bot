@@ -115,6 +115,23 @@ async function handleMessages(sock, m) {
 }
 
 /**
+ * Extract content from quoted message
+ */
+function extractQuotedContent(quotedMessage) {
+    if (!quotedMessage) return '';
+    
+    // Try different message types
+    if (quotedMessage.conversation) return quotedMessage.conversation;
+    if (quotedMessage.extendedTextMessage?.text) return quotedMessage.extendedTextMessage.text;
+    if (quotedMessage.imageMessage?.caption) return quotedMessage.imageMessage.caption || '[Image]';
+    if (quotedMessage.videoMessage?.caption) return quotedMessage.videoMessage.caption || '[Video]';
+    if (quotedMessage.documentMessage?.caption) return quotedMessage.documentMessage.caption || '[Document]';
+    if (quotedMessage.audioMessage) return '[Audio]';
+    
+    return '[Message]';
+}
+
+/**
  * Handles text messages.
  * @param {string} remoteJid - The sender's JID.
  * @param {string} text - The message text.
@@ -123,12 +140,24 @@ async function handleMessages(sock, m) {
 async function handleTextMessage(remoteJid, text, contextInfo = {}, messageId = null) {
     logger.debug({ remoteJid, textLength: text.length, hasContext: !!contextInfo, messageId }, 'Processing text message');
     
+    // Extract quoted message info if present
+    let quotedMessageData = null;
+    if (contextInfo?.quotedMessage) {
+        quotedMessageData = {
+            quotedMessageId: contextInfo.stanzaId,
+            quotedContent: extractQuotedContent(contextInfo.quotedMessage),
+            quotedSender: contextInfo.participant || remoteJid
+        };
+        logger.debug({ quotedMessageData }, 'Extracted quoted message data');
+    }
+    
     await sendToPHP({
         from: remoteJid,
         type: 'text',
         body: text,
         messageId: messageId,
-        contextInfo: contextInfo || undefined
+        contextInfo: contextInfo || undefined,
+        quotedMessage: quotedMessageData
     });
 }
 
@@ -162,6 +191,17 @@ async function handleImageMessage(sock, msg, remoteJid) {
         const base64Image = buffer.toString('base64');
         const caption = msg.message.imageMessage.caption || '';
         const mimetype = msg.message.imageMessage.mimetype || 'image/jpeg';
+        const contextInfo = msg.message.imageMessage.contextInfo;
+        
+        // Extract quoted message info if present
+        let quotedMessageData = null;
+        if (contextInfo?.quotedMessage) {
+            quotedMessageData = {
+                quotedMessageId: contextInfo.stanzaId,
+                quotedContent: extractQuotedContent(contextInfo.quotedMessage),
+                quotedSender: contextInfo.participant || remoteJid
+            };
+        }
 
         await sendToPHP({
             from: remoteJid,
@@ -170,7 +210,8 @@ async function handleImageMessage(sock, msg, remoteJid) {
             media: base64Image,
             mimetype: mimetype,
             messageTimestamp: msg.messageTimestamp,
-            messageId: msg.key.id
+            messageId: msg.key.id,
+            quotedMessage: quotedMessageData
         });
     } catch (error) {
         logger.error({ 
@@ -213,6 +254,17 @@ async function handleVideoMessage(sock, msg, remoteJid) {
         const base64Video = buffer.toString('base64');
         const caption = msg.message.videoMessage.caption || '';
         const mimetype = msg.message.videoMessage.mimetype || 'video/mp4';
+        const contextInfo = msg.message.videoMessage.contextInfo;
+        
+        // Extract quoted message info if present
+        let quotedMessageData = null;
+        if (contextInfo?.quotedMessage) {
+            quotedMessageData = {
+                quotedMessageId: contextInfo.stanzaId,
+                quotedContent: extractQuotedContent(contextInfo.quotedMessage),
+                quotedSender: contextInfo.participant || remoteJid
+            };
+        }
 
         await sendToPHP({
             from: remoteJid,
@@ -222,7 +274,8 @@ async function handleVideoMessage(sock, msg, remoteJid) {
             mimetype: mimetype,
             messageTimestamp: msg.messageTimestamp,
             messageId: msg.key.id,
-            mediaSize: msg.message.videoMessage.fileLength
+            mediaSize: msg.message.videoMessage.fileLength,
+            quotedMessage: quotedMessageData
         });
     } catch (error) {
         logger.error({ 
@@ -266,6 +319,17 @@ async function handleDocumentMessage(sock, msg, remoteJid) {
         const fileName = msg.message.documentMessage.fileName || 'document';
         const mimetype = msg.message.documentMessage.mimetype || 'application/octet-stream';
         const caption = msg.message.documentMessage.caption || '';
+        const contextInfo = msg.message.documentMessage.contextInfo;
+        
+        // Extract quoted message info if present
+        let quotedMessageData = null;
+        if (contextInfo?.quotedMessage) {
+            quotedMessageData = {
+                quotedMessageId: contextInfo.stanzaId,
+                quotedContent: extractQuotedContent(contextInfo.quotedMessage),
+                quotedSender: contextInfo.participant || remoteJid
+            };
+        }
 
         await sendToPHP({
             from: remoteJid,
@@ -276,7 +340,8 @@ async function handleDocumentMessage(sock, msg, remoteJid) {
             mimetype: mimetype,
             messageTimestamp: msg.messageTimestamp,
             messageId: msg.key.id,
-            mediaSize: msg.message.documentMessage.fileLength
+            mediaSize: msg.message.documentMessage.fileLength,
+            quotedMessage: quotedMessageData
         });
     } catch (error) {
         logger.error({ 
@@ -318,6 +383,17 @@ async function handleAudioMessage(sock, msg, remoteJid) {
         
         const base64Audio = buffer.toString('base64');
         const mimetype = msg.message.audioMessage.mimetype || 'audio/ogg; codecs=opus';
+        const contextInfo = msg.message.audioMessage.contextInfo;
+        
+        // Extract quoted message info if present
+        let quotedMessageData = null;
+        if (contextInfo?.quotedMessage) {
+            quotedMessageData = {
+                quotedMessageId: contextInfo.stanzaId,
+                quotedContent: extractQuotedContent(contextInfo.quotedMessage),
+                quotedSender: contextInfo.participant || remoteJid
+            };
+        }
 
         await sendToPHP({
             from: remoteJid,
@@ -327,7 +403,8 @@ async function handleAudioMessage(sock, msg, remoteJid) {
             mimetype: mimetype,
             messageTimestamp: msg.messageTimestamp,
             messageId: msg.key.id,
-            mediaSize: msg.message.audioMessage.fileLength
+            mediaSize: msg.message.audioMessage.fileLength,
+            quotedMessage: quotedMessageData
         });
     } catch (error) {
         logger.error({ 

@@ -851,7 +851,8 @@ class ChatController extends Controller
                             m.media_url,
                             m.media_type,
                             m.metadata,
-                            m.reactions
+                            m.reactions,
+                            m.reply_to_message_id
                         FROM whatsapp_messages m
                         LEFT JOIN users u ON m.sender_id = u.id
                         WHERE m.chat_id = ?
@@ -880,7 +881,8 @@ class ChatController extends Controller
                             m.media_url,
                             m.media_type,
                             m.metadata,
-                            m.reactions
+                            m.reactions,
+                            m.reply_to_message_id
                         FROM whatsapp_messages m
                         LEFT JOIN users u ON m.sender_id = u.id
                         WHERE m.chat_id = ?
@@ -906,7 +908,8 @@ class ChatController extends Controller
                         m.media_url,
                         m.media_type,
                         m.metadata,
-                        m.reactions
+                        m.reactions,
+                        m.reply_to_message_id
                     FROM whatsapp_messages m
                     LEFT JOIN users u ON m.sender_id = u.id
                     WHERE m.chat_id = ?
@@ -941,6 +944,28 @@ class ChatController extends Controller
             $filename = $metadata['filename'] ?? $metadata['original_name'] ?? null;
             $fileSize = $metadata['file_size'] ?? $metadata['size'] ?? null;
             
+            // Load quoted message if this is a reply
+            $quotedMessage = null;
+            if (!empty($m->reply_to_message_id)) {
+                $quoted = DB::selectOne("
+                    SELECT m.id, m.content, m.type, m.sender_id, u.name as sender_name, u.phone as sender
+                    FROM whatsapp_messages m
+                    LEFT JOIN users u ON m.sender_id = u.id
+                    WHERE m.id = ?
+                    LIMIT 1
+                ", [$m->reply_to_message_id]);
+                
+                if ($quoted) {
+                    $quotedMessage = [
+                        'id' => (string) $quoted->id,
+                        'content' => $quoted->content,
+                        'type' => $quoted->type,
+                        'sender' => $quoted->sender ?? 'Unknown',
+                        'sender_name' => $quoted->sender_name,
+                    ];
+                }
+            }
+            
             return [
                 'id' => (string) $m->id,
                 'content' => $m->content,
@@ -959,6 +984,8 @@ class ChatController extends Controller
                 'filename' => $filename,
                 'size' => $fileSize,
                 'reactions' => $reactions,
+                'reply_to_message_id' => $m->reply_to_message_id ?? null,
+                'quoted_message' => $quotedMessage,
             ];
         }, $rows);
 
@@ -1071,7 +1098,8 @@ class ChatController extends Controller
                             m.media_url,
                             m.media_type,
                             m.metadata,
-                            m.reactions
+                            m.reactions,
+                            m.reply_to_message_id
                         FROM whatsapp_messages m
                         LEFT JOIN users u ON m.sender_id = u.id
                         WHERE m.chat_id = ?
@@ -1102,7 +1130,8 @@ class ChatController extends Controller
                         m.media_url,
                         m.media_type,
                         m.metadata,
-                        m.reactions
+                        m.reactions,
+                        m.reply_to_message_id
                     FROM whatsapp_messages m
                     LEFT JOIN users u ON m.sender_id = u.id
                     WHERE m.chat_id = ?
@@ -1139,6 +1168,28 @@ class ChatController extends Controller
                 // Extract mimetype - fallback to metadata if media_type is null
                 $mimetype = $m->media_type ?? $metadata['original_mimetype'] ?? $metadata['mimetype'] ?? null;
                 
+                // Load quoted message if this is a reply
+                $quotedMessage = null;
+                if (!empty($m->reply_to_message_id)) {
+                    $quoted = DB::selectOne("
+                        SELECT m.id, m.content, m.type, m.sender_id, u.name as sender_name, u.phone as sender
+                        FROM whatsapp_messages m
+                        LEFT JOIN users u ON m.sender_id = u.id
+                        WHERE m.id = ?
+                        LIMIT 1
+                    ", [$m->reply_to_message_id]);
+                    
+                    if ($quoted) {
+                        $quotedMessage = [
+                            'id' => (string) $quoted->id,
+                            'content' => $quoted->content,
+                            'type' => $quoted->type,
+                            'sender' => $quoted->sender ?? 'Unknown',
+                            'sender_name' => $quoted->sender_name,
+                        ];
+                    }
+                }
+                
                 return [
                     'id' => (string) $m->id,
                     'content' => $m->content,
@@ -1157,6 +1208,8 @@ class ChatController extends Controller
                     'filename' => $filename,
                     'size' => $fileSize,
                     'reactions' => $reactions,
+                    'reply_to_message_id' => $m->reply_to_message_id ?? null,
+                    'quoted_message' => $quotedMessage,
                 ];
             }, $rows);
 
@@ -1178,6 +1231,66 @@ class ChatController extends Controller
             ]);
             return response()->json([
                 'error' => 'Failed to fetch messages',
+                'message' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Save the last read message for a chat
+     */
+    public function saveLastRead(Request $request, $chatId)
+    {
+        try {
+            $request->validate([
+                'message_id' => 'required|string'
+            ]);
+
+            $user = $request->user() ?: User::getFirstUser();
+
+            DB::table('chat_read_status')->updateOrInsert(
+                [
+                    'user_id' => $user->id,
+                    'chat_id' => $chatId
+                ],
+                [
+                    'last_read_message_id' => $request->message_id,
+                    'updated_at' => now()
+                ]
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Last read message saved'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'error' => 'Failed to save last read message',
+                'message' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get the last read message for a chat
+     */
+    public function getLastRead(Request $request, $chatId)
+    {
+        try {
+            $user = $request->user() ?: User::getFirstUser();
+
+            $readStatus = DB::table('chat_read_status')
+                ->where('user_id', $user->id)
+                ->where('chat_id', $chatId)
+                ->first();
+
+            return response()->json([
+                'success' => true,
+                'last_read_message_id' => $readStatus->last_read_message_id ?? null
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'error' => 'Failed to get last read message',
                 'message' => $e->getMessage()
             ], 500);
         }

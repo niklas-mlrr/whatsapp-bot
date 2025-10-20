@@ -22,6 +22,7 @@ class WhatsAppMessageData
         public readonly ?string $reactedMessageId = null,
         public readonly ?string $emoji = null,
         public readonly ?string $senderJid = null,
+        public readonly ?array $quotedMessage = null,
         public ?int $sender_id = null,
         public ?int $chat_id = null
     ) {
@@ -67,7 +68,8 @@ class WhatsAppMessageData
             mediaSize: $validated['mediaSize'] ?? null,
             reactedMessageId: $validated['reactedMessageId'] ?? null,
             emoji: $validated['emoji'] ?? null,
-            senderJid: $validated['senderJid'] ?? null
+            senderJid: $validated['senderJid'] ?? null,
+            quotedMessage: $validated['quotedMessage'] ?? null
         );
     }
 }
