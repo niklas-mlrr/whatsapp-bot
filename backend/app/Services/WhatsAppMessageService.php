@@ -528,6 +528,12 @@ class WhatsAppMessageService
     private function generateThumbnail(string $imagePath, string $originalPath, string $extension): ?string
     {
         try {
+            // Check if GD extension is loaded (required by Intervention Image)
+            if (!extension_loaded('gd')) {
+                Log::channel('whatsapp')->debug('GD extension not loaded, skipping thumbnail generation');
+                return null;
+            }
+            
             // Skip thumbnail generation for unsupported formats
             if (!in_array(strtolower($extension), ['jpg', 'jpeg', 'png', 'gif', 'webp'])) {
                 return null;

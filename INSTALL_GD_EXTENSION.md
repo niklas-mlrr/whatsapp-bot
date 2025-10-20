@@ -60,11 +60,14 @@ Route::get('/test-gd', function() {
 ## Current Status
 
 ✅ **Fixed:** The application now gracefully handles missing GD extension
-- Images will still be received and stored
+- Images will still be received and stored successfully
 - Image dimensions will be `null` in metadata if GD is not available
+- Thumbnail generation will be skipped if GD is not available
 - No more 500 errors when receiving images
 
-⚠️ **Optional:** Install GD extension to enable image dimension detection
+⚠️ **Recommended:** Install GD extension to enable:
+- Image dimension detection
+- Thumbnail generation for images
 
 ## Testing
 
