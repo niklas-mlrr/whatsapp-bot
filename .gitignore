@@ -37,3 +37,4 @@ pnpm-debug.log*
 /receiver/media/
 /receiver/baileys_auth_info/
 /receiver/.env
+nginx-whatsapp-bot-complete.conf

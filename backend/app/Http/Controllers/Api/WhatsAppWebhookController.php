@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\DataTransferObjects\WhatsAppMessageData;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\WhatsAppMessageRequest;
+use App\Jobs\ProcessWhatsAppMessage;
 use App\Services\WhatsAppMessageService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
@@ -42,7 +43,23 @@ class WhatsAppWebhookController extends Controller
         
         try {
             $messageData = WhatsAppMessageData::fromRequest($request);
-            $this->messageService->handle($messageData);
+            
+            // Check if queue is enabled
+            $queueConnection = config('queue.default');
+            
+            if ($queueConnection === 'sync') {
+                // Process synchronously if queue is disabled (development mode)
+                Log::channel('whatsapp')->debug('Processing message synchronously (queue disabled)');
+                $this->messageService->handle($messageData);
+            } else {
+                // Dispatch to queue for asynchronous processing
+                Log::channel('whatsapp')->debug('Dispatching message to queue', [
+                    'queue_connection' => $queueConnection,
+                    'message_type' => $messageData->type,
+                ]);
+                
+                ProcessWhatsAppMessage::dispatch($messageData);
+            }
 
             return response()->json([
                 'status' => 'ok',
