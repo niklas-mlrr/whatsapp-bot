@@ -67,6 +67,8 @@
             @add-reaction="handleAddReaction"
             @remove-reaction="handleRemoveReaction"
             @reply-to-message="handleReplyToMessage"
+            @edit-message="handleEditMessage"
+            @delete-message="handleDeleteMessage"
           />
         </template>
       </template>
@@ -208,7 +210,7 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['load-more', 'message-read', 'typing', 'reply-to-message']);
+const emit = defineEmits(['load-more', 'message-read', 'typing', 'reply-to-message', 'edit-message']);
 
 // State
 const messages = ref<Message[]>([]);
@@ -251,6 +253,8 @@ const {
   listenForTyping, 
   listenForReadReceipts,
   listenForReactionUpdates,
+  listenForMessageEdited,
+  listenForMessageDeleted,
   notifyTyping,
   markAsRead
 } = useWebSocket();
@@ -594,6 +598,16 @@ const startPolling = () => {
 // Process and normalize message data to ensure required fields exist
 const normalizeMessage = (msg: any): Message => {
   
+  // Debug: Log if this is a deleted message
+  if (msg.deleted_at) {
+    console.log('[DEBUG normalizeMessage] Deleted message:', { 
+      id: msg.id, 
+      type: msg.type, 
+      content: msg.content, 
+      deleted_at: msg.deleted_at 
+    });
+  }
+  
   // Safely interpret is_from_me from various backend types
   const parseIsFromMe = (val: unknown): boolean | undefined => {
     if (val === undefined || val === null) return undefined;
@@ -612,9 +626,9 @@ const normalizeMessage = (msg: any): Message => {
     || (msg?.sender_id?.toString?.() === props.currentUser.id?.toString());
   const normalizedIsMine = (typeof normalizedIsFromMe === 'boolean') ? normalizedIsFromMe : !!fallbackMine;
 
-  return {
+  const normalized: any = {
     id: msg.id?.toString() || '',
-    content: msg.content || '',
+    content: msg.content !== undefined ? msg.content : '',
     sender_id: msg.sender_id || msg.sender || 'unknown',
     sender_phone: msg.sender_phone || undefined,
     chat_id: msg.chat_id || msg.chat || 'unknown',
@@ -623,6 +637,8 @@ const normalizeMessage = (msg: any): Message => {
     status: msg.status || 'sent',
     created_at: msg.created_at || new Date().toISOString(),
     updated_at: msg.updated_at || new Date().toISOString(),
+    deleted_at: msg.deleted_at || undefined,
+    edited_at: msg.edited_at || undefined,
     read_by: Array.isArray(msg.read_by) ? msg.read_by : [],
     media: msg.media || null,
     mimetype: msg.mimetype || null,
@@ -639,6 +655,8 @@ const normalizeMessage = (msg: any): Message => {
     // Stable flag the template can rely on
     is_mine: normalizedIsMine,
   };
+  
+  return normalized;
 };
 
 // Fetch latest messages with deduplication and proper ordering
@@ -816,6 +834,38 @@ const handleRemoveReaction = async (payload: { messageId: string | number }) => 
 // Reply handler
 const handleReplyToMessage = (message: any) => {
   emit('reply-to-message', message);
+};
+
+// Edit message handler
+const handleEditMessage = (message: any) => {
+  emit('edit-message', message);
+};
+
+// Delete message handler
+const handleDeleteMessage = async (messageId: string | number) => {
+  try {
+    // Immediately update the message to show deletion placeholder
+    const messageIndex = messages.value.findIndex(m => m.id === messageId);
+    if (messageIndex !== -1) {
+      messages.value[messageIndex] = {
+        ...messages.value[messageIndex],
+        content: '[Gelöschte Nachricht]',
+        type: 'deleted',
+        deleted_at: new Date().toISOString()
+      } as any;
+    }
+    
+    // Send delete request to backend
+    await apiClient.delete(`/messages/${messageId}`);
+    
+    console.log('Message deleted successfully');
+  } catch (error) {
+    console.error('Failed to delete message:', error);
+    alert('Fehler beim Löschen der Nachricht');
+    
+    // Revert the message if deletion failed
+    // You might want to refetch the message here
+  }
 };
 
 // Image preview handlers
@@ -1255,12 +1305,50 @@ const setupWebSocketListeners = () => {
       }
     });
     
+    // Listen for message edited events
+    const editedUnsubscribe = listenForMessageEdited(props.chat.toString(), (event: any) => {
+      if (!event || !event.message_id) {
+        return;
+      }
+      
+      // Update the message content
+      const messageIndex = messages.value.findIndex(m => String(m.id) === String(event.message_id));
+      if (messageIndex !== -1) {
+        messages.value[messageIndex] = {
+          ...messages.value[messageIndex],
+          content: event.content,
+          edited_at: event.edited_at
+        } as any;
+      }
+    });
+    
+    // Listen for message deleted events
+    const deletedUnsubscribe = listenForMessageDeleted(props.chat.toString(), (event: any) => {
+      if (!event || !event.message_id) {
+        return;
+      }
+      
+      // Find and update the message to show deletion placeholder
+      const messageIndex = messages.value.findIndex(m => String(m.id) === String(event.message_id));
+      if (messageIndex !== -1) {
+        // Replace with deletion placeholder
+        messages.value[messageIndex] = {
+          ...messages.value[messageIndex],
+          content: '[Gelöschte Nachricht]',
+          type: 'deleted',
+          deleted_at: event.deleted_at
+        } as any;
+      }
+    });
+    
     // Store unsubscribe functions
     const unsubscribeFunctions = {
       newMessage: newMessageUnsubscribe,
       typing: typingUnsubscribe,
       readReceipt: readReceiptUnsubscribe,
-      reaction: reactionUnsubscribe
+      reaction: reactionUnsubscribe,
+      edited: editedUnsubscribe,
+      deleted: deletedUnsubscribe
     };
     
     // Clean up WebSocket listeners on unmount
@@ -1286,19 +1374,34 @@ const fetchMessages = async (params: { chatId: string; limit: number; before?: s
   try {
     const response = await apiClient.get('/messages', { params });
     
+    // Debug: Log raw API response
+    console.log('[DEBUG] Raw API messages:', response.data.data?.slice(0, 3));
+    
     // Ensure messages are properly typed and have required fields
-    const messages = (response.data.data || []).map((msg: any) => ({
-      id: msg.id || '',
-      content: msg.content || '',
-      sender_id: msg.sender_id || '',
-      chat_id: msg.chat_id || params.chatId,
-      created_at: msg.created_at || new Date().toISOString(),
-      updated_at: msg.updated_at || new Date().toISOString(),
-      status: msg.status || 'sent',
-      read_by: Array.isArray(msg.read_by) ? msg.read_by : [],
-      // Add other required fields with defaults
-      ...msg
-    }));
+    const messages = (response.data.data || []).map((msg: any) => {
+      // Debug: Log deleted messages
+      if (msg.deleted_at) {
+        console.log('[DEBUG] Deleted message from API:', { 
+          id: msg.id, 
+          type: msg.type, 
+          content: msg.content, 
+          deleted_at: msg.deleted_at 
+        });
+      }
+      
+      // Use the message as-is from the API, only add fallbacks for truly missing fields
+      return {
+        id: msg.id || '',
+        sender_id: msg.sender_id || '',
+        chat_id: msg.chat_id || params.chatId,
+        created_at: msg.created_at || new Date().toISOString(),
+        updated_at: msg.updated_at || new Date().toISOString(),
+        status: msg.status || 'sent',
+        read_by: Array.isArray(msg.read_by) ? msg.read_by : [],
+        // Spread all other fields from API (including type, content, deleted_at, etc.)
+        ...msg
+      };
+    });
     
     return {
       messages,

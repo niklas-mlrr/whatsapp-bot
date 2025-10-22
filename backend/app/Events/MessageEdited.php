@@ -54,7 +54,7 @@ class MessageEdited implements ShouldBroadcast
      */
     public function __construct(WhatsAppMessage $message, User $user, string $originalContent)
     {
-        $this->message = $message->load(['chat']);
+        $this->message = $message->load(['chatRelation']);
         $this->user = $user->only(['id', 'name', 'avatar_url']);
         $this->originalContent = $originalContent;
         $this->editedAt = now()->toIso8601String();
@@ -102,6 +102,7 @@ class MessageEdited implements ShouldBroadcast
         return [
             'message_id' => $this->message->id,
             'chat_id' => $this->message->chat_id,
+            'content' => $this->message->content,
             'user' => $this->user,
             'original_content' => $this->originalContent,
             'edited_at' => $this->editedAt,

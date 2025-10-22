@@ -216,6 +216,16 @@ Route::get('/check-auth', function () {
     return response()->json(['authenticated' => true]);
 });
 
+// Webhook routes (called by receiver, verified by webhook secret)
+Route::middleware(['throttle:120,1'])->group(function () {
+    // Update message status by WhatsApp message ID (called by receiver)
+    Route::post('/messages/update-status', [MessageStatusController::class, 'updateStatusByWhatsAppId']);
+    
+    // Notify of message edit/delete from other users (called by receiver)
+    Route::post('/messages/notify-edit', [WhatsAppMessageController::class, 'notifyEdit']);
+    Route::post('/messages/notify-delete', [WhatsAppMessageController::class, 'notifyDelete']);
+});
+
 // Protected routes (require authentication + rate limiting)
 Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     // Auth routes
@@ -227,13 +237,10 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
 
     // Messages
     Route::apiResource('messages', WhatsAppMessageController::class)
-        ->only(['index', 'show', 'destroy', 'store']);
+        ->only(['index', 'show', 'destroy', 'store', 'update']);
 
     // Mark multiple messages as read
     Route::post('/messages/read', [MessageStatusController::class, 'markMultipleAsRead']);
-    
-    // Update message status by WhatsApp message ID (called by receiver)
-    Route::post('/messages/update-status', [MessageStatusController::class, 'updateStatusByWhatsAppId']);
 
     // Message status
     Route::prefix('messages/{message}')->group(function () {

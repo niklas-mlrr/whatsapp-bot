@@ -10,6 +10,39 @@ let currentSocket = null;
 let reconnectCallback = null;
 let reconnectTimeout = null;
 
+// Track edit message IDs to skip their status updates
+const editMessageIds = new Set();
+const protocolMessageIds = new Set();
+
+/**
+ * Add a message ID to the edit tracking set
+ * @param {string} messageId - The message ID to track
+ */
+function addEditMessageId(messageId) {
+    editMessageIds.add(messageId);
+    logger.debug({ messageId, totalTracked: editMessageIds.size }, 'Added edit message ID to tracking');
+    // Auto-remove after 5 minutes to prevent memory leak
+    // Edit messages can receive status updates for a while
+    setTimeout(() => {
+        editMessageIds.delete(messageId);
+        logger.debug({ messageId }, 'Removed edit message ID from tracking');
+    }, 300000); // 5 minutes
+}
+
+/**
+ * Add a message ID to the protocol message tracking set
+ * @param {string} messageId - The message ID to track
+ */
+function addProtocolMessageId(messageId) {
+    protocolMessageIds.add(messageId);
+    logger.debug({ messageId, totalTracked: protocolMessageIds.size }, 'Added protocol message ID to tracking');
+    // Auto-remove after 5 minutes to prevent memory leak
+    setTimeout(() => {
+        protocolMessageIds.delete(messageId);
+        logger.debug({ messageId }, 'Removed protocol message ID from tracking');
+    }, 300000); // 5 minutes
+}
+
 /**
  * Set a callback to be called when the socket reconnects
  * @param {Function} callback - Function to call with the new socket instance
@@ -173,10 +206,45 @@ async function connectToWhatsApp() {
                     
                     // Check if this is a status update (delivered/read)
                     if (statusUpdate?.status) {
-                        const status = statusUpdate.status;
+                        const numericStatus = statusUpdate.status;
                         const messageId = key.id;
                         
-                        logger.info({ messageId, status }, 'Message status changed');
+                        // Skip status updates for edit and protocol messages
+                        // These messages have different IDs than the original message
+                        // and we don't store them separately in the database
+                        if (editMessageIds.has(messageId)) {
+                            logger.debug({ messageId }, 'Skipping status update for edit message');
+                            continue;
+                        }
+                        
+                        if (protocolMessageIds.has(messageId)) {
+                            logger.debug({ messageId }, 'Skipping status update for protocol message');
+                            continue;
+                        }
+                        
+                        // Map WhatsApp numeric status to string status
+                        // 0 = ERROR, 1 = PENDING, 2 = SERVER_ACK, 3 = DELIVERY_ACK, 4 = READ, 5 = PLAYED
+                        let status;
+                        switch (numericStatus) {
+                            case 0:
+                                status = 'failed';
+                                break;
+                            case 1:
+                            case 2:
+                                status = 'sent';
+                                break;
+                            case 3:
+                                status = 'delivered';
+                                break;
+                            case 4:
+                            case 5:
+                                status = 'read';
+                                break;
+                            default:
+                                status = 'sent';
+                        }
+                        
+                        logger.debug({ messageId, numericStatus, status }, 'Message status changed');
                         
                         // Send status update to backend
                         const apiClient = require('./apiClient');
@@ -200,7 +268,7 @@ async function connectToWhatsApp() {
                         const messageId = key.id;
                         const status = receiptInfo.readTimestamp ? 'read' : 'delivered';
                         
-                        logger.info({ messageId, status, receiptInfo }, 'Message receipt status changed');
+                        logger.debug({ messageId, status, receiptInfo }, 'Message receipt status changed');
                         
                         // Send status update to backend
                         const apiClient = require('./apiClient');
@@ -222,4 +290,4 @@ async function connectToWhatsApp() {
     }
 }
 
-module.exports = { connectToWhatsApp, setReconnectCallback };
+module.exports = { connectToWhatsApp, setReconnectCallback, addEditMessageId, addProtocolMessageId };

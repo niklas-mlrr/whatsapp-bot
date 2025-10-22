@@ -70,7 +70,7 @@ class MessageStatusController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'message_ids' => 'required|array',
-            'message_ids.*' => 'required|string|exists:whatsapp_messages,id',
+            'message_ids.*' => 'required|string',
         ]);
 
         if ($validator->fails()) {
@@ -97,8 +97,10 @@ class MessageStatusController extends Controller
             $now = now();
 
             // Update all messages in a single query for better performance
+            // Exclude soft-deleted messages
             $messages = WhatsAppMessage::whereIn('id', $messageIds)
                 ->whereNull('read_at')
+                ->whereNull('deleted_at')
                 ->get();
 
             foreach ($messages as $message) {
@@ -243,11 +245,8 @@ class MessageStatusController extends Controller
             $message = WhatsAppMessage::where('metadata->message_id', $whatsappMessageId)->first();
 
             if (!$message) {
-                Log::channel('whatsapp')->warning('Message not found for status update', [
-                    'whatsapp_message_id' => $whatsappMessageId,
-                    'status' => $status,
-                ]);
-                
+                // This is normal for edit/protocol messages which generate new IDs
+                // Return 404 silently without logging to avoid spam
                 return response()->json([
                     'status' => 'error',
                     'message' => 'Message not found',

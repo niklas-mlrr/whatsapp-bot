@@ -248,21 +248,25 @@ const sendToPHP = async (payload) => {
  */
 const updateMessageStatus = async (whatsappMessageId, status) => {
     try {
-        logger.info({ whatsappMessageId, status }, 'Updating message status in backend');
+        // Extract base URL without the webhook path
+        const baseUrl = config.backend.apiUrl.replace(/\/api\/whatsapp-webhook\/?$/, '');
         
         // Find the message by WhatsApp message ID and update its status
-        const response = await apiClient.post('/messages/update-status', {
+        const response = await axios.post(`${baseUrl}/api/messages/update-status`, {
             whatsapp_message_id: whatsappMessageId,
             status: status,
+        }, {
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Webhook-Secret': process.env.WEBHOOK_SECRET || config.backend.webhookSecret || '',
+            },
+            timeout: config.backend.timeoutMs,
+            validateStatus: (status) => status >= 200 && status < 500,
         });
         
         if (response.status >= 400) {
-            logger.warn({ 
-                whatsappMessageId, 
-                status, 
-                responseStatus: response.status,
-                responseData: response.data 
-            }, 'Failed to update message status');
+            // 404 is expected for edit/protocol messages which generate new IDs
+            // Don't log these at all to avoid spam
             return null;
         }
         
@@ -280,11 +284,80 @@ const updateMessageStatus = async (whatsappMessageId, status) => {
     }
 };
 
+/**
+ * Notifies the backend that a message was edited by another user
+ * @param {string} whatsappMessageId - The WhatsApp message ID
+ * @param {string} newContent - The new message content
+ * @returns {Promise<Object>} The response from the backend
+ */
+const notifyMessageEdited = async (whatsappMessageId, newContent) => {
+    try {
+        logger.info({ whatsappMessageId, newContent }, 'Notifying backend of message edit');
+        
+        const baseUrl = config.backend.apiUrl.replace(/\/api\/whatsapp-webhook\/?$/, '');
+        
+        const response = await axios.post(`${baseUrl}/api/messages/notify-edit`, {
+            whatsapp_message_id: whatsappMessageId,
+            content: newContent,
+        }, {
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Webhook-Secret': process.env.WEBHOOK_SECRET || config.backend.webhookSecret || '',
+            },
+            timeout: config.backend.timeoutMs,
+        });
+        
+        logger.debug({ whatsappMessageId }, 'Message edit notification sent successfully');
+        return response.data;
+    } catch (error) {
+        logger.error({ 
+            error: error.message, 
+            whatsappMessageId,
+            newContent,
+        }, 'Error notifying message edit');
+        return null;
+    }
+};
+
+/**
+ * Notifies the backend that a message was deleted by another user
+ * @param {string} whatsappMessageId - The WhatsApp message ID
+ * @returns {Promise<Object>} The response from the backend
+ */
+const notifyMessageDeleted = async (whatsappMessageId) => {
+    try {
+        logger.info({ whatsappMessageId }, 'Notifying backend of message deletion');
+        
+        const baseUrl = config.backend.apiUrl.replace(/\/api\/whatsapp-webhook\/?$/, '');
+        
+        const response = await axios.post(`${baseUrl}/api/messages/notify-delete`, {
+            whatsapp_message_id: whatsappMessageId,
+        }, {
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Webhook-Secret': process.env.WEBHOOK_SECRET || config.backend.webhookSecret || '',
+            },
+            timeout: config.backend.timeoutMs,
+        });
+        
+        logger.debug({ whatsappMessageId }, 'Message deletion notification sent successfully');
+        return response.data;
+    } catch (error) {
+        logger.error({ 
+            error: error.message, 
+            whatsappMessageId,
+        }, 'Error notifying message deletion');
+        return null;
+    }
+};
+
 module.exports = { 
     sendToBackend, 
     sendMessage, 
     uploadFile,
     sendToPHP,
     updateMessageStatus,
+    notifyMessageEdited,
+    notifyMessageDeleted,
     apiClient,
 };

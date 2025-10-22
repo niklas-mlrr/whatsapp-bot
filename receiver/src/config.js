@@ -40,12 +40,35 @@ const config = {
             return logLevel === 'warning' ? 'warn' : logLevel;
         })(),
         logToFile: process.env.LOG_TO_FILE === 'true' || process.env.NODE_ENV === 'production',
-        logFilePath: process.env.LOG_FILE_PATH || path.join(process.cwd(), 'logs', 'app.log'),
+        logFilePath: (() => {
+            // Create year/month folder structure for logs
+            const now = new Date();
+            const year = now.getFullYear();
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            
+            // If LOG_FILE_PATH is set and includes a filename, extract the directory
+            const envPath = process.env.LOG_FILE_PATH;
+            let baseLogDir;
+            
+            if (envPath) {
+                // Check if it ends with .log (is a file path)
+                if (envPath.endsWith('.log')) {
+                    baseLogDir = path.dirname(envPath);
+                } else {
+                    baseLogDir = envPath;
+                }
+            } else {
+                baseLogDir = path.join(process.cwd(), 'logs');
+            }
+            
+            return path.join(baseLogDir, String(year), month, 'app.log');
+        })(),
         logToConsole: process.env.LOG_TO_CONSOLE !== 'false',
         colorize: process.env.LOG_COLORIZE !== 'false',
         timestampFormat: process.env.LOG_TIMESTAMP_FORMAT || 'YYYY-MM-DD HH:mm:ss.SSS',
         maxFileSize: process.env.LOG_MAX_FILE_SIZE || '100m',
         maxFiles: parseInt(process.env.LOG_MAX_FILES, 10) || 14,
+        maxAge: process.env.LOG_MAX_AGE || '30d',
         rotate: process.env.LOG_ROTATE !== 'false',
         json: process.env.LOG_JSON === 'true',
         prettyPrint: process.env.LOG_PRETTY_PRINT === 'true' || process.env.NODE_ENV !== 'production',

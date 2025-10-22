@@ -76,11 +76,15 @@ if (config.logging.logToFile) {
         ];
 
         if (rotationEnabled) {
+            // Extract directory and filename for rotation
+            const logDir = path.dirname(config.logging.logFilePath);
+            const logFileName = path.basename(config.logging.logFilePath, '.log');
+            
             transportTargets.push({
                 level: config.logging.level,
                 target: 'pino-roll',
                 options: {
-                    file: config.logging.logFilePath.replace(/\.log$/, '-%Y-%m-%d.log'),
+                    file: path.join(logDir, `${logFileName}-%Y-%m-%d.log`),
                     frequency: 'daily',
                     mkdir: true,
                     size: config.logging.maxFileSize || '100m',

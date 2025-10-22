@@ -551,6 +551,121 @@ async function start() {
         }
     });
 
+    // Delete message endpoint
+    app.post('/delete-message', verifyApiKey, async (req, res) => {
+        console.log('Received delete-message request:', req.body);
+        
+        const { messageId, chatJid, forEveryone } = req.body;
+        
+        if (!sockInstance || !isConnected) {
+            console.error('WhatsApp not connected');
+            return res.status(503).json({ error: 'WhatsApp not connected' });
+        }
+        
+        if (!messageId || !chatJid) {
+            console.error('Missing required fields:', { messageId, chatJid });
+            return res.status(400).json({ error: 'Missing messageId or chatJid' });
+        }
+        
+        try {
+            // Ensure chat JID has proper WhatsApp format
+            const formattedChatJid = resolveChatJid(chatJid);
+            
+            // Delete message using Baileys sendMessage with delete key
+            const deletePayload = {
+                delete: {
+                    remoteJid: formattedChatJid,
+                    fromMe: true,
+                    id: messageId
+                }
+            };
+            
+            console.log('Deleting message on WhatsApp:', { formattedChatJid, deletePayload });
+            const result = await sockInstance.sendMessage(formattedChatJid, deletePayload);
+            
+            // Track the new delete message ID to ignore its status updates
+            if (result?.key?.id) {
+                const whatsappClient = require('./src/whatsappClient');
+                whatsappClient.addEditMessageId(result.key.id);
+                console.log('Tracking delete message ID:', result.key.id);
+            }
+            
+            console.log('Message deleted successfully');
+            res.json({ status: 'deleted' });
+            
+        } catch (err) {
+            console.error('Failed to delete message:', {
+                error: err.message,
+                stack: err.stack,
+                messageId,
+                chatJid
+            });
+            res.status(500).json({ 
+                error: 'Failed to delete message', 
+                details: err.message
+            });
+        }
+    });
+
+    // Edit message endpoint
+    app.post('/edit-message', verifyApiKey, async (req, res) => {
+        console.log('Received edit-message request:', req.body);
+        
+        const { messageId, chatJid, newContent } = req.body;
+        
+        if (!sockInstance || !isConnected) {
+            console.error('WhatsApp not connected');
+            return res.status(503).json({ error: 'WhatsApp not connected' });
+        }
+        
+        if (!messageId || !chatJid || !newContent) {
+            console.error('Missing required fields:', { messageId, chatJid, newContent });
+            return res.status(400).json({ error: 'Missing messageId, chatJid, or newContent' });
+        }
+        
+        try {
+            // Ensure chat JID has proper WhatsApp format
+            const formattedChatJid = resolveChatJid(chatJid);
+            
+            // Edit message using Baileys protocol
+            // The edit field needs to be a message key object
+            const editPayload = {
+                text: newContent,
+                edit: {
+                    remoteJid: formattedChatJid,
+                    fromMe: true,
+                    id: messageId
+                }
+            };
+            
+            console.log('Editing message on WhatsApp:', { formattedChatJid, editPayload });
+            const result = await sockInstance.sendMessage(formattedChatJid, editPayload);
+            
+            // Track the new edit message ID to ignore its status updates
+            if (result?.key?.id) {
+                const whatsappClient = require('./src/whatsappClient');
+                whatsappClient.addEditMessageId(result.key.id);
+                console.log('Tracking edit message ID:', result.key.id);
+            }
+            
+            console.log('Message edited successfully');
+            res.json({ status: 'edited' });
+            
+        } catch (err) {
+            console.error('Failed to edit message:', {
+                error: err.message,
+                stack: err.stack,
+                messageId,
+                chatJid,
+                newContent
+            });
+            res.status(500).json({ 
+                error: 'Failed to edit message', 
+                details: err.message
+            });
+        }
+    });
+
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, () => {
         console.log(`Express server listening on port ${PORT}`);

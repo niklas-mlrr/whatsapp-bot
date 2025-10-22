@@ -202,6 +202,7 @@
           :is-group-chat="!!selectedChat.is_group"
           :members="membersForChat"
           @reply-to-message="handleReplyToMessage"
+          @edit-message="handleEditMessage"
         />
         <div v-else class="flex items-center justify-center h-full text-gray-500 dark:text-gray-400 bg-white dark:bg-zinc-800">
           <div v-if="loadingChats" class="text-center">
@@ -217,8 +218,30 @@
       
       <!-- Message input -->
       <div class="flex-shrink-0 bg-white dark:bg-zinc-900 border-t border-gray-200 dark:border-zinc-800 z-10">
+        <!-- Edit preview -->
+        <div v-if="editingMessage" class="bg-blue-50 dark:bg-blue-900/20 px-6 py-3 border-b border-blue-200 dark:border-blue-800 flex items-start gap-3">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 mb-1">
+              <svg class="w-4 h-4 text-blue-600 dark:text-blue-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+              </svg>
+              <span class="text-xs font-semibold text-blue-600 dark:text-blue-400">Nachricht bearbeiten</span>
+            </div>
+            <p class="text-sm text-gray-700 dark:text-gray-300 truncate">{{ editingMessage.content }}</p>
+          </div>
+          <button
+            @click="cancelEdit"
+            class="flex-shrink-0 text-blue-400 hover:text-blue-600 dark:text-blue-500 dark:hover:text-blue-300 transition-colors"
+            title="Bearbeitung abbrechen"
+          >
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+            </svg>
+          </button>
+        </div>
+        
         <!-- Reply preview -->
-        <div v-if="replyToMessage" class="bg-gray-50 dark:bg-zinc-800 px-6 py-3 border-b border-gray-200 dark:border-zinc-700 flex items-start gap-3">
+        <div v-else-if="replyToMessage" class="bg-gray-50 dark:bg-zinc-800 px-6 py-3 border-b border-gray-200 dark:border-zinc-700 flex items-start gap-3">
           <div class="flex-1 min-w-0">
             <div class="flex items-center gap-2 mb-1">
               <svg class="w-4 h-4 text-gray-500 dark:text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -477,6 +500,7 @@ const isCreatingChat = ref(false)
 const messageInput = ref<HTMLTextAreaElement | null>(null)
 const textareaHeight = ref<number>(40) // Start with min height (2.5rem = 40px)
 const replyToMessage = ref<any | null>(null)
+const editingMessage = ref<any | null>(null)
 
 // WebSocket for typing indicators and new chat notifications
 const { notifyTyping, connect: connectWebSocket } = useWebSocket()
@@ -721,6 +745,12 @@ const markChatAsRead = async (chatId: string) => {
 }
 
 async function sendMessageHandler() {
+  // If we're editing, submit the edit instead
+  if (editingMessage.value) {
+    await submitEdit()
+    return
+  }
+  
   if ((!input.value && !attachmentPath.value) || !selectedChat.value || isSending.value) return
   
   // Store the message content before clearing
@@ -1087,6 +1117,48 @@ const handleReplyToMessage = (message: any) => {
 const clearReplyToMessage = () => {
   console.log('[MessagesView] Clearing reply to message')
   replyToMessage.value = null
+}
+
+const handleEditMessage = (message: any) => {
+  // Set editing mode
+  editingMessage.value = message
+  input.value = message.content
+  
+  // Focus the input field
+  nextTick(() => {
+    messageInput.value?.focus()
+  })
+}
+
+const cancelEdit = () => {
+  editingMessage.value = null
+  input.value = ''
+}
+
+const submitEdit = async () => {
+  if (!editingMessage.value || !input.value.trim()) {
+    return
+  }
+  
+  const newContent = input.value.trim()
+  const messageId = editingMessage.value.id
+  
+  if (newContent === editingMessage.value.content) {
+    // No changes made
+    cancelEdit()
+    return
+  }
+  
+  try {
+    await apiClient.put(`/messages/${messageId}`, {
+      content: newContent
+    })
+    
+    cancelEdit()
+  } catch (error) {
+    console.error('Failed to edit message:', error)
+    alert('Fehler beim Bearbeiten der Nachricht')
+  }
 }
 
 const checkAuthAndRedirect = async () => {

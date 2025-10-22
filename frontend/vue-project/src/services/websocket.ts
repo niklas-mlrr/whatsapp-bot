@@ -40,6 +40,28 @@ type ReactionEvent = {
   chat_id: string;
 };
 
+type MessageEditedEvent = {
+  message_id: string;
+  chat_id: string;
+  content: string;
+  edited_at: string;
+  user: {
+    id: string;
+    name: string;
+  };
+};
+
+type MessageDeletedEvent = {
+  message_id: string;
+  chat_id: string;
+  user: {
+    id: string;
+    name: string;
+  };
+  for_everyone: boolean;
+  deleted_at: string;
+};
+
 // Extended Window interface for Pusher and Echo
 declare global {
   interface Window {
@@ -59,6 +81,8 @@ const messageCallbacks: Map<string, Set<(message: MessageEvent) => void>> = new 
 const typingCallbacks: Map<string, Set<(event: TypingEvent) => void>> = new Map();
 const readReceiptCallbacks: Map<string, Set<(event: ReadReceiptEvent) => void>> = new Map();
 const reactionCallbacks: Map<string, Set<(event: ReactionEvent) => void>> = new Map();
+const messageEditedCallbacks: Map<string, Set<(event: MessageEditedEvent) => void>> = new Map();
+const messageDeletedCallbacks: Map<string, Set<(event: MessageDeletedEvent) => void>> = new Map();
 
 // Cache for private channels per chat to avoid re-subscribing
 const privateChannels: Map<string, any> = new Map();
@@ -73,6 +97,8 @@ export interface WebSocketService {
   listenForTyping(chatId: string, callback: (event: TypingEvent) => void): () => void;
   listenForReadReceipts(chatId: string, callback: (event: ReadReceiptEvent) => void): () => void;
   listenForReactionUpdates(chatId: string, callback: (event: ReactionEvent) => void): () => void;
+  listenForMessageEdited(chatId: string, callback: (event: MessageEditedEvent) => void): () => void;
+  listenForMessageDeleted(chatId: string, callback: (event: MessageDeletedEvent) => void): () => void;
   notifyTyping(chatId: string, isTyping: boolean): Promise<void>;
   markAsRead(chatId: string, messageIds: string[]): Promise<void>;
   getSocketId(): string | null;
@@ -365,6 +391,92 @@ export function useWebSocket() {
     };
   };
 
+  // Listen for message edited events
+  const listenForMessageEdited = (
+    chatId: string,
+    callback: (event: MessageEditedEvent) => void
+  ): (() => void) => {
+    if (!messageEditedCallbacks.has(chatId)) {
+      messageEditedCallbacks.set(chatId, new Set());
+    }
+
+    const callbacks = messageEditedCallbacks.get(chatId)!;
+    callbacks.add(callback);
+
+    // Get or create the channel
+    let channel = privateChannels.get(chatId);
+    if (!channel) {
+      channel = echo?.private(`chat.${chatId}`);
+      if (channel) {
+        privateChannels.set(chatId, channel);
+      }
+    }
+
+    // Add the listener
+    if (channel) {
+      channel.listen('.message.edited', (data: any) => {
+        const callbacks = messageEditedCallbacks.get(chatId);
+        if (callbacks) {
+          callbacks.forEach(cb => cb(data));
+        }
+      });
+    }
+
+    // Return cleanup function
+    return () => {
+      const callbacks = messageEditedCallbacks.get(chatId);
+      if (callbacks) {
+        callbacks.delete(callback);
+        if (callbacks.size === 0) {
+          messageEditedCallbacks.delete(chatId);
+        }
+      }
+    };
+  };
+
+  // Listen for message deleted events
+  const listenForMessageDeleted = (
+    chatId: string,
+    callback: (event: MessageDeletedEvent) => void
+  ): (() => void) => {
+    if (!messageDeletedCallbacks.has(chatId)) {
+      messageDeletedCallbacks.set(chatId, new Set());
+    }
+
+    const callbacks = messageDeletedCallbacks.get(chatId)!;
+    callbacks.add(callback);
+
+    // Get or create the channel
+    let channel = privateChannels.get(chatId);
+    if (!channel) {
+      channel = echo?.private(`chat.${chatId}`);
+      if (channel) {
+        privateChannels.set(chatId, channel);
+      }
+    }
+
+    // Add the listener
+    if (channel) {
+      channel.listen('.message.deleted', (data: any) => {
+        const callbacks = messageDeletedCallbacks.get(chatId);
+        if (callbacks) {
+          callbacks.forEach(cb => cb(data));
+        }
+      });
+    }
+
+    // Return cleanup function
+    return () => {
+      const callbacks = messageDeletedCallbacks.get(chatId);
+      if (callbacks) {
+        callbacks.delete(callback);
+        if (callbacks.size === 0) {
+          messageDeletedCallbacks.delete(chatId);
+        }
+      }
+    };
+  };
+
   // Get current socket ID
   const getSocketId = (): string | null => {
     return socketId.value;
@@ -384,6 +496,8 @@ export function useWebSocket() {
     listenForTyping,
     listenForReadReceipts,
     listenForReactionUpdates,
+    listenForMessageEdited,
+    listenForMessageDeleted,
     notifyTyping,
     markAsRead,
     getSocketId

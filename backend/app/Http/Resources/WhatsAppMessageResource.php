@@ -76,6 +76,9 @@ class WhatsAppMessageResource extends JsonResource
             ]);
         }
         
+        // Check if message is soft-deleted
+        $isDeleted = !is_null($this->deleted_at);
+        
         return [
             // Core message data
             'id' => $this->id,
@@ -83,12 +86,13 @@ class WhatsAppMessageResource extends JsonResource
             'sender' => $this->sender,
             'chat_id' => $this->chat_id,
             'chat' => $this->chat,
-            'type' => $this->type,
-            'content' => $this->content,
+            'type' => $isDeleted ? 'deleted' : $this->type,
+            'content' => $isDeleted ? '[Gelöschte Nachricht]' : $this->content,
             'mimetype' => $mimetype,
             'sending_time' => $this->sending_time?->toIso8601String(),
             'created_at' => $this->created_at?->toIso8601String(),
             'updated_at' => $this->updated_at?->toIso8601String(),
+            'deleted_at' => $this->deleted_at?->toIso8601String(),
             
             // Message status
             'direction' => $this->direction,

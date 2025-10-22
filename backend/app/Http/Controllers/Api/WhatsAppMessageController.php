@@ -102,7 +102,8 @@ class WhatsAppMessageController extends Controller
             'sort_order' => 'nullable|string|in:asc,desc',
         ]);
 
-        $query = WhatsAppMessage::query();
+        // Include soft-deleted messages to show deletion placeholders
+        $query = WhatsAppMessage::withTrashed();
 
         // Apply filters
         if ($request->filled('chat')) {
@@ -166,9 +167,171 @@ class WhatsAppMessageController extends Controller
     // DELETE /api/messages/{id}
     public function destroy($id): JsonResponse
     {
-        $message = WhatsAppMessage::findOrFail($id);
-        $message->delete();
-        return response()->json(['status' => 'success', 'message' => 'Message deleted']);
+        try {
+            $message = WhatsAppMessage::findOrFail($id);
+            $chatId = $message->chat_id;
+            $user = User::getFirstUser();
+            
+            // Store message info before deletion
+            $messageId = $message->id;
+            $whatsappMessageId = $message->metadata['message_id'] ?? null;
+            
+            // Delete the message from database
+            $message->delete();
+            
+            // Send delete request to WhatsApp (delete for everyone)
+            if ($whatsappMessageId) {
+                try {
+                    $receiverUrl = config('app.receiver_url', env('RECEIVER_URL', 'http://127.0.0.1:3000'));
+                    $receiverUrl = rtrim($receiverUrl, '/');
+                    
+                    $http = \Illuminate\Support\Facades\Http::timeout(10)
+                        ->withHeaders([
+                            'Accept' => 'application/json',
+                            'Content-Type' => 'application/json',
+                            'X-API-Key' => config('app.receiver_api_key', ''),
+                        ]);
+                    
+                    $isHttps = str_starts_with(strtolower($receiverUrl), 'https://');
+                    $allowInsecure = (bool) env('RECEIVER_TLS_INSECURE', false);
+                    if ($isHttps && $allowInsecure) {
+                        $http = $http->withoutVerifying();
+                    }
+                    
+                    // Get chat JID from message metadata
+                    $chatJid = $message->metadata['chat'] ?? null;
+                    
+                    $response = $http->post("{$receiverUrl}/delete-message", [
+                        'messageId' => $whatsappMessageId,
+                        'chatJid' => $chatJid,
+                        'forEveryone' => true
+                    ]);
+                    
+                    if (!$response->successful()) {
+                        \Log::warning('Failed to delete message on WhatsApp', [
+                            'message_id' => $whatsappMessageId,
+                            'response' => $response->body()
+                        ]);
+                    }
+                } catch (\Exception $e) {
+                    \Log::error('Error sending delete request to WhatsApp', [
+                        'error' => $e->getMessage(),
+                        'message_id' => $whatsappMessageId
+                    ]);
+                }
+            }
+            
+            // Broadcast deletion event
+            broadcast(new \App\Events\MessageDeleted(
+                $messageId,
+                $chatId,
+                $user,
+                true // forEveryone
+            ))->toOthers();
+            
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Message deleted for everyone'
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Error deleting message', [
+                'error' => $e->getMessage(),
+                'message_id' => $id
+            ]);
+            
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to delete message: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+    
+    // PUT /api/messages/{id}
+    public function update(Request $request, $id): JsonResponse
+    {
+        try {
+            $message = WhatsAppMessage::findOrFail($id);
+            $user = User::getFirstUser();
+            
+            $validated = $request->validate([
+                'content' => 'required|string|max:4096',
+            ]);
+            
+            // Store original content
+            $originalContent = $message->content;
+            $whatsappMessageId = $message->metadata['message_id'] ?? null;
+            
+            // Update message content
+            $message->update([
+                'content' => $validated['content'],
+                'edited_at' => now()
+            ]);
+            
+            // Send edit request to WhatsApp
+            if ($whatsappMessageId) {
+                try {
+                    $receiverUrl = config('app.receiver_url', env('RECEIVER_URL', 'http://127.0.0.1:3000'));
+                    $receiverUrl = rtrim($receiverUrl, '/');
+                    
+                    $http = \Illuminate\Support\Facades\Http::timeout(10)
+                        ->withHeaders([
+                            'Accept' => 'application/json',
+                            'Content-Type' => 'application/json',
+                            'X-API-Key' => config('app.receiver_api_key', ''),
+                        ]);
+                    
+                    $isHttps = str_starts_with(strtolower($receiverUrl), 'https://');
+                    $allowInsecure = (bool) env('RECEIVER_TLS_INSECURE', false);
+                    if ($isHttps && $allowInsecure) {
+                        $http = $http->withoutVerifying();
+                    }
+                    
+                    // Get chat JID from message metadata
+                    $chatJid = $message->metadata['chat'] ?? null;
+                    
+                    $response = $http->post("{$receiverUrl}/edit-message", [
+                        'messageId' => $whatsappMessageId,
+                        'chatJid' => $chatJid,
+                        'newContent' => $validated['content']
+                    ]);
+                    
+                    if (!$response->successful()) {
+                        \Log::warning('Failed to edit message on WhatsApp', [
+                            'message_id' => $whatsappMessageId,
+                            'response' => $response->body()
+                        ]);
+                    }
+                } catch (\Exception $e) {
+                    \Log::error('Error sending edit request to WhatsApp', [
+                        'error' => $e->getMessage(),
+                        'message_id' => $whatsappMessageId
+                    ]);
+                }
+            }
+            
+            // Broadcast edit event
+            broadcast(new \App\Events\MessageEdited(
+                $message,
+                $user,
+                $originalContent
+            ))->toOthers();
+            
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Message edited successfully',
+                'data' => new WhatsAppMessageResource($message)
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Error editing message', [
+                'error' => $e->getMessage(),
+                'message_id' => $id
+            ]);
+            
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to edit message: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     // POST /api/messages
@@ -769,6 +932,144 @@ class WhatsAppMessageController extends Controller
             return response()->json([
                 'status' => 'error',
                 'message' => 'Failed to process reaction',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+    
+    /**
+     * Handle message edit notification from receiver (when another user edits a message)
+     */
+    public function notifyEdit(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'whatsapp_message_id' => 'required|string',
+                'content' => 'required|string',
+            ]);
+            
+            $whatsappMessageId = $validated['whatsapp_message_id'];
+            $newContent = $validated['content'];
+            
+            // Find message by WhatsApp message ID
+            $message = WhatsAppMessage::where('metadata->message_id', $whatsappMessageId)->first();
+            
+            if (!$message) {
+                \Log::warning('Message not found for edit notification', [
+                    'whatsapp_message_id' => $whatsappMessageId,
+                ]);
+                
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Message not found',
+                ], 404);
+            }
+            
+            // Store original content
+            $originalContent = $message->content;
+            
+            // Update message content
+            $message->update([
+                'content' => $newContent,
+                'edited_at' => now(),
+            ]);
+            
+            // Get the user who sent the message (for broadcast)
+            $user = User::where('phone', $message->sender_phone)->first() ?? User::getFirstUser();
+            
+            // Broadcast edit event
+            broadcast(new \App\Events\MessageEdited(
+                $message,
+                $user,
+                $originalContent
+            ))->toOthers();
+            
+            \Log::info('Message edit notification processed', [
+                'message_id' => $message->id,
+                'whatsapp_message_id' => $whatsappMessageId,
+            ]);
+            
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Message edit notification processed',
+            ]);
+            
+        } catch (\Exception $e) {
+            \Log::error('Error processing message edit notification', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to process edit notification',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+    
+    /**
+     * Handle message delete notification from receiver (when another user deletes a message)
+     */
+    public function notifyDelete(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'whatsapp_message_id' => 'required|string',
+            ]);
+            
+            $whatsappMessageId = $validated['whatsapp_message_id'];
+            
+            // Find message by WhatsApp message ID
+            $message = WhatsAppMessage::where('metadata->message_id', $whatsappMessageId)->first();
+            
+            if (!$message) {
+                \Log::warning('Message not found for delete notification', [
+                    'whatsapp_message_id' => $whatsappMessageId,
+                ]);
+                
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Message not found',
+                ], 404);
+            }
+            
+            $chatId = $message->chat_id;
+            $messageId = $message->id;
+            
+            // Soft delete the message
+            $message->delete();
+            
+            // Get the user who sent the message (for broadcast)
+            $user = User::where('phone', $message->sender_phone)->first() ?? User::getFirstUser();
+            
+            // Broadcast deletion event
+            broadcast(new \App\Events\MessageDeleted(
+                $messageId,
+                $chatId,
+                $user,
+                true // forEveryone
+            ))->toOthers();
+            
+            \Log::info('Message delete notification processed', [
+                'message_id' => $messageId,
+                'whatsapp_message_id' => $whatsappMessageId,
+            ]);
+            
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Message delete notification processed',
+            ]);
+            
+        } catch (\Exception $e) {
+            \Log::error('Error processing message delete notification', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to process delete notification',
                 'error' => $e->getMessage()
             ], 500);
         }

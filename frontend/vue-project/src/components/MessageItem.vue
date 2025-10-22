@@ -4,6 +4,55 @@
     :class="[bubbleAlign, { 'opacity-60': message.isSending }]"
     :data-message-id="message.id"
   >
+    <!-- Action buttons for sent messages (left side) -->
+    <div v-if="isMe" class="flex items-center gap-1 mr-1">
+      <!-- Reply button -->
+      <button
+        @click="handleReplyClick"
+        class="opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-400"
+        title="Antworten"
+      >
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"></path>
+        </svg>
+      </button>
+      
+      <!-- Add reaction button -->
+      <button
+        @click="toggleReactionPicker"
+        data-reaction-button
+        class="opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-400"
+        title="Add reaction"
+      >
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+        </svg>
+      </button>
+      
+      <!-- Edit button (only for text messages) -->
+      <button
+        v-if="message.type === 'text' || !message.type"
+        @click="handleEditClick"
+        class="opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-blue-600 dark:text-gray-500 dark:hover:text-blue-400"
+        title="Bearbeiten"
+      >
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+        </svg>
+      </button>
+      
+      <!-- Delete button -->
+      <button
+        @click="handleDeleteClick"
+        class="opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-red-600 dark:text-gray-500 dark:hover:text-red-400"
+        title="Löschen"
+      >
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+        </svg>
+      </button>
+    </div>
+    
     <!-- Sender avatar (left side for received messages) -->
     <div 
       v-if="!isMe" 
@@ -37,7 +86,13 @@
         </div>
         
         <!-- Message content based on type -->
-        <template v-if="message.type === 'text' || !message.type">
+        <template v-if="message.type === 'deleted'">
+          <span class="italic text-gray-500 dark:text-gray-400">
+            {{ message.content }}
+          </span>
+        </template>
+        
+        <template v-else-if="message.type === 'text' || !message.type">
           <span class="whitespace-pre-wrap break-words">
             {{ message.content }}
           </span>
@@ -333,28 +388,31 @@
       </div>
     </div>
     
-    <!-- Reply button (shown on hover) -->
-    <button
-      @click="handleReplyClick"
-      class="opacity-0 group-hover:opacity-100 transition-opacity ml-1 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-400"
-      title="Antworten"
-    >
-      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"></path>
-      </svg>
-    </button>
-    
-    <!-- Add reaction button (shown on hover) -->
-    <button
-      @click="toggleReactionPicker"
-      data-reaction-button
-      class="opacity-0 group-hover:opacity-100 transition-opacity ml-1 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-400"
-      title="Add reaction"
-    >
-      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-      </svg>
-    </button>
+    <!-- Action buttons for received messages (right side) -->
+    <div v-if="!isMe" class="flex items-center gap-1 ml-1">
+      <!-- Reply button -->
+      <button
+        @click="handleReplyClick"
+        class="opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-400"
+        title="Antworten"
+      >
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"></path>
+        </svg>
+      </button>
+      
+      <!-- Add reaction button -->
+      <button
+        @click="toggleReactionPicker"
+        data-reaction-button
+        class="opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-400"
+        title="Add reaction"
+      >
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+        </svg>
+      </button>
+    </div>
     
     <!-- Sender avatar (right side for sent messages) -->
     <div 
@@ -429,6 +487,8 @@ const emit = defineEmits<{
   'add-reaction': [payload: { messageId: string | number; emoji: string }]
   'remove-reaction': [payload: { messageId: string | number }]
   'reply-to-message': [message: any]
+  'edit-message': [message: any]
+  'delete-message': [messageId: string | number]
 }>()
 
 // Refs
@@ -622,20 +682,6 @@ const messageStatus = computed((): 'sent' | 'delivered' | 'read' | 'sending' | '
   // Check if there's an explicit status from backend
   const backendStatus = props.message.status
   
-  // Debug log for status determination (only for my messages)
-  if (isMe.value) {
-    console.log(`[READ RECEIPTS] Message ${props.message.id}:`, {
-      isMe: isMe.value,
-      raw_status: backendStatus,
-      read_at: props.message.read_at,
-      is_read: props.message.is_read,
-      read_by: props.message.read_by,
-      has_id: !!props.message.id,
-      temp_id: props.message.temp_id,
-      computed_final: hasReadAt ? 'read' : (backendStatus === 'read' ? 'read' : (backendStatus === 'delivered' ? 'delivered' : (props.message.id && !props.message.temp_id ? 'delivered' : 'sent')))
-    })
-  }
-  
   // Priority 1: Check if message has been read
   if (hasReadAt || backendStatus === 'read') {
     return 'read'
@@ -660,6 +706,18 @@ const messageStatus = computed((): 'sent' | 'delivered' | 'read' | 'sending' | '
 // Reply method
 function handleReplyClick() {
   emit('reply-to-message', props.message)
+}
+
+// Edit method
+function handleEditClick() {
+  emit('edit-message', props.message)
+}
+
+// Delete method
+function handleDeleteClick() {
+  if (confirm('Möchten Sie diese Nachricht für alle löschen?')) {
+    emit('delete-message', props.message.id)
+  }
 }
 
 // Reaction methods

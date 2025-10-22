@@ -94,7 +94,15 @@ async function handleMessages(sock, m) {
                     else if (actualMessage?.reactionMessage) {
                         await handleReactionMessage(msg, remoteJid);
                     }
-                    // 9. Unsupported message types
+                    // 9. Edited messages
+                    else if (actualMessage?.editedMessage) {
+                        await handleEditedMessage(msg, remoteJid);
+                    }
+                    // 10. Protocol messages (deletions, etc.)
+                    else if (actualMessage?.protocolMessage) {
+                        await handleProtocolMessage(msg, remoteJid);
+                    }
+                    // 11. Unsupported message types
                     else {
                         const messageType = Object.keys(actualMessage || {})[0];
                         logger.info({ messageType }, 'Unhandled message type');
@@ -490,6 +498,112 @@ async function handleReactionMessage(msg, remoteJid) {
     }
 }
 
+/**
+ * Handle edited message
+ * @param {Object} msg - The message object
+ * @param {string} remoteJid - The remote JID (chat ID)
+ */
+async function handleEditedMessage(msg, remoteJid) {
+    try {
+        const editedMessage = msg.message.editedMessage;
+        
+        // Track this edit message ID to skip status updates
+        const { addEditMessageId } = require('./whatsappClient');
+        addEditMessageId(msg.key.id);
+        
+        // The edited message structure contains the protocol message with the original ID
+        // and the actual new content in the editedMessage.message
+        const protocolMessage = editedMessage.message?.protocolMessage;
+        const originalMessageId = protocolMessage?.key?.id;
+        
+        // Extract the new content - it's in the editedMessage.message, not in protocolMessage
+        // Try different possible locations for the content
+        const newContent = editedMessage.message?.conversation 
+                        || editedMessage.message?.extendedTextMessage?.text
+                        || protocolMessage?.editedMessage?.conversation
+                        || protocolMessage?.editedMessage?.extendedTextMessage?.text
+                        || '';
+        
+        logger.info({ 
+            originalMessageId,
+            editMessageId: msg.key.id,
+            newContent,
+            editedMessageStructure: JSON.stringify(editedMessage.message),
+            remoteJid 
+        }, 'Processing edited message');
+        
+        if (!originalMessageId) {
+            logger.warn({ editedMessage }, 'No original message ID found in edited message');
+            return;
+        }
+        
+        if (!newContent) {
+            logger.warn({ originalMessageId, editedMessage }, 'No new content found in edited message');
+            return;
+        }
+        
+        // Notify backend about the edit
+        const apiClient = require('./apiClient');
+        await apiClient.notifyMessageEdited(originalMessageId, newContent);
+        
+    } catch (error) {
+        logger.error({ 
+            error: error.message, 
+            stack: error.stack,
+            remoteJid,
+            messageId: msg.key.id 
+        }, 'Error processing edited message');
+    }
+}
+
+/**
+ * Handle protocol message (deletions, etc.)
+ * @param {Object} msg - The message object
+ * @param {string} remoteJid - The remote JID (chat ID)
+ */
+async function handleProtocolMessage(msg, remoteJid) {
+    try {
+        const protocolMessage = msg.message.protocolMessage;
+        
+        // Track this protocol message ID to skip status updates
+        const { addProtocolMessageId } = require('./whatsappClient');
+        addProtocolMessageId(msg.key.id);
+        
+        // Check if this is a message deletion
+        if (protocolMessage.type === 0) { // REVOKE type
+            const deletedMessageId = protocolMessage.key?.id;
+            
+            logger.info({ 
+                deletedMessageId,
+                protocolMessageId: msg.key.id,
+                remoteJid 
+            }, 'Processing message deletion');
+            
+            if (!deletedMessageId) {
+                logger.warn('No message ID found in protocol message');
+                return;
+            }
+            
+            // Notify backend about the deletion
+            const apiClient = require('./apiClient');
+            await apiClient.notifyMessageDeleted(deletedMessageId);
+        } else {
+            logger.debug({ 
+                type: protocolMessage.type,
+                remoteJid 
+            }, 'Unhandled protocol message type');
+        }
+        
+    } catch (error) {
+        logger.error({ 
+            error: error.message, 
+            stack: error.stack,
+            remoteJid,
+            messageId: msg.key.id 
+        }, 'Error processing protocol message');
+    }
+}
+
 module.exports = { 
     handleMessages, 
     handleTextMessage, 
@@ -498,5 +612,7 @@ module.exports = {
     handleDocumentMessage, 
     handleAudioMessage, 
     handleLocationMessage,
-    handleReactionMessage
+    handleReactionMessage,
+    handleEditedMessage,
+    handleProtocolMessage
 };
