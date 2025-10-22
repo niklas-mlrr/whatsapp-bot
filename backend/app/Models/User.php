@@ -95,40 +95,6 @@ class User extends Authenticatable
         return "https://ui-avatars.com/api/?name={$name}&background=random&color=fff";
     }
 
-    /**
-     * Mark the user as online.
-     */
-    public function markAsOnline()
-    {
-        $this->update([
-            'status' => 'online',
-            'last_seen_at' => now(),
-        ]);
-    }
-
-    /**
-     * Mark the user as offline.
-     */
-    public function markAsOffline()
-    {
-        $this->update([
-            'status' => 'offline',
-            'last_seen_at' => now(),
-        ]);
-    }
-
-    /**
-     * Check if the user is online.
-     */
-    public function isOnline(): bool
-    {
-        if ($this->status === 'online') {
-            return true;
-        }
-
-        // Consider user online if they were active in the last 5 minutes
-        return $this->last_seen_at && $this->last_seen_at->diffInMinutes(now()) < 5;
-    }
 
     /**
      * Get the first user or create one if none exists

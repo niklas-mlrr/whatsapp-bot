@@ -766,11 +766,31 @@ function getQuotedSender(): string {
   
   if (!quoted) return ''
   
-  // Try to get sender name from various possible fields
-  if (typeof quoted.sender === 'string') return quoted.sender
-  if (quoted.sender?.name) return quoted.sender.name
-  if (quoted.sender_name) return quoted.sender_name
-  return 'Unknown'
+  // Check if it's the current user's message
+  if (quoted.sender_id?.toString() === props.currentUser?.id?.toString()) {
+    return 'Dir selbst'
+  }
+  
+  // Try sender_name first (from backend)
+  if (quoted.sender_name && quoted.sender_name !== 'WhatsApp User') {
+    return quoted.sender_name
+  }
+  
+  // Try sender object
+  if (quoted.sender?.name) {
+    return quoted.sender.name
+  }
+  
+  // Clean up phone number if that's all we have
+  if (typeof quoted.sender === 'string') {
+    const cleaned = quoted.sender.replace(/@s\.whatsapp\.net$/, '').replace(/@g\.us$/, '').replace(/@$/, '')
+    // Only return if it's not just a phone number with @ symbol
+    if (cleaned && !cleaned.endsWith('@')) {
+      return cleaned
+    }
+  }
+  
+  return 'Unbekannt'
 }
 
 function getQuotedContent(): string {

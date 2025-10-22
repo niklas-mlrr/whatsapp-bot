@@ -870,7 +870,10 @@ class ChatController extends Controller
                             m.id,
                             m.content,
                             m.sender_id,
-                            u.name as sender_name,
+                            CASE 
+                                WHEN u.name = 'WhatsApp User' THEN c.name
+                                ELSE u.name
+                            END as sender_name,
                             u.phone as sender_phone,
                             m.chat_id,
                             m.created_at,
@@ -885,6 +888,7 @@ class ChatController extends Controller
                             m.reply_to_message_id
                         FROM whatsapp_messages m
                         LEFT JOIN users u ON m.sender_id = u.id
+                        LEFT JOIN chats c ON m.chat_id = c.id
                         WHERE m.chat_id = ?
                         ORDER BY m.created_at DESC, m.id DESC
                         LIMIT ?
@@ -897,7 +901,10 @@ class ChatController extends Controller
                         m.id,
                         m.content,
                         m.sender_id,
-                        u.name as sender_name,
+                        CASE 
+                            WHEN u.name = 'WhatsApp User' THEN c.name
+                            ELSE u.name
+                        END as sender_name,
                         u.phone as sender_phone,
                         m.chat_id,
                         m.created_at,
@@ -912,6 +919,7 @@ class ChatController extends Controller
                         m.reply_to_message_id
                     FROM whatsapp_messages m
                     LEFT JOIN users u ON m.sender_id = u.id
+                    LEFT JOIN chats c ON m.chat_id = c.id
                     WHERE m.chat_id = ?
                     ORDER BY m.created_at DESC, m.id DESC
                     LIMIT ?
@@ -948,9 +956,15 @@ class ChatController extends Controller
             $quotedMessage = null;
             if (!empty($m->reply_to_message_id)) {
                 $quoted = DB::selectOne("
-                    SELECT m.id, m.content, m.type, m.sender_id, u.name as sender_name, u.phone as sender
+                    SELECT m.id, m.content, m.type, m.sender_id, m.chat_id,
+                        CASE 
+                            WHEN u.name = 'WhatsApp User' THEN c.name
+                            ELSE u.name
+                        END as sender_name,
+                        u.phone as sender
                     FROM whatsapp_messages m
                     LEFT JOIN users u ON m.sender_id = u.id
+                    LEFT JOIN chats c ON m.chat_id = c.id
                     WHERE m.id = ?
                     LIMIT 1
                 ", [$m->reply_to_message_id]);
@@ -1176,9 +1190,15 @@ class ChatController extends Controller
                 $quotedMessage = null;
                 if (!empty($m->reply_to_message_id)) {
                     $quoted = DB::selectOne("
-                        SELECT m.id, m.content, m.type, m.sender_id, u.name as sender_name, u.phone as sender
+                        SELECT m.id, m.content, m.type, m.sender_id, m.chat_id,
+                            CASE 
+                                WHEN u.name = 'WhatsApp User' THEN c.name
+                                ELSE u.name
+                            END as sender_name,
+                            u.phone as sender
                         FROM whatsapp_messages m
                         LEFT JOIN users u ON m.sender_id = u.id
+                        LEFT JOIN chats c ON m.chat_id = c.id
                         WHERE m.id = ?
                         LIMIT 1
                     ", [$m->reply_to_message_id]);

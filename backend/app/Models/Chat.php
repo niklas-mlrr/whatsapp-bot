@@ -190,24 +190,6 @@ class Chat extends Model
     /**
      * Get the avatar URL for the chat.
      */
-    /**
-     * Check if the chat is online.
-     */
-    public function getIsOnlineAttribute(): bool
-    {
-        if ($this->is_group) {
-            return false;
-        }
-
-        try {
-            $user = User::getFirstUser();
-            $otherUser = $this->users()->where('users.id', '!=', $user->id)->first();
-            return $otherUser ? $otherUser->isOnline() : false;
-        } catch (\Exception $e) {
-            // If there's an issue with the relationship, return false
-            return false;
-        }
-    }
 
     /**
      * Get the other user in a direct chat.

@@ -84,6 +84,7 @@ class WhatsAppMessageResource extends JsonResource
             'id' => $this->id,
             'sender_id' => $this->sender_id,
             'sender' => $this->sender,
+            'sender_name' => $this->sender_name,
             'chat_id' => $this->chat_id,
             'chat' => $this->chat,
             'type' => $isDeleted ? 'deleted' : $this->type,
@@ -116,6 +117,10 @@ class WhatsAppMessageResource extends JsonResource
             // Reactions and metadata
             'reactions' => $this->reactions ?? [],
             'metadata' => $this->metadata ?? [],
+            
+            // Reply/Quote information
+            'reply_to_message_id' => $this->reply_to_message_id,
+            'quoted_message' => $this->quoted_message,
             
             // Relationships
             'sender_info' => $this->whenLoaded('senderUser', function () {

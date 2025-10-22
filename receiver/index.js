@@ -232,7 +232,7 @@ async function start() {
             return res.status(503).json({ error: 'WhatsApp initial sync incomplete', details: syncError.message });
         }
 
-        const { chat, type, content, media, mimetype, filename, quoted_message_whatsapp_id, quoted_message_content, quoted_message_sender } = req.body;
+        const { chat, type, content, media, mimetype, filename, quoted_message_whatsapp_id, quoted_message_content, quoted_message_from_me } = req.body;
         const targetChat = resolveChatJid(chat);
 
         // Validate required fields
@@ -249,7 +249,7 @@ async function start() {
                 console.log('Building quoted message from payload:', {
                     whatsapp_message_id: quoted_message_whatsapp_id,
                     content: quoted_message_content,
-                    sender: quoted_message_sender
+                    from_me: quoted_message_from_me
                 });
                 
                 // Build the quoted message key
@@ -257,7 +257,7 @@ async function start() {
                     key: {
                         remoteJid: targetChat,
                         id: quoted_message_whatsapp_id,
-                        fromMe: quoted_message_sender === 'me'
+                        fromMe: quoted_message_from_me === true
                     },
                     message: {
                         conversation: quoted_message_content || ''

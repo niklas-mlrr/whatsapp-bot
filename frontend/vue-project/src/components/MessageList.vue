@@ -60,7 +60,8 @@
             :message="{
               ...message,
               isMe: isMine(message),
-              sender: typeof message.sender === 'string' ? message.sender : (getSenderName(message) || 'Unknown')
+              sender: typeof message.sender === 'string' ? message.sender : getSenderName(message),
+              sender_name: message.sender_name || (typeof message.sender === 'string' ? message.sender : getSenderName(message))
             }"
             :current-user="currentUser"
             @open-image-preview="handleOpenImagePreview"
@@ -141,6 +142,7 @@ interface Message {
   sender_id: string;
   sender_phone?: string;
   sender?: string | { id: string; name: string };
+  sender_name?: string;
   chat_id: string;
   chat?: string | { id: string; name: string };
   created_at: string;
@@ -343,9 +345,11 @@ const isMine = (message: Message): boolean => {
 };
 
 const getSenderName = (message: Message): string => {
+  // Don't show sender name for non-group chats or for current user's messages
   if (!props.isGroupChat || isCurrentUser(message)) return '';
+  // For group chats, find the sender's name from members
   const sender = props.members.find(m => m.id === message.sender_id);
-  return sender?.name || 'Unknown';
+  return sender?.name || '';
 };
 
 const formatTime = (dateString: string): string => {

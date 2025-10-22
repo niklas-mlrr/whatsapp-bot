@@ -560,11 +560,13 @@ class WhatsAppMessageController extends Controller
                 if ($quotedMessage && isset($quotedMessage->metadata['message_id'])) {
                     $sendPayload['quoted_message_whatsapp_id'] = $quotedMessage->metadata['message_id'];
                     $sendPayload['quoted_message_content'] = $quotedMessage->content ?? '';
-                    $sendPayload['quoted_message_sender'] = $quotedMessage->metadata['sender'] ?? $quotedMessage->sender;
+                    // Check if the quoted message was sent by the authenticated user
+                    $sendPayload['quoted_message_from_me'] = $quotedMessage->sender_id === $user->id;
                     
                     \Log::info('Including quoted message data in payload', [
                         'quoted_db_id' => $data['reply_to_message_id'],
-                        'quoted_whatsapp_id' => $quotedMessage->metadata['message_id']
+                        'quoted_whatsapp_id' => $quotedMessage->metadata['message_id'],
+                        'quoted_from_me' => $sendPayload['quoted_message_from_me']
                     ]);
                 }
             }
@@ -693,6 +695,9 @@ class WhatsAppMessageController extends Controller
                 'media_type' => $data['mimetype'] ?? null,
                 'metadata' => $metadata,
             ]);
+            
+            // Load relationships for proper accessor functionality
+            $message->load(['senderUser', 'replyToMessage.senderUser']);
             
             \Log::info('Message created successfully', [
                 'message_id' => $message->id,

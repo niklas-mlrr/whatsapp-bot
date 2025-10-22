@@ -66,10 +66,12 @@ return [
         ],
 
         'daily' => [
-            'driver' => 'daily',
-            'path' => storage_path('logs/' . date('Y') . '/' . date('m') . '/laravel.log'),
+            'driver' => 'custom',
+            'via' => \App\Logging\CreateDailyWithFoldersLogger::class,
+            'name' => 'laravel',
+            'base_path' => storage_path('logs'),
+            'filename' => 'laravel-' . date('Y-m-d') . '.log',
             'level' => env('LOG_LEVEL', 'error'),
-            'days' => env('LOG_DAILY_DAYS', 7),
             'replace_placeholders' => true,
         ],
 
@@ -128,10 +130,12 @@ return [
         ],
 
         'whatsapp' => [
-            'driver' => 'daily',
-            'path' => storage_path('logs/' . date('Y') . '/' . date('m') . '/whatsapp.log'),
+            'driver' => 'custom',
+            'via' => \App\Logging\CreateDailyWithFoldersLogger::class,
+            'name' => 'whatsapp',
+            'base_path' => storage_path('logs'),
+            'filename' => 'whatsapp-' . date('Y-m-d') . '.log',
             'level' => 'debug',
-            'days' => env('LOG_DAILY_DAYS', 30),
             'replace_placeholders' => true,
         ],
 

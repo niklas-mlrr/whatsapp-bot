@@ -7,9 +7,6 @@ type User = {
   name: string;
   phone_number: string;
   avatar_url?: string;
-  status?: string;
-  last_seen_at?: string;
-  is_online?: boolean;
   is_typing?: boolean;
   last_typing_time?: number;
   metadata?: Record<string, any>;
@@ -68,8 +65,6 @@ type Chat = {
   description?: string;
   isTyping?: boolean;
   isSelected?: boolean;
-  isOnline?: boolean;
-  lastSeen?: string;
 };
 
 declare global {
@@ -343,20 +338,6 @@ export const useChatWebSockets = () => {
     }
   };
 
-  /**
-   * Listen for online status changes
-   */
-  const listenForOnlineStatus = (userId: string, callback: (isOnline: boolean, lastSeen?: string) => void) => {
-    const channelName = `user.${userId}`;
-    
-    if (!activePrivateChannels.has(channelName)) {
-      echo.value.private(channelName)
-        .listen('.user.online', () => callback(true))
-        .listen('.user.offline', (data: any) => callback(false, data.last_seen_at));
-      
-      activePrivateChannels.add(channelName);
-    }
-  };
 
   /**
    * Notify others that the user is typing

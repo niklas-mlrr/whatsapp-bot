@@ -176,7 +176,6 @@
         </div>
         <div class="flex flex-col flex-1">
           <span class="font-semibold text-lg text-gray-900 dark:text-gray-100">{{ selectedChat.name }}</span>
-          <span class="text-xs text-gray-400 dark:text-gray-500">Online</span>
         </div>
         <!-- Add to contacts button (shown when chat name looks like a phone number) -->
         <button
@@ -247,7 +246,7 @@
               <svg class="w-4 h-4 text-gray-500 dark:text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"></path>
               </svg>
-              <span class="text-xs font-semibold text-gray-600 dark:text-gray-400">Antwort an {{ replyToMessage.sender }}</span>
+              <span class="text-xs font-semibold text-gray-600 dark:text-gray-400">Antwort an {{ replySenderName }}</span>
             </div>
             <p class="text-sm text-gray-700 dark:text-gray-300 truncate">{{ replyToMessage.content || '[Medien]' }}</p>
           </div>
@@ -1118,6 +1117,41 @@ const clearReplyToMessage = () => {
   console.log('[MessagesView] Clearing reply to message')
   replyToMessage.value = null
 }
+
+const replySenderName = computed(() => {
+  if (!replyToMessage.value) return ''
+  
+  const msg = replyToMessage.value
+  
+  // Check if this is the current user's message
+  if (msg.sender_id?.toString() === currentUserForChat.value?.id?.toString()) {
+    return 'Dir selbst'
+  }
+  
+  // For group chats, try to find the sender from members
+  if (selectedChat.value?.is_group && msg.sender_id) {
+    const member = membersForChat.value.find(m => m.id === msg.sender_id?.toString())
+    if (member?.name) return member.name
+  }
+  
+  // Try sender_name from the message object
+  if (msg.sender_name && msg.sender_name !== 'WhatsApp User') {
+    return msg.sender_name
+  }
+  
+  // For single chats, use the chat name
+  if (!selectedChat.value?.is_group && selectedChat.value?.name) {
+    return selectedChat.value.name
+  }
+  
+  // Last resort: clean up the sender phone number
+  if (msg.sender) {
+    const cleaned = msg.sender.replace(/@s\.whatsapp\.net$/, '').replace(/@g\.us$/, '')
+    return cleaned
+  }
+  
+  return 'Unbekannt'
+})
 
 const handleEditMessage = (message: any) => {
   // Set editing mode

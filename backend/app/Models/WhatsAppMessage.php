@@ -89,10 +89,10 @@ class WhatsAppMessage extends Model
      */
     public function getSenderNameAttribute(): ?string
     {
-        if ($this->sender) {
-            return $this->sender->name;
+        if ($this->senderUser) {
+            return $this->senderUser->name;
         }
-        return $this->sender; // Fallback to the sender field if no user relationship
+        return null;
     }
 
     /**
@@ -100,8 +100,8 @@ class WhatsAppMessage extends Model
      */
     public function getSenderAvatarAttribute(): ?string
     {
-        if ($this->sender) {
-            return $this->sender->avatar_url;
+        if ($this->senderUser) {
+            return $this->senderUser->avatar_url;
         }
         return null;
     }
