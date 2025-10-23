@@ -755,13 +755,14 @@ const textareaClasses = computed(() => {
 })
 
 // Normalized members for the selected chat (id, name, phone)
-type Member = { id: string; name: string; phone?: string }
+type Member = { id: string; name: string; phone?: string; avatar_url?: string }
 const membersForChat = computed<Member[]>(() => {
   const participants = selectedChat.value?.participants || []
   return participants.map((p: any) => ({
     id: p?.id?.toString?.() || String(p?.id ?? ''),
     name: String(p?.name ?? ''),
-    phone: p?.phone ?? p?.phone_number
+    phone: p?.phone ?? p?.phone_number,
+    avatar_url: p?.avatar_url ?? p?.profile_picture_url ?? p?.contact_info?.profile_picture_url ?? undefined
   }))
 })
 

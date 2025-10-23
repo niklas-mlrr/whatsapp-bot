@@ -13,8 +13,25 @@ class ImageProxyController extends Controller
         if (!$url || !is_string($url)) {
             return response()->json(['error' => 'Missing url'], 400);
         }
-
-        $parts = parse_url($url);
+        // Sanitize and decode (support both pre-encoded and plain URLs)
+        $url = trim($url);
+        // Strip surrounding quotes if present
+        if ((str_starts_with($url, '"') && str_ends_with($url, '"')) || (str_starts_with($url, "'") && str_ends_with($url, "'"))) {
+            $url = substr($url, 1, -1);
+        }
+        // If looks encoded (starts with https%3A), decode
+        if (preg_match('/^https%3A/i', $url)) {
+            $url = urldecode($url);
+        }
+        $parts = @parse_url($url);
+        if (!$parts || !isset($parts['scheme']) || !isset($parts['host'])) {
+            // Try decoding once more if still encoded
+            $decoded = urldecode($url);
+            $parts = @parse_url($decoded);
+            if ($parts && isset($parts['scheme']) && isset($parts['host'])) {
+                $url = $decoded;
+            }
+        }
         if (!$parts || !isset($parts['scheme']) || !isset($parts['host'])) {
             return response()->json(['error' => 'Invalid url'], 400);
         }
@@ -27,6 +44,7 @@ class ImageProxyController extends Controller
         }
 
         $allowedHosts = [
+            'whatsapp.net', // allow any subdomain
             'pps.whatsapp.net',
             'mmg.whatsapp.net',
             'static.whatsapp.net',
@@ -48,6 +66,7 @@ class ImageProxyController extends Controller
         $headersRaw = '';
         $body = '';
         $status = 200;
+        $isLocal = app()->environment(['local', 'development']);
 
         if (function_exists('curl_init')) {
             $ch = curl_init();
@@ -58,6 +77,14 @@ class ImageProxyController extends Controller
             curl_setopt($ch, CURLOPT_TIMEOUT, 10);
             curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0');
             curl_setopt($ch, CURLOPT_HEADER, true);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                'Accept: image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+            ]);
+            // On Windows/local dev, SSL CA bundle may be missing; relax checks only in local/dev
+            if ($isLocal) {
+                curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+                curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+            }
 
             $response = curl_exec($ch);
             if ($response === false) {
@@ -112,7 +139,7 @@ class ImageProxyController extends Controller
                 break;
             }
 
-            $context = stream_context_create([
+            $contextOptions = [
                 'http' => [
                     'method' => 'GET',
                     'header' => [
@@ -121,8 +148,16 @@ class ImageProxyController extends Controller
                     ],
                     'timeout' => 10,
                     'ignore_errors' => true,
-                ]
-            ]);
+                ],
+            ];
+            if ($isLocal) {
+                $contextOptions['ssl'] = [
+                    'verify_peer' => false,
+                    'verify_peer_name' => false,
+                    'allow_self_signed' => true,
+                ];
+            }
+            $context = stream_context_create($contextOptions);
 
             $body = @file_get_contents($finalUrl, false, $context);
             if ($body === false) {
@@ -136,7 +171,11 @@ class ImageProxyController extends Controller
         }
 
         if ($status < 200 || $status >= 300) {
-            return response()->json(['error' => 'Upstream error', 'status' => $status], 502);
+            $resp = response()->json(['error' => 'Upstream error', 'status' => $status], 502);
+            if ($isLocal) {
+                $resp->header('X-Proxy-Debug', substr($headersRaw, 0, 200));
+            }
+            return $resp;
         }
 
         $contentType = 'image/jpeg';

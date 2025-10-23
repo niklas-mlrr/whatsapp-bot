@@ -55,15 +55,16 @@
     
     <!-- Sender avatar (left side for received messages) -->
     <div 
-      v-if="!isMe" 
-      class="flex-shrink-0 w-8 h-8 rounded-full bg-gray-200 dark:bg-zinc-700 flex items-center justify-center text-gray-600 dark:text-gray-300 font-bold text-sm mr-2 shadow-sm"
+      v-if="!isMe && isGroupChat"
+      class="flex-shrink-0 w-8 h-8 rounded-full overflow-hidden bg-gray-200 dark:bg-zinc-700 flex items-center justify-center text-gray-600 dark:text-gray-300 font-bold text-sm mr-2 shadow-sm"
       :title="message.sender"
     >
-      {{ senderInitials }}
+      <img v-if="senderAvatarUrl" :src="senderAvatarUrl" alt="Avatar" class="w-8 h-8 object-cover" referrerpolicy="no-referrer" />
+      <span v-else>{{ senderInitials }}</span>
     </div>
 
     <!-- Message content -->
-    <div class="flex flex-col max-w-[85%] md:max-w-[80%] relative" :class="{ 'items-end': isMe, 'items-start': !isMe }">
+    <div class="flex flex-col max-w-[85%] md:max-w-[80%] relative" :class="[ { 'items-end': isMe, 'items-start': !isMe }, messageOffsetClass ]">
       <!-- Sender name (for group chats) -->
       <div v-if="showSenderName" class="text-xs text-gray-500 dark:text-gray-400 mb-0.5 px-2">
         {{ message.sender }}
@@ -416,11 +417,12 @@
     
     <!-- Sender avatar (right side for sent messages) -->
     <div 
-      v-if="isMe" 
-      class="flex-shrink-0 w-8 h-8 rounded-full bg-green-100 flex items-center justify-center text-green-700 font-bold text-sm ml-2 shadow-sm"
+      v-if="isMe && isGroupChat"
+      class="flex-shrink-0 w-8 h-8 rounded-full overflow-hidden bg-green-100 flex items-center justify-center text-green-700 font-bold text-sm ml-2 shadow-sm"
       :title="message.sender || 'You'"
     >
-      {{ senderInitials }}
+      <img v-if="senderAvatarUrl" :src="senderAvatarUrl" alt="Avatar" class="w-8 h-8 object-cover" referrerpolicy="no-referrer" />
+      <span v-else>{{ senderInitials }}</span>
     </div>
     
     <!-- Message context menu (future feature) -->
@@ -436,6 +438,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, defineComponent } from 'vue'
+import { API_CONFIG } from '@/config/api'
 
 const props = defineProps<{ 
   message: {
@@ -472,12 +475,14 @@ const props = defineProps<{
       phone?: string
       email?: string
     }
+    sender_avatar_url?: string | null
     [key: string]: any
   }
   currentUser?: {
     id: string | number
     name: string
   }
+  isGroupChat?: boolean
 }>()
 
 // Document messages are handled in the template
@@ -520,7 +525,7 @@ const quickReactions = ['👍', '❤️', '😂', '😮', '😢', '🙏', '🔥'
 
 // Computed properties
 const isMe = computed(() => props.message.sender === 'me' || props.message.isMe)
-const showSenderName = computed(() => !isMe.value && props.message.sender)
+const showSenderName = computed(() => Boolean(props.isGroupChat) && !isMe.value && Boolean(props.message.sender))
 
 const senderInitials = computed(() => {
   const sender = props.message.sender || '?'
@@ -531,6 +536,24 @@ const senderInitials = computed(() => {
     .join('')
     .toUpperCase()
     .slice(0, 2)
+})
+
+// Slight right offset for received messages in direct chats (no avatar present)
+const messageOffsetClass = computed(() => {
+  return !isMe.value && !props.isGroupChat ? 'ml-2 sm:ml-3' : ''
+})
+
+const senderAvatarUrl = computed(() => {
+  const raw = props.message?.sender_avatar_url as string | null | undefined
+  if (!raw || typeof raw !== 'string') return ''
+  if (raw.includes('ui-avatars.com')) return ''
+  try {
+    const u = new URL(String(raw), typeof window !== 'undefined' ? window.location.origin : 'http://localhost')
+    if (typeof window !== 'undefined' && u.origin === window.location.origin) return String(raw)
+    return `${API_CONFIG.BASE_URL}/images/avatar?url=${encodeURIComponent(String(raw))}`
+  } catch {
+    return String(raw)
+  }
 })
 
 const formattedTime = computed(() => {

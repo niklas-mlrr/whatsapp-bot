@@ -60,10 +60,12 @@
             :message="{
               ...message,
               isMe: isMine(message),
-              sender: typeof message.sender === 'string' ? message.sender : getSenderName(message),
-              sender_name: message.sender_name || (typeof message.sender === 'string' ? message.sender : getSenderName(message))
+              sender: isGroupChat ? getSenderLabel(message) : (typeof message.sender === 'string' ? message.sender : ''),
+              sender_name: message.sender_name || (isGroupChat ? getSenderLabel(message) : (typeof message.sender === 'string' ? message.sender : '')),
+              sender_avatar_url: getSenderAvatar(message)
             }"
             :current-user="currentUser"
+            :is-group-chat="isGroupChat"
             @open-image-preview="handleOpenImagePreview"
             @add-reaction="handleAddReaction"
             @remove-reaction="handleRemoveReaction"
@@ -345,11 +347,72 @@ const isMine = (message: Message): boolean => {
 };
 
 const getSenderName = (message: Message): string => {
-  // Don't show sender name for non-group chats or for current user's messages
   if (!props.isGroupChat || isCurrentUser(message)) return '';
-  // For group chats, find the sender's name from members
-  const sender = props.members.find(m => m.id === message.sender_id);
+  const anyMsg = message as any;
+  const sid = anyMsg.sender_id != null ? String(anyMsg.sender_id) : (anyMsg.senderId != null ? String(anyMsg.senderId) : null);
+  const sender = sid ? props.members.find(m => m.id === sid) : undefined;
   return sender?.name || '';
+};
+
+const getSenderPhone = (message: Message): string => {
+  if (!props.isGroupChat || isCurrentUser(message)) return '';
+  const anyMsg = message as any;
+  const sid = anyMsg.sender_id != null ? String(anyMsg.sender_id) : (anyMsg.senderId != null ? String(anyMsg.senderId) : null);
+  const sender = sid ? (props.members.find(m => m.id === sid) as any) : undefined;
+  return sender?.phone || '';
+};
+
+const getSenderLabel = (message: Message): string => {
+  if (!props.isGroupChat || isCurrentUser(message)) return '';
+  const name = getSenderName(message);
+  if (name && name.trim()) return name;
+  const phone = getSenderPhone(message);
+  if (phone && phone.trim()) return phone;
+  // Fallbacks from message metadata
+  const anyMsg = message as any;
+  const meta = (anyMsg.metadata && typeof anyMsg.metadata === 'object') ? anyMsg.metadata : {};
+  const candidates: Array<string | undefined> = [
+    anyMsg.sender_phone,
+    meta.sender_phone,
+    meta.senderName,
+    meta.sender_name,
+    meta.name,
+    meta.from,
+    meta.remoteJid,
+    anyMsg.senderJid,
+    anyMsg.from,
+  ];
+  const pick = candidates.find(v => typeof v === 'string' && v.trim().length > 0) as string | undefined;
+  if (pick) {
+    const val = String(pick);
+    // Extract phone-like token from WhatsApp JID if present
+    const jidMatch = val.match(/^(\d+)(?:@.*)?$/);
+    if (jidMatch && jidMatch[1]) return `+${jidMatch[1]}`;
+    return val;
+  }
+  // As last resort, show shortened sender_id
+  const sid = anyMsg.sender_id != null ? String(anyMsg.sender_id) : (anyMsg.senderId != null ? String(anyMsg.senderId) : '');
+  if (sid) return sid;
+  return 'Unknown';
+};
+
+const getSenderAvatar = (message: Message): string | null => {
+  if (!props.isGroupChat) return null;
+  const anyMsg = message as any;
+  const sid = anyMsg.sender_id != null ? String(anyMsg.sender_id) : (anyMsg.senderId != null ? String(anyMsg.senderId) : null);
+  const sender = sid ? (props.members.find(m => m.id === sid) as any) : undefined;
+  // 1) Prefer avatar from members list
+  if (sender?.avatar_url) return sender.avatar_url as string;
+  // 2) Fallback: avatar on message itself (various possible keys)
+  if (typeof anyMsg.sender_avatar_url === 'string' && anyMsg.sender_avatar_url) return anyMsg.sender_avatar_url;
+  if (typeof anyMsg.sender_profile_picture_url === 'string' && anyMsg.sender_profile_picture_url) return anyMsg.sender_profile_picture_url;
+  if (typeof anyMsg.senderProfilePictureUrl === 'string' && anyMsg.senderProfilePictureUrl) return anyMsg.senderProfilePictureUrl;
+  // 3) Fallback: metadata fields
+  const meta = anyMsg.metadata || {};
+  if (typeof meta.sender_avatar_url === 'string' && meta.sender_avatar_url) return meta.sender_avatar_url;
+  if (typeof meta.sender_profile_picture_url === 'string' && meta.sender_profile_picture_url) return meta.sender_profile_picture_url;
+  if (typeof meta.senderProfilePictureUrl === 'string' && meta.senderProfilePictureUrl) return meta.senderProfilePictureUrl;
+  return null;
 };
 
 const formatTime = (dateString: string): string => {
