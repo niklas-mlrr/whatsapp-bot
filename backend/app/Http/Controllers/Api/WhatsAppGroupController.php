@@ -13,6 +13,20 @@ use Illuminate\Support\Facades\Hash;
 
 class WhatsAppGroupController extends Controller
 {
+    /**
+     * Normalize a WhatsApp JID: accept only real phone JIDs for participants list.
+     * Returns the JID if it's a phone JID (..@s.whatsapp.net). Returns null otherwise.
+     */
+    private function normalizeJid(?string $jid): ?string
+    {
+        if (!$jid) return $jid;
+        $jid = strtolower(trim($jid));
+        if (preg_match('/^\+?\d{5,}@s\.whatsapp\.net$/', $jid)) {
+            return $jid;
+        }
+        return null;
+    }
+
     public function createOrUpdate(Request $request): JsonResponse
     {
         try {
@@ -39,6 +53,13 @@ class WhatsAppGroupController extends Controller
                 'participant_count' => count($validated['participants'] ?? []),
             ]);
 
+            // Participants for storage: only phone JIDs
+            $participantJids = collect($validated['participants'] ?? [])
+                ->map(fn($p) => $this->normalizeJid($p['jid'] ?? null))
+                ->filter()
+                ->values()
+                ->all();
+
             $group = Chat::firstOrCreate(
                 [
                     'is_group' => true,
@@ -48,7 +69,7 @@ class WhatsAppGroupController extends Controller
                     'name' => $validated['name'],
                     'is_group' => true,
                     'pending_approval' => true,
-                    'participants' => array_map(fn($p) => $p['jid'], $validated['participants'] ?? []),
+                    'participants' => $participantJids,
                     'metadata' => [
                         'whatsapp_id' => $validated['group_id'],
                         'description' => $validated['description'] ?? '',
@@ -56,6 +77,8 @@ class WhatsAppGroupController extends Controller
                         'participants' => $validated['participants'] ?? [],
                         'profile_picture_url' => $validated['profile_picture_url'] ?? null,
                     ],
+                    'contact_profile_picture_url' => $validated['profile_picture_url'] ?? null,
+                    'contact_info_updated_at' => !empty($validated['profile_picture_url']) ? now() : null,
                 ]
             );
 
@@ -63,14 +86,28 @@ class WhatsAppGroupController extends Controller
                 $metadata = $group->metadata ?? [];
                 $metadata['description'] = $validated['description'] ?? ($metadata['description'] ?? '');
                 $metadata['created_at'] = $validated['created_at'] ?? ($metadata['created_at'] ?? null);
-                $metadata['participants'] = $validated['participants'] ?? ($metadata['participants'] ?? []);
+                if (array_key_exists('participants', $validated) && !empty($validated['participants'])) {
+                    $metadata['participants'] = $validated['participants'];
+                }
                 $metadata['profile_picture_url'] = $validated['profile_picture_url'] ?? ($metadata['profile_picture_url'] ?? null);
-
-                $group->update([
+                $updates = [
                     'name' => $validated['name'],
-                    'participants' => array_map(fn($p) => $p['jid'], $validated['participants'] ?? []),
+                    // Only update participants list when we received some valid phone JIDs; otherwise keep existing
+                    // 'participants' => $participantJids,
                     'metadata' => $metadata,
-                ]);
+                ];
+                if (!empty($participantJids)) {
+                    $updates['participants'] = $participantJids;
+                }
+                // If profile picture changed, update direct field and bump timestamp
+                if (array_key_exists('profile_picture_url', $validated) && !empty($validated['profile_picture_url'])) {
+                    if ($group->contact_profile_picture_url !== $validated['profile_picture_url']) {
+                        $updates['contact_profile_picture_url'] = $validated['profile_picture_url'];
+                        $updates['contact_info_updated_at'] = now();
+                    }
+                }
+
+                $group->update($updates);
                 Log::channel('whatsapp')->info('Group updated', ['group_id' => $group->id]);
             } else {
                 Log::channel('whatsapp')->info('Group created', ['group_id' => $group->id]);

@@ -675,6 +675,33 @@ async function start() {
         }
     });
 
+    // Leave WhatsApp group endpoint
+    app.post('/leave-group', verifyApiKey, async (req, res) => {
+        try {
+            if (!sockInstance || !isConnected) {
+                return res.status(503).json({ error: 'WhatsApp not connected' });
+            }
+            const { groupJid } = req.body || {};
+            if (!groupJid || typeof groupJid !== 'string') {
+                return res.status(400).json({ error: 'Missing groupJid' });
+            }
+            try {
+                await waitForSocketReady(20000);
+            } catch (e) {
+                return res.status(503).json({ error: 'WhatsApp initial sync incomplete', details: e.message });
+            }
+            const jid = groupJid.endsWith('@g.us') ? groupJid : groupJid;
+            try {
+                await sockInstance.groupLeave(jid);
+                return res.json({ status: 'left' });
+            } catch (err) {
+                return res.status(500).json({ error: 'Failed to leave group', details: err.message });
+            }
+        } catch (err) {
+            return res.status(500).json({ error: 'Unexpected error', details: err.message });
+        }
+    });
+
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, () => {
         console.log(`Express server listening on port ${PORT}`);

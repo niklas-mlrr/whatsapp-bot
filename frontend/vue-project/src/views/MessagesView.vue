@@ -382,7 +382,9 @@
       v-if="selectedChat"
       :is-open="showContactInfoModal"
       :chat="selectedChat"
+      :all-chats="chats"
       @close="showContactInfoModal = false"
+      @start-chat="handleStartChatFromModal"
     />
 
     <!-- New Chat Modal -->
@@ -464,7 +466,7 @@ const chatAvatarUrl = (c: any) => {
   if (!c) return null
   if (avatarLoadFailed.value?.[String(c.id)]) return null
   // Prefer explicit profile picture URLs we stored; avoid generated ui-avatars to prevent CORS
-  const url = c?.contact_info?.profile_picture_url || c?.metadata?.avatar_url || null
+  const url = c?.contact_info?.profile_picture_url || c?.metadata?.profile_picture_url || c?.metadata?.avatar_url || null
   if (!url) return null
   if (typeof url === 'string' && url.includes('ui-avatars.com')) return null
   try {
@@ -644,6 +646,45 @@ const handleChatSelected = (chatId: string) => {
 const openContactInfo = () => {
   if (selectedChat.value) {
     showContactInfoModal.value = true
+  }
+}
+
+// Start a direct chat from ContactInfoModal participant selection
+const handleStartChatFromModal = async (participantJid: string) => {
+  if (!participantJid) return
+  try {
+    // Normalize JID to phone@s.whatsapp.net
+    let jid = participantJid
+    if (!jid.includes('@')) {
+      const number = jid.replace(/^\+/, '')
+      jid = `${number}@s.whatsapp.net`
+    } else if (!jid.endsWith('@s.whatsapp.net')) {
+      // convert any other suffix to s.whatsapp.net for direct chat
+      jid = jid.replace(/@.*$/, '@s.whatsapp.net')
+    }
+
+    // Create or update chat for this contact
+    await apiClient.post('/chats', {
+      name: jid,
+      participants: [jid],
+      is_group: false
+    })
+
+    // Refresh chats and select the created/found chat
+    const response = await fetchChats()
+    if (response && response.data && response.data.data) {
+      chats.value = response.data.data
+      const target = chats.value.find((c: any) => c?.metadata?.whatsapp_id === jid || c?.original_name === jid)
+      if (target) {
+        selectChat(target)
+      }
+    }
+
+    // Close modal
+    showContactInfoModal.value = false
+  } catch (error: any) {
+    console.error('Error starting chat from modal:', error)
+    alert(error?.response?.data?.message || 'Fehler beim Öffnen des Chats')
   }
 }
 

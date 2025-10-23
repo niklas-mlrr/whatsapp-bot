@@ -61,10 +61,18 @@
               ...message,
               isMe: isMine(message),
               sender: isGroupChat 
-                ? (message.sender_name || (typeof message.sender === 'string' && message.sender.trim() ? message.sender : getSenderLabel(message))) 
+                ? ((typeof message.sender_name === 'string' && message.sender_name && message.sender_name.trim().toLowerCase() !== 'whatsapp user')
+                    ? message.sender_name
+                    : ((typeof message.sender === 'string' && message.sender.trim() && message.sender.trim().toLowerCase() !== 'whatsapp user')
+                        ? message.sender
+                        : getSenderLabel(message)))
                 : (typeof message.sender === 'string' ? message.sender : ''),
-              sender_name: message.sender_name || (isGroupChat 
-                ? ((typeof message.sender === 'string' && message.sender.trim()) ? message.sender : getSenderLabel(message)) 
+              sender_name: (isGroupChat 
+                ? ((typeof message.sender_name === 'string' && message.sender_name && message.sender_name.trim().toLowerCase() !== 'whatsapp user')
+                    ? message.sender_name
+                    : ((typeof message.sender === 'string' && message.sender.trim() && message.sender.trim().toLowerCase() !== 'whatsapp user')
+                        ? message.sender
+                        : getSenderLabel(message)))
                 : (typeof message.sender === 'string' ? message.sender : '')),
               sender_avatar_url: getSenderAvatar(message)
             }"
@@ -132,6 +140,7 @@ import apiClient from '@/services/api';
 import { useWebSocket } from '@/services/websocket';
 import MessageItem from './MessageItem.vue';
 import ImagePreviewModal from './ImagePreviewModal.vue';
+import { useChatStore } from '@/stores/chat';
 
 // Types
 interface MediaObject {
@@ -219,6 +228,15 @@ const props = defineProps({
 });
 
 const emit = defineEmits(['load-more', 'message-read', 'typing', 'reply-to-message', 'edit-message']);
+
+// Pinia chat store for resolving contact names/avatars for group senders
+const chatStore = useChatStore();
+onMounted(() => {
+  // Ensure chats are loaded once; ignore errors (UI has separate fetch paths)
+  if (!Array.isArray((chatStore as any).chats) || (chatStore as any).chats.length === 0) {
+    try { (chatStore as any).fetchChats?.(); } catch {}
+  }
+});
 
 // State
 const messages = ref<Message[]>([]);
@@ -357,6 +375,22 @@ const normalizePhone = (val?: string | null): string => {
   return withoutDomain.replace(/\D/g, '');
 };
 
+// Find a direct contact chat by JID/phone digits
+const findDirectChatByAnyPhone = (candidates: string[]): any | undefined => {
+  if (!Array.isArray(chatStore.chats) || chatStore.chats.length === 0) return undefined;
+  const normSet = new Set(candidates.map(normalizePhone).filter(Boolean));
+  if (normSet.size === 0) return undefined;
+  return chatStore.chats.find((c: any) => {
+    if (c?.is_group) return false;
+    const parts: string[] = Array.isArray(c?.participants) ? c.participants : [];
+    const meta = (c?.metadata && typeof c.metadata === 'object') ? c.metadata : {};
+    const jid = typeof meta.whatsapp_id === 'string' ? meta.whatsapp_id : '';
+    const phoneCandidates: string[] = [jid, ...parts];
+    const found = phoneCandidates.some((p) => normSet.has(normalizePhone(p)));
+    return found;
+  });
+};
+
 // Find the member for a message using multiple strategies (id, phone, JID)
 const findMemberForMessage = (message: Message): ChatMember | undefined => {
   const anyMsg = message as any;
@@ -392,7 +426,19 @@ const findMemberForMessage = (message: Message): ChatMember | undefined => {
 const getSenderName = (message: Message): string => {
   if (!props.isGroupChat || isCurrentUser(message)) return '';
   const sender = findMemberForMessage(message);
-  return sender?.name || '';
+  if (sender?.name) return sender.name;
+  // Try to pull name from a known direct chat contact
+  const anyMsg = message as any;
+  const meta = (anyMsg.metadata && typeof anyMsg.metadata === 'object') ? anyMsg.metadata : {};
+  const phoneCandidates: string[] = [];
+  if (typeof anyMsg.sender_phone === 'string') phoneCandidates.push(anyMsg.sender_phone);
+  if (typeof meta.sender_phone === 'string') phoneCandidates.push(meta.sender_phone);
+  if (typeof meta.remoteJid === 'string') phoneCandidates.push(meta.remoteJid);
+  if (typeof anyMsg.senderJid === 'string') phoneCandidates.push(anyMsg.senderJid);
+  if (typeof anyMsg.from === 'string') phoneCandidates.push(anyMsg.from);
+  const contactChat = findDirectChatByAnyPhone(phoneCandidates);
+  if (contactChat?.name && String(contactChat.name).trim()) return String(contactChat.name);
+  return '';
 };
 
 const getSenderPhone = (message: Message): string => {
@@ -406,7 +452,10 @@ const getSenderLabel = (message: Message): string => {
   const name = getSenderName(message);
   if (name && name.trim()) return name;
   const phone = getSenderPhone(message);
-  if (phone && phone.trim()) return phone;
+  if (phone && phone.trim()) {
+    const digits = normalizePhone(phone);
+    return digits ? `+${digits}` : phone;
+  }
   // Fallbacks from message metadata
   const anyMsg = message as any;
   const meta = (anyMsg.metadata && typeof anyMsg.metadata === 'object') ? anyMsg.metadata : {};
@@ -450,7 +499,16 @@ const getSenderAvatar = (message: Message): string | null => {
   if (typeof meta.sender_avatar_url === 'string' && meta.sender_avatar_url) return meta.sender_avatar_url;
   if (typeof meta.sender_profile_picture_url === 'string' && meta.sender_profile_picture_url) return meta.sender_profile_picture_url;
   if (typeof meta.senderProfilePictureUrl === 'string' && meta.senderProfilePictureUrl) return meta.senderProfilePictureUrl;
-  return null;
+  // 4) Fallback: lookup contact's profile picture from direct chat
+  const phoneCandidates: string[] = [];
+  if (typeof anyMsg.sender_phone === 'string') phoneCandidates.push(anyMsg.sender_phone);
+  if (typeof meta.sender_phone === 'string') phoneCandidates.push(meta.sender_phone);
+  if (typeof meta.remoteJid === 'string') phoneCandidates.push(meta.remoteJid);
+  if (typeof anyMsg.senderJid === 'string') phoneCandidates.push(anyMsg.senderJid);
+  if (typeof anyMsg.from === 'string') phoneCandidates.push(anyMsg.from);
+  const contactChat = findDirectChatByAnyPhone(phoneCandidates) as any;
+  const pic = contactChat?.contact_info?.profile_picture_url || contactChat?.avatar_url;
+  return pic || null;
 };
 
 const formatTime = (dateString: string): string => {

@@ -652,6 +652,51 @@ class ChatController extends Controller
                 return response()->json(['error' => 'Access denied'], 403);
             }
 
+            // If this is a WhatsApp group, ask the receiver to leave it before deletion
+            try {
+                $chatRow = DB::selectOne("SELECT metadata FROM chats WHERE id = ?", [$chatId]);
+                if ($chatRow && $chatRow->metadata) {
+                    $metadata = json_decode($chatRow->metadata, true) ?: [];
+                    $whatsappId = $metadata['whatsapp_id'] ?? null;
+                    if (is_string($whatsappId) && str_ends_with($whatsappId, '@g.us')) {
+                        $receiverUrl = config('app.receiver_url', env('RECEIVER_URL', 'http://127.0.0.1:3000'));
+                        $receiverUrl = rtrim($receiverUrl, '/');
+                        $http = \Illuminate\Support\Facades\Http::timeout(10)
+                            ->withHeaders([
+                                'Accept' => 'application/json',
+                                'Content-Type' => 'application/json',
+                                'X-API-Key' => config('app.receiver_api_key', ''),
+                            ]);
+                        $isHttps = str_starts_with(strtolower($receiverUrl), 'https://');
+                        $allowInsecure = (bool) env('RECEIVER_TLS_INSECURE', false);
+                        if ($isHttps && $allowInsecure) {
+                            $http = $http->withoutVerifying();
+                        }
+                        // Fire and forget - don't block deletion on failures
+                        try {
+                            $resp = $http->post("{$receiverUrl}/leave-group", [ 'groupJid' => $whatsappId ]);
+                            if (!$resp->successful()) {
+                                \Log::warning('Receiver failed to leave WhatsApp group', [
+                                    'chat_id' => $chatId,
+                                    'whatsapp_id' => $whatsappId,
+                                    'status' => $resp->status(),
+                                    'body' => $resp->body(),
+                                ]);
+                            }
+                        } catch (\Throwable $e) {
+                            \Log::warning('Error requesting group leave from receiver', [
+                                'chat_id' => $chatId,
+                                'whatsapp_id' => $whatsappId,
+                                'error' => $e->getMessage(),
+                            ]);
+                        }
+                    }
+                }
+            } catch (\Throwable $e) {
+                // Non-fatal: proceed with deletion regardless
+                \Log::debug('Skip group leave pre-step', ['chat_id' => $chatId, 'error' => $e->getMessage()]);
+            }
+
             // Delete the chat and related data
             DB::beginTransaction();
             
@@ -852,6 +897,7 @@ class ChatController extends Controller
                             m.content,
                             m.sender_id,
                             u.name as sender_name,
+                            u.profile_picture_url as sender_profile_picture_url,
                             u.phone as sender_phone,
                             m.chat_id,
                             m.created_at,
@@ -881,10 +927,8 @@ class ChatController extends Controller
                             m.id,
                             m.content,
                             m.sender_id,
-                            CASE 
-                                WHEN u.name = 'WhatsApp User' THEN c.name
-                                ELSE u.name
-                            END as sender_name,
+                            u.name as sender_name,
+                            u.profile_picture_url as sender_profile_picture_url,
                             u.phone as sender_phone,
                             m.chat_id,
                             m.created_at,
@@ -912,10 +956,8 @@ class ChatController extends Controller
                         m.id,
                         m.content,
                         m.sender_id,
-                        CASE 
-                            WHEN u.name = 'WhatsApp User' THEN c.name
-                            ELSE u.name
-                        END as sender_name,
+                        u.name as sender_name,
+                        u.profile_picture_url as sender_profile_picture_url,
                         u.phone as sender_phone,
                         m.chat_id,
                         m.created_at,
@@ -938,10 +980,9 @@ class ChatController extends Controller
                 $bindings = [$chatId, $limit];
             }
 
-        $rows = DB::select($sql, $bindings);
-
-        // Return in chronological order (oldest first) to match frontend expectations
-        $rows = array_reverse($rows);
+            // Execute the query and return in chronological order (oldest first)
+            $rows = DB::select($sql, $bindings);
+            $rows = array_reverse($rows);
 
         $formatted = array_map(function ($m) use ($currentUserId) {
             // Decode metadata if it's a JSON string
@@ -991,11 +1032,27 @@ class ChatController extends Controller
                 }
             }
             
+            // Derive better sender name if placeholder
+            $rawSenderName = $m->sender_name ?? null;
+            $senderName = $rawSenderName;
+            if (!$senderName || strtolower($senderName) === 'whatsapp user') {
+                $senderName = $metadata['senderName']
+                    ?? $metadata['sender_name']
+                    ?? $metadata['name']
+                    ?? $metadata['displayName']
+                    ?? $metadata['pushName']
+                    ?? $rawSenderName; // keep original if nothing better
+            }
+
+            // Derive sender avatar
+            $senderAvatarUrl = $m->sender_profile_picture_url
+                ?? ($metadata['senderProfilePictureUrl'] ?? ($metadata['sender_profile_picture_url'] ?? ($metadata['sender_avatar_url'] ?? ($metadata['profile_picture_url'] ?? null))));
+
             return [
                 'id' => (string) $m->id,
                 'content' => $m->content,
                 'sender_id' => (string) $m->sender_id,
-                'sender_name' => $m->sender_name,
+                'sender_name' => $senderName,
                 'sender_phone' => $m->sender_phone ?? null,
                 'chat_id' => (string) $m->chat_id,
                 'created_at' => $m->created_at,
@@ -1011,6 +1068,7 @@ class ChatController extends Controller
                 'reactions' => $reactions,
                 'reply_to_message_id' => $m->reply_to_message_id ?? null,
                 'quoted_message' => $quotedMessage,
+                'sender_avatar_url' => $senderAvatarUrl,
             ];
         }, $rows);
 
@@ -1113,6 +1171,7 @@ class ChatController extends Controller
                             CASE WHEN m.deleted_at IS NOT NULL THEN '[Gelöschte Nachricht]' ELSE m.content END as content,
                             m.sender_id,
                             u.name as sender_name,
+                            u.profile_picture_url as sender_profile_picture_url,
                             u.phone as sender_phone,
                             m.chat_id,
                             m.created_at,
@@ -1147,6 +1206,7 @@ class ChatController extends Controller
                         CASE WHEN m.deleted_at IS NOT NULL THEN '[Gelöschte Nachricht]' ELSE m.content END as content,
                         m.sender_id,
                         u.name as sender_name,
+                        u.profile_picture_url as sender_profile_picture_url,
                         u.phone as sender_phone,
                         m.chat_id,
                         m.created_at,
@@ -1225,11 +1285,27 @@ class ChatController extends Controller
                     }
                 }
                 
+                // Derive better sender name if placeholder
+                $rawSenderName = $m->sender_name ?? null;
+                $senderName = $rawSenderName;
+                if (!$senderName || strtolower($senderName) === 'whatsapp user') {
+                    $senderName = $metadata['senderName']
+                        ?? $metadata['sender_name']
+                        ?? $metadata['name']
+                        ?? $metadata['displayName']
+                        ?? $metadata['pushName']
+                        ?? $rawSenderName;
+                }
+
+                // Derive sender avatar
+                $senderAvatarUrl = $m->sender_profile_picture_url
+                    ?? ($metadata['senderProfilePictureUrl'] ?? ($metadata['sender_profile_picture_url'] ?? ($metadata['sender_avatar_url'] ?? ($metadata['profile_picture_url'] ?? null))));
+
                 return [
                     'id' => (string) $m->id,
                     'content' => $m->content,
                     'sender_id' => (string) $m->sender_id,
-                    'sender_name' => $m->sender_name,
+                    'sender_name' => $senderName,
                     'sender_phone' => $m->sender_phone ?? null,
                     'chat_id' => (string) $m->chat_id,
                     'created_at' => $m->created_at,
@@ -1245,6 +1321,7 @@ class ChatController extends Controller
                     'reactions' => $reactions,
                     'reply_to_message_id' => $m->reply_to_message_id ?? null,
                     'quoted_message' => $quotedMessage,
+                    'sender_avatar_url' => $senderAvatarUrl,
                 ];
             }, $rows);
 

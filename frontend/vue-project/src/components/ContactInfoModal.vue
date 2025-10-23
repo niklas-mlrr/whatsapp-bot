@@ -73,13 +73,57 @@
                     </div>
 
                     <!-- Additional Info -->
-                    <div v-if="!isGroup" class="mt-6">
+                    <div v-if="!isGroupView" class="mt-6">
                       <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                         Telefonnummer
                       </h4>
                       <p class="text-gray-600 dark:text-gray-300 text-sm">
                         {{ phoneNumber || 'Nicht verfügbar' }}
                       </p>
+                    </div>
+
+                    <div v-if="isGroupView" class="mt-6">
+                      <div class="flex items-center justify-between mb-2">
+                        <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">Teilnehmer</h4>
+                        <button v-if="viewingParticipant" @click="clearParticipantView" class="text-xs px-2 py-1 rounded bg-gray-100 dark:bg-zinc-700 text-gray-700 dark:text-gray-200">Zurück zur Gruppe</button>
+                      </div>
+                      <div v-if="!viewingParticipant" class="space-y-2 max-h-72 overflow-y-auto pr-1">
+                        <div v-for="p in participantsList" :key="p.jid" class="flex items-center justify-between p-2 rounded hover:bg-green-50 dark:hover:bg-zinc-700">
+                          <div class="flex items-center gap-3 min-w-0">
+                            <div class="w-9 h-9 rounded-full bg-green-300 dark:bg-green-800 flex items-center justify-center text-green-700 dark:text-green-200 font-bold text-sm">
+                              {{ p.display.slice(0,2).toUpperCase() }}
+                            </div>
+                            <div class="min-w-0">
+                              <div class="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">{{ p.display }}</div>
+                              <div class="text-xs text-gray-500 dark:text-gray-400 truncate">{{ p.phone }}</div>
+                            </div>
+                            <span v-if="p.isAdmin" class="ml-2 text-[10px] px-1.5 py-0.5 rounded-full bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-300 flex-shrink-0">Admin</span>
+                          </div>
+                          <div class="flex items-center gap-2 flex-shrink-0">
+                            <button @click="viewParticipant(p)" class="px-2 py-1 text-xs rounded bg-gray-100 dark:bg-zinc-700 text-gray-700 dark:text-gray-200">Info</button>
+                            <button @click="startChatWith(p)" class="px-2 py-1 text-xs rounded bg-green-500 text-white hover:bg-green-600">Chat</button>
+                          </div>
+                        </div>
+                      </div>
+                      <div v-else class="mt-4">
+                        <h5 class="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-2">Kontakt</h5>
+                        <div class="flex items-center gap-3 mb-4">
+                          <div class="w-12 h-12 rounded-full bg-green-300 dark:bg-green-800 flex items-center justify-center text-green-700 dark:text-green-200 font-bold text-base">
+                            {{ participantDisplay.slice(0,2).toUpperCase() }}
+                          </div>
+                          <div>
+                            <div class="text-base font-bold text-gray-900 dark:text-gray-100">{{ participantDisplay }}</div>
+                            <div class="text-xs text-gray-500 dark:text-gray-400">{{ participantPhone }}</div>
+                          </div>
+                        </div>
+                        <div class="mb-4">
+                          <h6 class="text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Über</h6>
+                          <p class="text-sm text-gray-600 dark:text-gray-300 whitespace-pre-line">{{ participantBio || 'Keine Beschreibung vorhanden' }}</p>
+                        </div>
+                        <div class="flex justify-end">
+                          <button @click="selectedParticipant && startChatWith(selectedParticipant)" class="px-3 py-1.5 text-sm rounded bg-green-500 text-white hover:bg-green-600">Chat starten</button>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -105,21 +149,28 @@ const props = defineProps({
   chat: {
     type: Object as () => any,
     required: true
+  },
+  allChats: {
+    type: Array as () => any[],
+    required: false,
+    default: () => []
   }
 });
 
-const emit = defineEmits(['close']);
+const emit = defineEmits(['close','start-chat']);
 
 const closeModal = () => {
   emit('close');
 };
 
 // Computed properties for the chat info
-const chatName = computed(() => props.chat?.name || 'Unbekannter Kontakt');
-const isGroup = computed(() => props.chat?.is_group || false);
+const baseChat = computed(() => viewingParticipant.value && participantChat.value ? participantChat.value : props.chat);
+const chatName = computed(() => baseChat.value?.name || 'Unbekannter Kontakt');
+const isGroup = computed(() => baseChat.value?.is_group || false);
+const isGroupView = computed(() => props.chat?.is_group || false);
 
 const phoneNumber = computed(() => {
-  const chat: any = props.chat;
+  const chat: any = baseChat.value;
   if (!chat) return null;
   const extract = (val?: string | null) => {
     if (!val || typeof val !== 'string') return null;
@@ -154,19 +205,86 @@ const phoneNumber = computed(() => {
 
 // Get profile picture URL
 const profilePictureUrl = computed(() => {
-  if (props.chat?.contact_info?.profile_picture_url) {
-    return props.chat.contact_info.profile_picture_url;
+  const c: any = baseChat.value;
+  if (c?.contact_info?.profile_picture_url) {
+    return c.contact_info.profile_picture_url;
   }
   return null;
 });
 
 // Get description/bio
 const description = computed(() => {
+  const c: any = baseChat.value;
   if (isGroup.value) {
-    return props.chat?.contact_info?.description || null;
+    return c?.contact_info?.description || null;
   } else {
-    // Fallback to description if bio is not available
-    return props.chat?.contact_info?.bio || props.chat?.contact_info?.description || null;
+    return c?.contact_info?.bio || c?.contact_info?.description || null;
   }
 });
+
+const viewingParticipant = ref(false);
+const selectedParticipant = ref<{ jid: string; isAdmin?: boolean } | null>(null);
+const participantChat = ref<any | null>(null);
+
+const participantsList = computed(() => {
+  const chat: any = props.chat;
+  const fromMetadata = Array.isArray(chat?.metadata?.participants) ? chat.metadata.participants : [];
+  if (fromMetadata.length > 0) {
+    return fromMetadata.map((p: any) => {
+      const jid = String(p?.jid || '');
+      const phone = jid.replace(/@.*$/, '');
+      const display = resolveParticipantDisplay(jid);
+      return { jid, phone: phone.startsWith('+') ? phone : '+' + phone, isAdmin: !!(p?.isAdmin || p?.isSuperAdmin), display };
+    });
+  }
+  const arr = Array.isArray(chat?.participants) ? chat.participants : [];
+  return arr.filter((x: any) => x && String(x) !== 'me').map((raw: any) => {
+    const jid = typeof raw === 'string' && raw.includes('@') ? raw : String(raw) + '@s.whatsapp.net';
+    const phone = jid.replace(/@.*$/, '');
+    const display = resolveParticipantDisplay(jid);
+    return { jid, phone: phone.startsWith('+') ? phone : '+' + phone, isAdmin: false, display };
+  });
+});
+
+function resolveParticipantDisplay(jid: string): string {
+  const chats: any[] = (props.allChats || []) as any[];
+  const found = chats.find((c: any) => !c.is_group && (c?.metadata?.whatsapp_id === jid || (Array.isArray(c?.participants) && c.participants.includes(jid))));
+  if (found?.name) return found.name;
+  const phone = jid.replace(/@.*$/, '');
+  return phone ? '+' + phone : jid;
+}
+
+function resolveParticipantChat(jid: string): any | null {
+  const chats: any[] = (props.allChats || []) as any[];
+  const found = chats.find((c: any) => !c.is_group && (c?.metadata?.whatsapp_id === jid || (Array.isArray(c?.participants) && c.participants.includes(jid))));
+  if (found) return found;
+  return { name: resolveParticipantDisplay(jid), is_group: false, participants: [jid, 'me'], metadata: { whatsapp_id: jid }, contact_info: {} };
+}
+
+const participantDisplay = computed(() => resolveParticipantDisplay(selectedParticipant.value?.jid || ''));
+const participantPhone = computed(() => {
+  const jid = selectedParticipant.value?.jid || '';
+  return jid ? '+' + jid.replace(/@.*$/, '') : '';
+});
+const participantBio = computed(() => {
+  const c: any = participantChat.value;
+  return c?.contact_info?.bio || c?.contact_info?.description || '';
+});
+
+function viewParticipant(p: { jid: string }) {
+  selectedParticipant.value = p;
+  participantChat.value = resolveParticipantChat(p.jid);
+  viewingParticipant.value = true;
+}
+
+function startChatWith(p: { jid: string }) {
+  const jid = p.jid;
+  emit('start-chat', jid);
+}
+
+function clearParticipantView() {
+  viewingParticipant.value = false;
+  selectedParticipant.value = null;
+  participantChat.value = null;
+}
 </script>

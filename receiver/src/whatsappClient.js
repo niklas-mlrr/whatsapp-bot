@@ -1,4 +1,4 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers, jidDecode, jidNormalizedUser } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const pino = require('pino');
 const config = require('./config');
@@ -28,7 +28,45 @@ const editMessageIds = new Set();
 const protocolMessageIds = new Set();
 // Store recently sent messages so we can satisfy retry requests from recipients
 // Map: messageId -> { message: proto content, expiresAt: number }
+
+function indexContactsLidMapping(sock) {
+    try {
+        const contacts = sock?.contacts || {};
+        let count = 0;
+        for (const [jid, info] of Object.entries(contacts)) {
+            const lidStr = (typeof info?.lid === 'object') ? (info.lid?.jid || info.lid?.toString?.()) : info?.lid;
+            if (lidStr && typeof jid === 'string' && jid.endsWith('@s.whatsapp.net')) {
+                recordLidToPhone(lidStr, jid);
+                count++;
+            }
+        }
+        if (count) logger.debug({ count }, 'Indexed LID mappings from contacts');
+    } catch (err) {
+        logger.debug({ err: err.message }, 'Failed to index contacts LID mapping');
+    }
+}
 const messageStore = new Map();
+
+// Map LID JIDs to phone JIDs when we discover them from message events
+// key: '123456789@lid' -> value: '491234567890@s.whatsapp.net'
+const lidToPhoneMap = new Map();
+
+function recordLidToPhone(lidJid, phoneJid) {
+    try {
+        if (typeof lidJid !== 'string' || typeof phoneJid !== 'string') return;
+        if (!lidJid.endsWith('@lid')) return;
+        if (!phoneJid.endsWith('@s.whatsapp.net')) return;
+        const existing = lidToPhoneMap.get(lidJid);
+        if (existing && existing !== phoneJid) {
+            logger.debug({ lidJid, existing, phoneJid }, 'Updating LID to phone JID mapping');
+        } else if (!existing) {
+            logger.debug({ lidJid, phoneJid }, 'Recording LID to phone JID mapping');
+        }
+        lidToPhoneMap.set(lidJid, phoneJid);
+    } catch (err) {
+        logger.debug({ err: err.message, lidJid, phoneJid }, 'Failed to record LID mapping');
+    }
+}
 
 /**
  * Store a sent message's content for a limited time so Baileys can re-upload on retry
@@ -131,23 +169,30 @@ async function fetchContactStatus(sock, jid) {
  */
 function convertLidToPhoneJid(sock, jid) {
     if (!jid) return jid;
-    
-    if (!jid.endsWith('@lid')) {
-        return jid;
-    }
-    
+
+    // Already a phone or group JID
+    if (!jid.endsWith('@lid')) return jid;
+
+    // Prefer known mapping from runtime
+    const mapped = lidToPhoneMap.get(jid);
+    if (mapped) return mapped;
+
+    // Resolve via contacts store (authoritative)
     try {
-        const contacts = sock.contacts || {};
+        const contacts = sock?.contacts || {};
         for (const [contactJid, contactInfo] of Object.entries(contacts)) {
-            if (contactInfo?.id === jid) {
-                logger.debug({ lid: jid, phoneJid: contactJid }, 'Converted LID to phone JID');
+            // Some Baileys versions store lid as string or object
+            const lidStr = (typeof contactInfo?.lid === 'object') ? (contactInfo.lid?.jid || contactInfo.lid?.toString?.()) : contactInfo?.lid;
+            if (lidStr === jid) {
+                logger.debug({ lid: jid, phoneJid: contactJid }, 'Resolved LID to phone JID via contacts');
                 return contactJid;
             }
         }
     } catch (error) {
-        logger.debug({ jid, error: error.message }, 'Could not convert LID to phone JID');
+        logger.debug({ jid, error: error.message }, 'Contacts lookup for LID failed');
     }
-    
+
+    // Unknown LID: keep as-is; caller may filter it out until we learn mapping
     return jid;
 }
 
@@ -245,7 +290,7 @@ async function connectToWhatsApp() {
         });
 
         // Event listener for connection updates
-        sock.ev.on('connection.update', (update) => {
+        sock.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect, qr } = update;
 
             if (qr) {
@@ -305,6 +350,37 @@ async function connectToWhatsApp() {
                     clearTimeout(reconnectTimeout);
                     reconnectTimeout = null;
                 }
+
+                // After connect: fetch all groups once and push normalized metadata to backend
+                try {
+                    // Build initial LID mapping from contacts
+                    indexContactsLidMapping(sock);
+                    const all = await sock.groupFetchAllParticipating();
+                    const apiClient = require('./apiClient');
+                    for (const g of Object.values(all || {})) {
+                        try {
+                            const groupProfilePicture = await fetchContactProfilePicture(sock, g.id);
+                            const participants = (g.participants || []).map(p => ({
+                                jid: convertLidToPhoneJid(sock, p.id),
+                                isAdmin: p.admin === 'admin',
+                                isSuperAdmin: p.admin === 'superadmin'
+                            })).filter(pp => typeof pp.jid === 'string' && pp.jid.endsWith('@s.whatsapp.net'));
+
+                            await apiClient.sendGroupMetadata({
+                                groupId: g.id,
+                                groupName: g.subject || 'Group',
+                                participants,
+                                groupDescription: g.desc || '',
+                                groupProfilePictureUrl: groupProfilePicture,
+                                createdAt: g.creation ? new Date(g.creation * 1000).toISOString() : null
+                            });
+                        } catch (err) {
+                            logger.warn({ err: err.message, groupId: g.id }, 'Failed to push group metadata on connect');
+                        }
+                    }
+                } catch (err) {
+                    logger.warn({ err: err.message }, 'Failed to fetch all groups on connect');
+                }
             }
         });
 
@@ -314,6 +390,35 @@ async function connectToWhatsApp() {
         // Delegate message processing to the message handler
         sock.ev.on('messages.upsert', (m) => {
             handleMessages(sock, m);
+        });
+
+        // Contacts upsert/update: learn LID -> phone mapping proactively
+        sock.ev.on('contacts.upsert', (contacts) => {
+            try {
+                for (const c of contacts || []) {
+                    // c.id: phone JID, try to find lid via store
+                    if (c?.id && typeof c.id === 'string' && c.id.endsWith('@s.whatsapp.net')) {
+                        const store = sock.contacts?.[c.id];
+                        const lidStr = (typeof store?.lid === 'object') ? (store.lid?.jid || store.lid?.toString?.()) : store?.lid;
+                        if (lidStr) recordLidToPhone(lidStr, c.id);
+                    }
+                }
+            } catch (e) {
+                logger.debug({ err: e.message }, 'contacts.upsert handler failed');
+            }
+        });
+        sock.ev.on('contacts.update', (updates) => {
+            try {
+                for (const u of updates || []) {
+                    if (u?.id && typeof u.id === 'string' && u.id.endsWith('@s.whatsapp.net')) {
+                        const store = sock.contacts?.[u.id];
+                        const lidStr = (typeof store?.lid === 'object') ? (store.lid?.jid || store.lid?.toString?.()) : store?.lid;
+                        if (lidStr) recordLidToPhone(lidStr, u.id);
+                    }
+                }
+            } catch (e) {
+                logger.debug({ err: e.message }, 'contacts.update handler failed');
+            }
         });
 
         // Listen for group metadata updates (when added to group, group info changes, etc.)
@@ -373,14 +478,16 @@ async function connectToWhatsApp() {
                         const groupProfilePicture = await fetchContactProfilePicture(sock, groupMetadata.id);
 
                         const apiClient = require('./apiClient');
+                        const participants = groupMetadata.participants?.map(p => ({
+                            jid: convertLidToPhoneJid(sock, p.id),
+                            isAdmin: p.admin === 'admin',
+                            isSuperAdmin: p.admin === 'superadmin'
+                        })).filter(pp => typeof pp.jid === 'string' && pp.jid.endsWith('@s.whatsapp.net')) || [];
+
                         await apiClient.sendGroupMetadata({
                             groupId: groupMetadata.id,
                             groupName: groupMetadata.subject || 'Group',
-                            participants: groupMetadata.participants?.map(p => ({
-                                jid: convertLidToPhoneJid(sock, p.id),
-                                isAdmin: p.admin === 'admin',
-                                isSuperAdmin: p.admin === 'superadmin'
-                            })) || [],
+                            participants,
                             groupDescription: groupMetadata.desc || '',
                             groupProfilePictureUrl: groupProfilePicture,
                             createdAt: groupMetadata.creation ? new Date(groupMetadata.creation * 1000).toISOString() : null
@@ -483,18 +590,43 @@ async function connectToWhatsApp() {
                     const groupProfilePicture = await fetchContactProfilePicture(sock, groupMetadata.id);
 
                     const apiClient = require('./apiClient');
+                    const participants = groupMetadata.participants?.map(p => ({
+                        jid: convertLidToPhoneJid(sock, p.id),
+                        isAdmin: p.admin === 'admin',
+                        isSuperAdmin: p.admin === 'superadmin'
+                    })).filter(pp => typeof pp.jid === 'string' && pp.jid.endsWith('@s.whatsapp.net')) || [];
+
                     await apiClient.sendGroupMetadata({
                         groupId: groupMetadata.id,
                         groupName: groupMetadata.subject || 'Group',
-                        participants: groupMetadata.participants?.map(p => ({
-                            jid: convertLidToPhoneJid(sock, p.id),
-                            isAdmin: p.admin === 'admin',
-                            isSuperAdmin: p.admin === 'superadmin'
-                        })) || [],
+                        participants,
                         groupDescription: groupMetadata.desc || '',
                         groupProfilePictureUrl: groupProfilePicture,
                         createdAt: groupMetadata.creation ? new Date(groupMetadata.creation * 1000).toISOString() : null
                     });
+
+                    // Retry once after a short delay to catch newly learned contacts mapping
+                    setTimeout(async () => {
+                        try {
+                            // New mapping may have arrived via contacts events
+                            const refreshed = await sock.groupMetadata(groupId);
+                            const participants2 = refreshed.participants?.map(p => ({
+                                jid: convertLidToPhoneJid(sock, p.id),
+                                isAdmin: p.admin === 'admin',
+                                isSuperAdmin: p.admin === 'superadmin'
+                            })).filter(pp => typeof pp.jid === 'string' && pp.jid.endsWith('@s.whatsapp.net')) || [];
+                            await apiClient.sendGroupMetadata({
+                                groupId: refreshed.id,
+                                groupName: refreshed.subject || 'Group',
+                                participants: participants2,
+                                groupDescription: refreshed.desc || '',
+                                groupProfilePictureUrl: groupProfilePicture,
+                                createdAt: refreshed.creation ? new Date(refreshed.creation * 1000).toISOString() : null
+                            });
+                        } catch (err2) {
+                            logger.debug({ err: err2.message, groupId }, 'Retry push of group metadata failed');
+                        }
+                    }, 1500);
                 } catch (fetchError) {
                     logger.warn({
                         error: fetchError.message,
@@ -539,8 +671,8 @@ async function connectToWhatsApp() {
     } catch (error) {
         logger.error({ error }, 'Failed to initialize WhatsApp client');
         isReconnecting = false;
-        throw error; // Re-throw to allow retry logic to handle it
+        throw error;
     }
 }
 
-module.exports = { connectToWhatsApp, setReconnectCallback, addEditMessageId, addProtocolMessageId, fetchContactProfilePicture, fetchContactStatus, convertLidToPhoneJid, storeSentMessage };
+module.exports = { connectToWhatsApp, setReconnectCallback, addEditMessageId, addProtocolMessageId, fetchContactProfilePicture, fetchContactStatus, convertLidToPhoneJid, storeSentMessage, recordLidToPhone };

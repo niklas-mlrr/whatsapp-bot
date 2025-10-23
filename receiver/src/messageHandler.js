@@ -104,6 +104,10 @@ async function handleMessages(sock, m) {
                     // Prefer participantPn if present (already phone@s.whatsapp.net)
                     if (senderJid.endsWith('@lid') && msg.key && msg.key.participantPn) {
                         logger.debug({ from: senderJid, to: msg.key.participantPn }, 'Using participantPn as senderJid');
+                        try {
+                            const { recordLidToPhone } = require('./whatsappClient');
+                            recordLidToPhone(senderJid, msg.key.participantPn);
+                        } catch (_) {}
                         senderJid = msg.key.participantPn;
                     } else if (senderJid.endsWith('@lid')) {
                         // Try contact store conversion as fallback

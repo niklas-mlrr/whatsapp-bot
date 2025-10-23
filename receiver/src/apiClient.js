@@ -380,14 +380,18 @@ const sendGroupMetadata = async (groupData) => {
     try {
         const baseUrl = config.backend.apiUrl.replace(/\/api\/whatsapp-webhook\/?$/, '');
         
-        const response = await axios.post(`${baseUrl}/api/whatsapp-groups/create`, {
+        const payload = {
             group_id: groupData.groupId,
             name: groupData.groupName,
             description: groupData.groupDescription || '',
-            participants: groupData.participants || [],
             profile_picture_url: groupData.groupProfilePictureUrl || null,
             created_at: groupData.createdAt
-        }, {
+        };
+        if (Array.isArray(groupData.participants) && groupData.participants.length > 0) {
+            payload.participants = groupData.participants;
+        }
+
+        const response = await axios.post(`${baseUrl}/api/whatsapp-groups/create`, payload, {
             headers: {
                 'Content-Type': 'application/json',
                 'X-Webhook-Secret': process.env.WEBHOOK_SECRET || config.backend.webhookSecret || '',
