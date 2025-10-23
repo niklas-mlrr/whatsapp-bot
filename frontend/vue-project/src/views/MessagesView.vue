@@ -129,6 +129,7 @@
                     alt="Avatar"
                     class="w-8 h-8 object-cover"
                     referrerpolicy="no-referrer"
+                    @error="handleAvatarError(chat)"
                   />
                   <span v-else>{{ chat.name.slice(0,2).toUpperCase() }}</span>
                 </div>
@@ -188,6 +189,7 @@
             alt="Avatar"
             class="w-10 h-10 object-cover"
             referrerpolicy="no-referrer"
+            @error="handleAvatarError(selectedChat)"
           />
           <span v-else>{{ selectedChat.name.slice(0,2).toUpperCase() }}</span>
         </div>
@@ -434,6 +436,7 @@ import MessageList from '../components/MessageList.vue'
 import ContactsModal from '../components/ContactsModal.vue'
 import ContactInfoModal from '../components/ContactInfoModal.vue'
 import { fetchChats, sendMessage, uploadFile, deleteChat } from '../api/messages'
+import { API_CONFIG } from '@/config/api'
 import { useWebSocket } from '@/services/websocket'
 import apiClient from '@/services/api'
 
@@ -455,14 +458,28 @@ const loadingChats = ref(false)
 const errorChats = ref<string | null>(null)
 const selectedChat = ref<any | null>(null)
 const showSidebarOnMobile = ref(true)
+const avatarLoadFailed = ref<Record<string, boolean>>({})
 
 const chatAvatarUrl = (c: any) => {
   if (!c) return null
+  if (avatarLoadFailed.value?.[String(c.id)]) return null
   // Prefer explicit profile picture URLs we stored; avoid generated ui-avatars to prevent CORS
   const url = c?.contact_info?.profile_picture_url || c?.metadata?.avatar_url || null
   if (!url) return null
   if (typeof url === 'string' && url.includes('ui-avatars.com')) return null
-  return url
+  try {
+    const u = new URL(String(url))
+    if (typeof window !== 'undefined' && u.origin === window.location.origin) return String(url)
+    return `${API_CONFIG.BASE_URL}/images/avatar?url=${encodeURIComponent(String(url))}`
+  } catch {
+    return String(url)
+  }
+}
+
+const handleAvatarError = (c: any) => {
+  if (c && c.id != null) {
+    avatarLoadFailed.value[String(c.id)] = true
+  }
 }
 
 const selectedChatAvatarUrl = computed(() => selectedChat.value?.contact_info?.profile_picture_url || null)

@@ -13,6 +13,7 @@ use App\Models\WhatsAppMessage;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use App\Http\Controllers\Api\WhatsAppGroupController;
+use App\Http\Controllers\Api\ImageProxyController;
 
 /*
 |--------------------------------------------------------------------------
@@ -32,6 +33,9 @@ Route::post('/login', [\App\Http\Controllers\Api\AuthController::class, 'login']
 Route::post('/test', function () {
     return response()->json(['status' => 'ok']);
 });
+
+// Image proxy for external avatars (bypass CSP/CORS on client)
+Route::get('/images/avatar', [ImageProxyController::class, 'avatar']);
 
 // ============================================================================
 // DEBUG/TEST ENDPOINTS - ONLY AVAILABLE IN DEVELOPMENT
