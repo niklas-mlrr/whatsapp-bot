@@ -128,6 +128,7 @@
                     :src="chatAvatarUrl(chat) as any"
                     alt="Avatar"
                     class="w-8 h-8 object-cover"
+                    referrerpolicy="no-referrer"
                   />
                   <span v-else>{{ chat.name.slice(0,2).toUpperCase() }}</span>
                 </div>
@@ -186,6 +187,7 @@
             :src="chatAvatarUrl(selectedChat) as any"
             alt="Avatar"
             class="w-10 h-10 object-cover"
+            referrerpolicy="no-referrer"
           />
           <span v-else>{{ selectedChat.name.slice(0,2).toUpperCase() }}</span>
         </div>
@@ -456,7 +458,11 @@ const showSidebarOnMobile = ref(true)
 
 const chatAvatarUrl = (c: any) => {
   if (!c) return null
-  return c?.contact_info?.profile_picture_url || c?.avatar_url || c?.metadata?.avatar_url || null
+  // Prefer explicit profile picture URLs we stored; avoid generated ui-avatars to prevent CORS
+  const url = c?.contact_info?.profile_picture_url || c?.metadata?.avatar_url || null
+  if (!url) return null
+  if (typeof url === 'string' && url.includes('ui-avatars.com')) return null
+  return url
 }
 
 const selectedChatAvatarUrl = computed(() => selectedChat.value?.contact_info?.profile_picture_url || null)
@@ -842,8 +848,8 @@ async function sendMessageHandler() {
     // 2. WhatsApp ID from metadata
     // 3. Original name (the actual JID, not the formatted display name)
     // 4. Fall back to chat name
-    const chatJid = selectedChat.value.participants?.[0] 
-                    || selectedChat.value.metadata?.whatsapp_id 
+    const chatJid = selectedChat.value.metadata?.whatsapp_id 
+                    || selectedChat.value.participants?.[0] 
                     || selectedChat.value.original_name
                     || selectedChat.value.name;
     

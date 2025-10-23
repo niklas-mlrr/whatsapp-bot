@@ -60,7 +60,10 @@ class ChatController extends Controller
                     c.type,
                     c.unread_count,
                     c.participants,
-                    c.created_by
+                    c.created_by,
+                    c.contact_profile_picture_url,
+                    c.contact_description,
+                    c.contact_info_updated_at
                 FROM chats c
                 LEFT JOIN chat_user cu ON c.id = cu.chat_id AND cu.user_id = ?
                 WHERE (
@@ -110,6 +113,10 @@ class ChatController extends Controller
                     'created_by' => $chat->created_by,
                     'created_at' => $chat->created_at,
                     'updated_at' => $chat->updated_at,
+                    // Ensure contact info fields are present on the model instance
+                    'contact_profile_picture_url' => $chat->contact_profile_picture_url ?? null,
+                    'contact_description' => $chat->contact_description ?? null,
+                    'contact_info_updated_at' => $chat->contact_info_updated_at ?? null,
                 ]);
                 
                 // Format display name for phone numbers

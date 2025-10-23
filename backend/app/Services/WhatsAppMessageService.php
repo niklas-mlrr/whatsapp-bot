@@ -45,8 +45,7 @@ class WhatsAppMessageService
                     ['phone' => $data->sender],
                     [
                         'name' => 'WhatsApp User', 
-                        'password' => Hash::make(Str::random(32)),
-                        'status' => 'offline'
+                        'password' => Hash::make(Str::random(32))
                     ]
                 );
 
@@ -749,57 +748,88 @@ class WhatsAppMessageService
      */
     protected function findOrCreateChat(string $chatId, string $senderId): Chat
     {
-        // Normalize the WhatsApp JID to full format
-        // If it's in incomplete format (e.g., "4917646765869@"), normalize it
-        $normalizedChatId = $chatId;
-        if (preg_match('/^(\d+)@$/', $chatId, $matches)) {
-            // Incomplete format: add .s.whatsapp.net
-            $normalizedChatId = $matches[1] . '@s.whatsapp.net';
-        } elseif (!str_contains($chatId, '@')) {
-            // No @ at all: add full suffix
-            $normalizedChatId = $chatId . '@s.whatsapp.net';
-        }
-        
-        // Extract phone number for flexible searching
-        $phoneNumber = preg_replace('/@.*$/', '', $normalizedChatId);
-        
-        // Try to find existing chat by phone number (handles format variations)
-        $chat = Chat::where('is_group', false)
-            ->get()
-            ->first(function($c) use ($phoneNumber) {
-                $metadata = is_string($c->metadata) ? json_decode($c->metadata, true) : $c->metadata;
-                if (!$metadata || !isset($metadata['whatsapp_id'])) {
-                    return false;
-                }
-                $storedPhone = preg_replace('/@.*$/', '', $metadata['whatsapp_id']);
-                return $storedPhone === $phoneNumber;
-            });
+        // Preserve and normalize WhatsApp JIDs
+        $normalizedChatId = \App\Helpers\SecurityHelper::sanitizeJid($chatId) ?? $chatId;
 
-        if (!$chat) {
-            // Format the phone number for display (e.g., "+4917646765869")
-            $displayName = '+' . $phoneNumber;
-            
-            // Create new chat only if it doesn't exist
-            $chat = Chat::create([
-                'name' => $displayName, // Display formatted phone number, not WhatsApp JID
-                'is_group' => false,
-                'created_by' => $senderId,
-                'participants' => [$normalizedChatId, 'me'], // Store the normalized WhatsApp JID and 'me'
-                'pending_approval' => true, // New chats from incoming messages need approval
-                'metadata' => [
+        // If this is a group JID, resolve against group chats
+        if (str_ends_with($normalizedChatId, '@g.us')) {
+            $chat = Chat::where('is_group', true)
+                ->where('metadata->whatsapp_id', $normalizedChatId)
+                ->first();
+
+            if (!$chat) {
+                // Create a minimal group chat record so messages can be routed correctly
+                $chat = Chat::create([
+                    'name' => 'WhatsApp Group',
+                    'is_group' => true,
+                    'created_by' => $senderId,
+                    'pending_approval' => true,
+                    'participants' => [],
+                    'metadata' => [
+                        'whatsapp_id' => $normalizedChatId,
+                        'created_by' => $senderId
+                    ]
+                ]);
+
+                Log::channel('whatsapp')->info('Created new group chat from incoming message', [
+                    'chat_id' => $chat->id,
                     'whatsapp_id' => $normalizedChatId,
-                    'created_by' => $senderId
-                ]
-            ]);
-            
-            Log::channel('whatsapp')->info('Created new chat', [
-                'chat_id' => $chat->id,
-                'whatsapp_id' => $normalizedChatId,
-                'original_chat_id' => $chatId
-            ]);
-            
-            // Broadcast new chat event via WebSocket
-            $this->webSocketService->newChatCreated($chat);
+                    'original_chat_id' => $chatId
+                ]);
+
+                $this->webSocketService->newChatCreated($chat);
+            }
+
+            // Attach operator if needed below and return
+            // (fall through to user attachment logic at the end)
+        } else {
+            // Direct chat handling
+            // Normalize incomplete/short formats to @s.whatsapp.net
+            if (preg_match('/^(\+?\d+)@$/', $normalizedChatId, $matches)) {
+                $normalizedChatId = ltrim($matches[1], '+') . '@s.whatsapp.net';
+            } elseif (!str_contains($normalizedChatId, '@')) {
+                $normalizedChatId = ltrim($normalizedChatId, '+') . '@s.whatsapp.net';
+            }
+
+            // Extract phone number for flexible searching
+            $phoneNumber = preg_replace('/@.*$/', '', $normalizedChatId);
+
+            // Try to find existing direct chat by phone number (ignoring domain variations)
+            $chat = Chat::where('is_group', false)
+                ->get()
+                ->first(function ($c) use ($phoneNumber) {
+                    $metadata = is_string($c->metadata) ? json_decode($c->metadata, true) : $c->metadata;
+                    if (!$metadata || !isset($metadata['whatsapp_id'])) {
+                        return false;
+                    }
+                    $storedPhone = preg_replace('/@.*$/', '', $metadata['whatsapp_id']);
+                    return $storedPhone === $phoneNumber;
+                });
+
+            if (!$chat) {
+                // Format the phone number for display (e.g., "+4917646765869")
+                $displayName = '+' . $phoneNumber;
+
+                $chat = Chat::create([
+                    'name' => $displayName,
+                    'is_group' => false,
+                    'created_by' => $senderId,
+                    'participants' => [$normalizedChatId, 'me'],
+                    'pending_approval' => true,
+                    'metadata' => [
+                        'whatsapp_id' => $normalizedChatId,
+                        'created_by' => $senderId
+                    ]
+                ]);
+
+                Log::channel('whatsapp')->info('Created new direct chat', [
+                    'chat_id' => $chat->id,
+                    'whatsapp_id' => $normalizedChatId,
+                    'original_chat_id' => $chatId
+                ]);
+
+                $this->webSocketService->newChatCreated($chat);
+            }
         }
 
         // Ensure sender is connected to chat

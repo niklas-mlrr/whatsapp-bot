@@ -53,6 +53,34 @@ class SecurityHelper
         return preg_replace('/[^0-9+@]/', '', $phone);
     }
     
+    public static function sanitizeJid(?string $jid): ?string
+    {
+        if ($jid === null) {
+            return null;
+        }
+        
+        $jid = trim($jid);
+        if ($jid === '') {
+            return $jid;
+        }
+        
+        if (strpos($jid, '@') === false) {
+            return self::sanitizePhone($jid);
+        }
+        
+        $jid = strtolower($jid);
+        
+        if (preg_match('/^(\+?\d{5,})@s\.whatsapp\.net$/', $jid, $m)) {
+            return $m[1] . '@s.whatsapp.net';
+        }
+        
+        if (preg_match('/^(\d{5,})@g\.us$/', $jid, $m)) {
+            return $m[1] . '@g.us';
+        }
+        
+        return preg_replace('/[^0-9+@a-z\.]/', '', $jid);
+    }
+    
     /**
      * Sanitize filename to prevent directory traversal
      *

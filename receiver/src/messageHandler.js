@@ -2,7 +2,7 @@ const { downloadMediaMessage, proto } = require('@whiskeysockets/baileys');
 const { logger } = require('./logger');
 const { sendToPHP } = require('./apiClient');
 const config = require('./config');
-const { convertLidToPhoneJid } = require('./whatsappClient');
+// Note: Avoid importing from whatsappClient at top-level to prevent circular dependency
 
  
 function unwrapMessage(message) {
@@ -47,6 +47,10 @@ async function handleMessages(sock, m) {
             if (!msg.key.fromMe && m.type === 'notify') {
                 const remoteJid = msg.key.remoteJid;
                 const isGroup = remoteJid?.endsWith('@g.us');
+                if (!msg.message) {
+                    logger.debug({ remoteJid, messageId: msg.key.id }, 'Skipping message with no content (likely decryption failed)');
+                    continue;
+                }
                 
                 // Fetch sender profile picture and bio for direct chats
                 let senderProfilePicture = null;
@@ -97,7 +101,27 @@ async function handleMessages(sock, m) {
                 
                 // Convert LID to phone JID for group participants
                 if (isGroup && senderJid) {
-                    senderJid = convertLidToPhoneJid(sock, senderJid);
+                    // Prefer participantPn if present (already phone@s.whatsapp.net)
+                    if (senderJid.endsWith('@lid') && msg.key && msg.key.participantPn) {
+                        logger.debug({ from: senderJid, to: msg.key.participantPn }, 'Using participantPn as senderJid');
+                        senderJid = msg.key.participantPn;
+                    } else if (senderJid.endsWith('@lid')) {
+                        // Try contact store conversion as fallback
+                        try {
+                            const { convertLidToPhoneJid } = require('./whatsappClient');
+                            if (typeof convertLidToPhoneJid === 'function') {
+                                const converted = convertLidToPhoneJid(sock, senderJid);
+                                if (converted !== senderJid) {
+                                    logger.debug({ from: senderJid, to: converted }, 'Converted LID to phone JID');
+                                }
+                                senderJid = converted;
+                            } else {
+                                logger.debug({ senderJid }, 'convertLidToPhoneJid not a function, using raw senderJid');
+                            }
+                        } catch (e) {
+                            logger.debug({ error: e.message, senderJid }, 'convertLidToPhoneJid not available, using raw senderJid');
+                        }
+                    }
                 }
 
                 
@@ -202,7 +226,7 @@ async function handleMessages(sock, m) {
             }
         }
     } catch (error) {
-        logger.error({ error }, 'Unexpected error in handleMessages');
+        logger.error({ error: error?.message || String(error), stack: error?.stack }, 'Unexpected error in handleMessages');
     }
 }
 

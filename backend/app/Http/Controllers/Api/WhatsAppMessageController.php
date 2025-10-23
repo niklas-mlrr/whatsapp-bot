@@ -436,7 +436,6 @@ class WhatsAppMessageController extends Controller
             [
                 'name' => 'WhatsApp User',
                 'password' => bcrypt(Str::random(32)),
-                'status' => 'offline',
             ]
         );
         
@@ -461,51 +460,72 @@ class WhatsAppMessageController extends Controller
         }
 
         // 2) Resolve or create chat by WhatsApp JID stored in metadata->whatsapp_id
-        // Normalize the WhatsApp JID to full format
-        $chatId = $data['chat'];
-        $normalizedChatId = $chatId;
-        if (preg_match('/^(\d+)@$/', $chatId, $matches)) {
-            // Incomplete format: add .s.whatsapp.net
-            $normalizedChatId = $matches[1] . '@s.whatsapp.net';
-        } elseif (!str_contains($chatId, '@')) {
-            // No @ at all: add full suffix
-            $normalizedChatId = $chatId . '@s.whatsapp.net';
-        }
-        
-        // Extract phone number for flexible searching
-        $phoneNumber = preg_replace('/@.*$/', '', $normalizedChatId);
-        
-        // Try to find existing chat by phone number (handles format variations)
-        $chat = Chat::where('is_group', false)
-            ->get()
-            ->first(function($c) use ($phoneNumber) {
-                $metadata = is_string($c->metadata) ? json_decode($c->metadata, true) : $c->metadata;
-                if (!$metadata || !isset($metadata['whatsapp_id'])) {
-                    return false;
-                }
-                $storedPhone = preg_replace('/@.*$/', '', $metadata['whatsapp_id']);
-                return $storedPhone === $phoneNumber;
-            });
-            
-        if (!$chat) {
-            // Format the phone number for display (e.g., "+4917646765869")
-            $displayName = '+' . $phoneNumber;
-            
-            $chat = Chat::create([
-                'name' => $displayName, // Display formatted phone number, not WhatsApp JID
-                'is_group' => false,
-                'created_by' => $user->id,
-                'participants' => [$normalizedChatId, 'me'], // Store the normalized WhatsApp JID and 'me'
-                'contact_profile_picture_url' => $data['senderProfilePictureUrl'] ?? null,
-                'metadata' => [
-                    'whatsapp_id' => $normalizedChatId,
+        $chatJidRaw = $data['chat'];
+        $chatJid = \App\Helpers\SecurityHelper::sanitizeJid($chatJidRaw) ?? $chatJidRaw;
+
+        if (str_ends_with($chatJid, '@g.us')) {
+            // Group chat: find by whatsapp_id
+            $chat = Chat::where('is_group', true)
+                ->where('metadata->whatsapp_id', $chatJid)
+                ->first();
+
+            if (!$chat) {
+                // Create a minimal group chat so the message associates correctly
+                $chat = Chat::create([
+                    'name' => 'WhatsApp Group',
+                    'is_group' => true,
                     'created_by' => $user->id,
-                ],
-            ]);
+                    'participants' => [],
+                    'metadata' => [
+                        'whatsapp_id' => $chatJid,
+                        'created_by' => $user->id,
+                    ],
+                ]);
+            }
         } else {
-            // Update existing chat with profile picture if provided
-            if (!empty($data['senderProfilePictureUrl']) && empty($chat->contact_profile_picture_url)) {
-                $chat->update(['contact_profile_picture_url' => $data['senderProfilePictureUrl']]);
+            // Direct chat handling: normalize to @s.whatsapp.net when needed
+            $normalizedChatId = $chatJid;
+            if (preg_match('/^(\+?\d+)@$/', $normalizedChatId, $matches)) {
+                $normalizedChatId = ltrim($matches[1], '+') . '@s.whatsapp.net';
+            } elseif (!str_contains($normalizedChatId, '@')) {
+                $normalizedChatId = ltrim($normalizedChatId, '+') . '@s.whatsapp.net';
+            }
+
+            // Extract phone number for flexible searching
+            $phoneNumber = preg_replace('/@.*$/', '', $normalizedChatId);
+
+            // Try to find existing chat by phone number (handles format variations)
+            $chat = Chat::where('is_group', false)
+                ->get()
+                ->first(function($c) use ($phoneNumber) {
+                    $metadata = is_string($c->metadata) ? json_decode($c->metadata, true) : $c->metadata;
+                    if (!$metadata || !isset($metadata['whatsapp_id'])) {
+                        return false;
+                    }
+                    $storedPhone = preg_replace('/@.*$/', '', $metadata['whatsapp_id']);
+                    return $storedPhone === $phoneNumber;
+                });
+
+            if (!$chat) {
+                // Format the phone number for display (e.g., "+4917646765869")
+                $displayName = '+' . $phoneNumber;
+
+                $chat = Chat::create([
+                    'name' => $displayName,
+                    'is_group' => false,
+                    'created_by' => $user->id,
+                    'participants' => [$normalizedChatId, 'me'],
+                    'contact_profile_picture_url' => $data['senderProfilePictureUrl'] ?? null,
+                    'metadata' => [
+                        'whatsapp_id' => $normalizedChatId,
+                        'created_by' => $user->id,
+                    ],
+                ]);
+            } else {
+                // Update existing chat with profile picture if provided
+                if (!empty($data['senderProfilePictureUrl']) && empty($chat->contact_profile_picture_url)) {
+                    $chat->update(['contact_profile_picture_url' => $data['senderProfilePictureUrl']]);
+                }
             }
         }
 

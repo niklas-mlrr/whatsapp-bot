@@ -26,6 +26,33 @@ let reconnectTimeout = null;
 // Track edit message IDs to skip their status updates
 const editMessageIds = new Set();
 const protocolMessageIds = new Set();
+// Store recently sent messages so we can satisfy retry requests from recipients
+// Map: messageId -> { message: proto content, expiresAt: number }
+const messageStore = new Map();
+
+/**
+ * Store a sent message's content for a limited time so Baileys can re-upload on retry
+ * @param {string} messageId
+ * @param {object} messageContent - The exact object passed to sock.sendMessage()
+ * @param {number} ttlMs - Time to keep in cache (default 10 minutes)
+ */
+function storeSentMessage(messageId, messageContent, ttlMs = 10 * 60 * 1000) {
+    try {
+        if (!messageId || !messageContent) return;
+        const expiresAt = Date.now() + ttlMs;
+        messageStore.set(messageId, { message: messageContent, expiresAt });
+        logger.debug({ messageId, ttlMs }, 'Stored sent message for retry support');
+        setTimeout(() => {
+            const entry = messageStore.get(messageId);
+            if (entry && entry.expiresAt <= Date.now()) {
+                messageStore.delete(messageId);
+                logger.debug({ messageId }, 'Expired sent message removed from store');
+            }
+        }, ttlMs).unref?.();
+    } catch (err) {
+        logger.debug({ err: err.message, messageId }, 'Failed to store sent message');
+    }
+}
 
 /**
  * Add a message ID to the edit tracking set
@@ -178,8 +205,28 @@ async function connectToWhatsApp() {
             connectTimeoutMs: 60000, // 60 second timeout for initial connection
             defaultQueryTimeoutMs: undefined, // Disable query timeout to prevent premature disconnects
             getMessage: async (key) => {
-                logger.debug({ key }, 'Getting message from key');
-                return null; // Return null to let Baileys handle message fetching
+                try {
+                    const id = key?.id;
+                    if (!id) {
+                        logger.debug({ key }, 'getMessage called without id');
+                        return null;
+                    }
+                    const entry = messageStore.get(id);
+                    if (entry) {
+                        // Refresh TTL on access to increase chance of satisfying retries
+                        const ttlMs = Math.max(1, entry.expiresAt - Date.now());
+                        if (ttlMs > 0) {
+                            messageStore.set(id, { message: entry.message, expiresAt: Date.now() + ttlMs });
+                        }
+                        logger.debug({ id }, 'getMessage hit: returning stored message');
+                        return entry.message;
+                    }
+                    logger.debug({ id }, 'getMessage miss: no stored message');
+                    return null;
+                } catch (err) {
+                    logger.debug({ err: err.message }, 'getMessage error');
+                    return null;
+                }
             },
         });
 
@@ -496,4 +543,4 @@ async function connectToWhatsApp() {
     }
 }
 
-module.exports = { connectToWhatsApp, setReconnectCallback, addEditMessageId, addProtocolMessageId, fetchContactProfilePicture, fetchContactStatus, convertLidToPhoneJid };
+module.exports = { connectToWhatsApp, setReconnectCallback, addEditMessageId, addProtocolMessageId, fetchContactProfilePicture, fetchContactStatus, convertLidToPhoneJid, storeSentMessage };

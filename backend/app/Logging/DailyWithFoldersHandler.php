@@ -42,12 +42,17 @@ class DailyWithFoldersHandler extends StreamHandler
         
         // Create directory if it doesn't exist
         if (!is_dir($directory)) {
-            mkdir($directory, 0755, true);
+            mkdir($directory, 0775, true);
         }
         
         // Generate filename with only the day (year/month are in folder structure)
         $filename = $this->filenamePrefix . '-' . $day . '.log';
         $this->currentPath = $directory . DIRECTORY_SEPARATOR . $filename;
+
+        if (!file_exists($this->currentPath)) {
+            @touch($this->currentPath);
+            @chmod($this->currentPath, 0664);
+        }
     }
 
     public function handle(LogRecord $record): bool

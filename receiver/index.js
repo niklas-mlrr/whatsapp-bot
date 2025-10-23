@@ -1,4 +1,4 @@
-const { connectToWhatsApp, setReconnectCallback } = require('./src/whatsappClient');
+const { connectToWhatsApp, setReconnectCallback, storeSentMessage } = require('./src/whatsappClient');
 const express = require('express');
 const bodyParser = require('body-parser');
 const axios = require('axios');
@@ -269,7 +269,16 @@ async function start() {
             if (type === 'text') {
                 console.log('Sending text message to', chat, quotedMessage ? 'with quote' : '');
                 const messageOptions = quotedMessage ? { quoted: quotedMessage } : {};
-                sentMessage = await sockInstance.sendMessage(targetChat, { text: content || '' }, { ...messageOptions, waitForAck: false });
+                const contentObj = { text: content || '' };
+                sentMessage = await sockInstance.sendMessage(targetChat, contentObj, { ...messageOptions, waitForAck: false });
+                // Store a proto-like representation for retry support
+                try {
+                    const id = sentMessage?.key?.id;
+                    if (id) {
+                        const protoLike = { conversation: content || '' };
+                        storeSentMessage(id, protoLike);
+                    }
+                } catch (_) {}
             } else if (type === 'image' && media) {
                 console.log('Processing image message for', chat);
                 try {

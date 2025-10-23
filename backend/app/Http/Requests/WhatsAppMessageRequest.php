@@ -90,15 +90,19 @@ class WhatsAppMessageRequest extends FormRequest
         }
         
         if ($this->has('sender')) {
-            $sanitizedData['sender'] = \App\Helpers\SecurityHelper::sanitizePhone($this->input('sender'));
+            $sanitizedData['sender'] = \App\Helpers\SecurityHelper::sanitizeJid($this->input('sender'));
         }
         
         if ($this->has('from')) {
-            $sanitizedData['from'] = \App\Helpers\SecurityHelper::sanitizePhone($this->input('from'));
+            $sanitizedData['from'] = \App\Helpers\SecurityHelper::sanitizeJid($this->input('from'));
         }
         
         if ($this->has('chat')) {
-            $sanitizedData['chat'] = \App\Helpers\SecurityHelper::sanitizePhone($this->input('chat'));
+            $sanitizedData['chat'] = \App\Helpers\SecurityHelper::sanitizeJid($this->input('chat'));
+        }
+        
+        if ($this->has('senderJid')) {
+            $sanitizedData['senderJid'] = \App\Helpers\SecurityHelper::sanitizeJid($this->input('senderJid'));
         }
         
         if ($this->has('fileName')) {
