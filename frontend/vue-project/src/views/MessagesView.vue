@@ -121,8 +121,17 @@
             <li v-for="chat in approvedChats" :key="chat.id" 
                 @click="selectChat(chat)"
                 :class="['cursor-pointer px-4 py-3 border-b border-gray-100 dark:border-zinc-700 hover:bg-green-50 dark:hover:bg-zinc-700 relative group flex items-center justify-between dark:text-gray-200', selectedChat && selectedChat.id === chat.id ? 'bg-green-100 dark:bg-green-900/20 font-bold' : '']">
-              <div class="flex items-center gap-2 flex-1">
-                <span class="flex-1">{{ chat.name }}</span>
+              <div class="flex items-center gap-3 flex-1">
+                <div class="w-8 h-8 rounded-full overflow-hidden bg-green-300 flex items-center justify-center text-green-700 font-bold" :key="'lst-'+chat.id+'-'+(chat.contact_info_updated_at||'no')">
+                  <img
+                    v-if="chatAvatarUrl(chat)"
+                    :src="chatAvatarUrl(chat) as any"
+                    alt="Avatar"
+                    class="w-8 h-8 object-cover"
+                  />
+                  <span v-else>{{ chat.name.slice(0,2).toUpperCase() }}</span>
+                </div>
+                <span class="flex-1 truncate">{{ chat.name }}</span>
                 <!-- Unread message indicator -->
                 <span 
                   v-if="chat.unread_count && chat.unread_count > 0 && (!selectedChat || selectedChat.id !== chat.id)"
@@ -171,11 +180,19 @@
     <main class="flex-1 flex flex-col h-full overflow-hidden">
       <!-- Chat header (only shown when chat is selected) -->
       <div v-if="selectedChat" class="flex items-center gap-3 px-4 md:px-6 py-3 md:py-4 bg-white dark:bg-zinc-900 border-b border-gray-200 dark:border-zinc-800 shadow-sm min-h-[56px] md:min-h-[64px] sticky top-0 z-10">
-        <div class="w-10 h-10 rounded-full bg-green-300 flex items-center justify-center text-green-700 font-bold text-lg">
-          <span>{{ selectedChat.name.slice(0,2).toUpperCase() }}</span>
+        <div class="w-10 h-10 rounded-full overflow-hidden bg-green-300 flex items-center justify-center text-green-700 font-bold text-lg" :key="'hdr-'+selectedChatAvatarKey">
+          <img
+            v-if="chatAvatarUrl(selectedChat)"
+            :src="chatAvatarUrl(selectedChat) as any"
+            alt="Avatar"
+            class="w-10 h-10 object-cover"
+          />
+          <span v-else>{{ selectedChat.name.slice(0,2).toUpperCase() }}</span>
         </div>
-        <div class="flex flex-col flex-1">
-          <span class="font-semibold text-lg text-gray-900 dark:text-gray-100">{{ selectedChat.name }}</span>
+        <div class="flex flex-col flex-1 cursor-pointer" @click="openContactInfo">
+          <span class="font-semibold text-lg text-gray-900 dark:text-gray-100 hover:text-green-600 dark:hover:text-green-400 transition-colors">
+            {{ selectedChat.name }}
+          </span>
         </div>
         <!-- Add to contacts button (shown when chat name looks like a phone number) -->
         <button
@@ -356,6 +373,14 @@
       @chat-selected="handleChatSelected"
     />
 
+    <!-- Contact Info Modal -->
+    <ContactInfoModal
+      v-if="selectedChat"
+      :is-open="showContactInfoModal"
+      :chat="selectedChat"
+      @close="showContactInfoModal = false"
+    />
+
     <!-- New Chat Modal -->
     <div v-if="showNewChatModal" class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4" @click.self="closeNewChatModal">
       <div class="bg-white dark:bg-zinc-900 rounded-lg shadow-xl max-w-md w-full p-6">
@@ -400,10 +425,12 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
+import { Dialog } from '@headlessui/vue'
 import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
 import MessageList from '../components/MessageList.vue'
 import ContactsModal from '../components/ContactsModal.vue'
+import ContactInfoModal from '../components/ContactInfoModal.vue'
 import { fetchChats, sendMessage, uploadFile, deleteChat } from '../api/messages'
 import { useWebSocket } from '@/services/websocket'
 import apiClient from '@/services/api'
@@ -426,6 +453,26 @@ const loadingChats = ref(false)
 const errorChats = ref<string | null>(null)
 const selectedChat = ref<any | null>(null)
 const showSidebarOnMobile = ref(true)
+
+const chatAvatarUrl = (c: any) => {
+  if (!c) return null
+  return c?.contact_info?.profile_picture_url || c?.avatar_url || c?.metadata?.avatar_url || null
+}
+
+const selectedChatAvatarUrl = computed(() => selectedChat.value?.contact_info?.profile_picture_url || null)
+const selectedChatAvatarKey = computed(() => {
+  const c: any = selectedChat.value
+  if (!c) return 'no'
+  return `${c.id}-${c.contact_info_updated_at || 'no'}-${c?.contact_info?.profile_picture_url || 'no'}`
+})
+
+const syncSelectedChat = (newChats: any[]) => {
+  if (!selectedChat.value) return
+  const updated = newChats.find((c: any) => c.id === selectedChat.value.id)
+  if (updated) {
+    selectedChat.value = updated
+  }
+}
 
 // Separate pending and approved chats
 const approvedChats = computed(() => {
@@ -491,6 +538,7 @@ const messageListRef = ref<any>(null)
 const typingTimeout = ref<number | null>(null)
 const isLoggingOut = ref(false)
 const showContactsModal = ref(false)
+const showContactInfoModal = ref(false)
 const prefilledContactPhone = ref<string | undefined>(undefined)
 const chatIdToUpdate = ref<string | undefined>(undefined)
 const showNewChatModal = ref(false)
@@ -546,6 +594,7 @@ const handleContactsModalClose = async () => {
     const response = await fetchChats()
     if (response && response.data && response.data.data) {
       chats.value = response.data.data
+      syncSelectedChat(chats.value)
       
       // Update selected chat if it was renamed (only update if name changed to avoid remounting)
       if (selectedChat.value) {
@@ -565,6 +614,13 @@ const handleChatSelected = (chatId: string) => {
   const chat = chats.value.find(c => c.id === chatId)
   if (chat) {
     selectChat(chat)
+  }
+}
+
+// Open contact info modal
+const openContactInfo = () => {
+  if (selectedChat.value) {
+    showContactInfoModal.value = true
   }
 }
 
@@ -1271,8 +1327,7 @@ onMounted(async () => {
         
         // Update the chats list
         chats.value = newChats
-        
-        // Update complete
+        syncSelectedChat(newChats)
       }
     } catch (error) {
       console.error('Error polling for new chats:', error)

@@ -166,9 +166,13 @@ class ChatController extends Controller
                     'participants' => $cleanParticipants, // Clean phone numbers without @s.whatsapp.net
                     'metadata' => $metadata,
                     'avatar_url' => $chatModel->avatar_url,
+                    // Expose contact info (profile picture + bio/description) to frontend
+                    'contact_info' => $chatModel->contact_info,
+                    'contact_info_updated_at' => $chatModel->contact_info_updated_at,
                     'updated_at' => $chat->updated_at,
                     'created_at' => $chat->created_at,
-                    'description' => null, // Description field doesn't exist in database
+                    // Legacy field kept for backward compatibility; prefer contact_info.description/bio
+                    'description' => null,
                     'is_archived' => $chat->is_archived,
                     'is_muted' => $chat->is_muted,
                     'pending_approval' => (bool)($chat->pending_approval ?? false),

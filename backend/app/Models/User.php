@@ -25,6 +25,8 @@ class User extends Authenticatable
         'password',
         'phone',
         'avatar',
+        'profile_picture_url',
+        'bio',
         'status',
         'last_seen_at',
         'settings',
@@ -53,8 +55,24 @@ class User extends Authenticatable
         'last_seen_at' => 'datetime',
     ];
 
+    /**
+     * Get the user's profile picture URL.
+     * Prioritizes profile_picture_url (from WhatsApp) over avatar.
+     */
+    public function getProfilePictureUrlAttribute()
+    {
+        // Check if profile_picture_url exists and has a value (WhatsApp profile picture)
+        if (isset($this->attributes['profile_picture_url']) && $this->attributes['profile_picture_url']) {
+            return $this->attributes['profile_picture_url'];
+        }
+        
+        // Fall back to avatar_url
+        return $this->avatar_url;
+    }
+
     protected $appends = [
         'avatar_url',
+        'profile_picture_url',
     ];
 
     /**

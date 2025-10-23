@@ -51,7 +51,7 @@ let logger = createBaseLogger();
 if (config.logging.logToFile) {
     try {
         ensureLogDirectoryExists(config.logging.logFilePath);
-        
+
         // Determine rotation availability
         let rotationEnabled = config.logging.rotate;
         if (rotationEnabled) {
@@ -64,27 +64,15 @@ if (config.logging.logToFile) {
         }
 
         // Create a file transport with rotation when available
-        const transportTargets = [
-            {
-                level: config.logging.level,
-                target: 'pino/file',
-                options: {
-                    destination: config.logging.logFilePath,
-                    mkdir: true,
-                },
-            },
-        ];
+        const transportTargets = [];
 
         if (rotationEnabled) {
-            // Extract directory and filename for rotation
-            const logDir = path.dirname(config.logging.logFilePath);
-            const logFileName = path.basename(config.logging.logFilePath, '.log');
-            
+            // Use strftime pattern: logs/%Y/%m/app-%d.log
             transportTargets.push({
                 level: config.logging.level,
                 target: 'pino-roll',
                 options: {
-                    file: path.join(logDir, `${logFileName}-%Y-%m-%d.log`),
+                    file: config.logging.filePatternPath,
                     frequency: 'daily',
                     mkdir: true,
                     size: config.logging.maxFileSize || '100m',
@@ -92,12 +80,22 @@ if (config.logging.logToFile) {
                     count: config.logging.maxFiles || 10,
                 },
             });
+        } else {
+            // Fallback to plain file write: logs/YYYY/MM/app-DD.log
+            transportTargets.push({
+                level: config.logging.level,
+                target: 'pino/file',
+                options: {
+                    destination: config.logging.logFilePath,
+                    mkdir: true,
+                },
+            });
         }
 
         const fileTransport = pino.transport({
             targets: transportTargets,
         });
-        
+
         // Create a new logger with both console and file transports
         logger = pino(
             {
@@ -109,8 +107,12 @@ if (config.logging.logToFile) {
                 { stream: fileTransport },
             ])
         );
-        
-        logger.info(`Logging to file: ${path.resolve(config.logging.logFilePath)}`);
+
+        if (rotationEnabled) {
+            logger.info(`Logging (rotating daily) to: ${config.logging.filePatternPath}`);
+        } else {
+            logger.info(`Logging to file: ${path.resolve(config.logging.logFilePath)}`);
+        }
     } catch (error) {
         // If file logging fails, fall back to console logging
         logger.error({ error }, 'Failed to initialize file logging. Falling back to console logging.');

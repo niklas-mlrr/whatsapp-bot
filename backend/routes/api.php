@@ -12,6 +12,7 @@ use App\Models\User;
 use App\Models\WhatsAppMessage;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use App\Http\Controllers\Api\WhatsAppGroupController;
 
 /*
 |--------------------------------------------------------------------------
@@ -224,6 +225,9 @@ Route::middleware(['throttle:120,1'])->group(function () {
     // Notify of message edit/delete from other users (called by receiver)
     Route::post('/messages/notify-edit', [WhatsAppMessageController::class, 'notifyEdit']);
     Route::post('/messages/notify-delete', [WhatsAppMessageController::class, 'notifyDelete']);
+    
+    // Create or update group when user is added to a group (called by receiver)
+    Route::post('/whatsapp-groups/create', [\App\Http\Controllers\Api\WhatsAppGroupController::class, 'createOrUpdate']);
 });
 
 // Protected routes (require authentication + rate limiting)

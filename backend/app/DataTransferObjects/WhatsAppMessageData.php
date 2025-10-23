@@ -23,6 +23,9 @@ class WhatsAppMessageData
         public ?string $emoji = null,
         public ?string $senderJid = null,
         public ?array $quotedMessage = null,
+        // Contact info from receiver (optional)
+        public ?string $senderProfilePictureUrl = null,
+        public ?string $senderBio = null,
         public ?int $sender_id = null,
         public ?int $chat_id = null
     ) {
@@ -69,7 +72,9 @@ class WhatsAppMessageData
             reactedMessageId: $validated['reactedMessageId'] ?? null,
             emoji: $validated['emoji'] ?? null,
             senderJid: $validated['senderJid'] ?? null,
-            quotedMessage: $validated['quotedMessage'] ?? null
+            quotedMessage: $validated['quotedMessage'] ?? null,
+            senderProfilePictureUrl: $validated['senderProfilePictureUrl'] ?? null,
+            senderBio: $validated['senderBio'] ?? null
         );
     }
 }

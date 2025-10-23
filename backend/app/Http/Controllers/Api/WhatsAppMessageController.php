@@ -334,6 +334,66 @@ class WhatsAppMessageController extends Controller
         }
     }
 
+    /**
+     * Update contact info if needed
+     */
+    private function updateContactInfoIfNeeded(Chat $chat, array $data): void
+    {
+        // Normalize contact_info_updated_at to Carbon instance if needed
+        $lastUpdated = $chat->contact_info_updated_at;
+        if (is_string($lastUpdated)) {
+            $lastUpdated = \Illuminate\Support\Carbon::parse($lastUpdated);
+        }
+
+        // Debug log the received data
+        \Log::debug('Updating contact info', [
+            'chat_id' => $chat->id,
+            'received_data' => array_keys($data),
+            'has_profile_picture' => !empty($data['senderProfilePictureUrl']),
+            'has_bio' => !empty($data['senderBio']),
+            'current_updated_at' => $lastUpdated,
+            'should_update' => !$lastUpdated || $lastUpdated->lt(now()->subDay())
+        ]);
+
+        // Skip if no contact info is provided
+        if (empty($data['senderProfilePictureUrl']) && empty($data['senderBio'])) {
+            \Log::debug('No contact info provided to update');
+            return;
+        }
+
+        // Check if we need to update the contact info
+        $shouldUpdate = false;
+        $updates = [];
+
+        // Check if contact info was never updated or was updated more than 24 hours ago
+        if (!$lastUpdated || $lastUpdated->lt(now()->subDay())) {
+            $shouldUpdate = true;
+            \Log::debug('Contact info should be updated (never or >24h old)');
+        }
+
+        // If we have a profile picture URL and it's different from the current one
+        if (!empty($data['senderProfilePictureUrl']) && 
+            $chat->contact_profile_picture_url !== $data['senderProfilePictureUrl']) {
+            $updates['contact_profile_picture_url'] = $data['senderProfilePictureUrl'];
+            $shouldUpdate = true;
+            \Log::debug('Updating profile picture', ['url_length' => strlen($data['senderProfilePictureUrl'])]);
+        }
+
+        // If we have a bio and it's different from the current one
+        if (!empty($data['senderBio']) && 
+            $chat->contact_description !== $data['senderBio']) {
+            $updates['contact_description'] = $data['senderBio'];
+            $shouldUpdate = true;
+            \Log::debug('Updating bio', ['bio_length' => strlen($data['senderBio'])]);
+        }
+
+        // Update the contact info if needed
+        if ($shouldUpdate && !empty($updates)) {
+            $updates['contact_info_updated_at'] = now();
+            $chat->update($updates);
+        }
+    }
+
     // POST /api/messages
     public function store(Request $request): JsonResponse
     {
@@ -357,6 +417,9 @@ class WhatsAppMessageController extends Controller
             'reactedMessageId' => 'nullable|string',
             'emoji' => 'nullable|string',
             'senderJid' => 'nullable|string',
+            // Sender profile info
+            'senderProfilePictureUrl' => 'nullable|url',
+            'senderBio' => 'nullable|string|max:500',
         ]);
         
         // Handle reaction messages separately
@@ -376,6 +439,26 @@ class WhatsAppMessageController extends Controller
                 'status' => 'offline',
             ]
         );
+        
+        // Update user profile picture and bio if provided
+        if (!empty($data['senderProfilePictureUrl']) || !empty($data['senderBio'])) {
+            $updateData = [];
+            if (!empty($data['senderProfilePictureUrl'])) {
+                $updateData['profile_picture_url'] = $data['senderProfilePictureUrl'];
+            }
+            if (!empty($data['senderBio'])) {
+                $updateData['bio'] = $data['senderBio'];
+            }
+            if (!empty($updateData)) {
+                $user->update($updateData);
+                \Log::info('Updated user profile info', [
+                    'user_id' => $user->id,
+                    'phone' => $data['sender'],
+                    'has_picture' => !empty($data['senderProfilePictureUrl']),
+                    'has_bio' => !empty($data['senderBio'])
+                ]);
+            }
+        }
 
         // 2) Resolve or create chat by WhatsApp JID stored in metadata->whatsapp_id
         // Normalize the WhatsApp JID to full format
@@ -413,11 +496,17 @@ class WhatsAppMessageController extends Controller
                 'is_group' => false,
                 'created_by' => $user->id,
                 'participants' => [$normalizedChatId, 'me'], // Store the normalized WhatsApp JID and 'me'
+                'contact_profile_picture_url' => $data['senderProfilePictureUrl'] ?? null,
                 'metadata' => [
                     'whatsapp_id' => $normalizedChatId,
                     'created_by' => $user->id,
                 ],
             ]);
+        } else {
+            // Update existing chat with profile picture if provided
+            if (!empty($data['senderProfilePictureUrl']) && empty($chat->contact_profile_picture_url)) {
+                $chat->update(['contact_profile_picture_url' => $data['senderProfilePictureUrl']]);
+            }
         }
 
         // Optional: attach user to chat (ignore if exists)
@@ -972,6 +1061,25 @@ class WhatsAppMessageController extends Controller
             
             // Store original content
             $originalContent = $message->content;
+            
+            // Update chat's last message
+            $chat = $message->chat;
+            if ($chat) {
+                // Update contact info if needed
+                $this->updateContactInfoIfNeeded($chat, $request->all());
+                
+                $chat->update([
+                    'last_message_id' => $message->id,
+                    'last_message_at' => now(),
+                ]);
+
+                // Increment unread count for all users except the sender
+                if ($senderUser = User::where('phone', $message->sender_phone)->first()) {
+                    $chat->users()->where('user_id', '!=', $senderUser->id)->increment('unread_count');
+                } else {
+                    $chat->increment('unread_count');
+                }
+            }
             
             // Update message content
             $message->update([

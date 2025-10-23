@@ -57,6 +57,9 @@ class WhatsAppMessageRequest extends FormRequest
             'quotedMessage.quotedMessageId' => ['nullable', 'string'],
             'quotedMessage.quotedContent' => ['nullable', 'string'],
             'quotedMessage.quotedSender' => ['nullable', 'string'],
+            // Sender profile info (for contact info updates)
+            'senderProfilePictureUrl' => ['nullable', 'url'],
+            'senderBio' => ['nullable', 'string', 'max:500'],
         ];
 
         // Add required validation for either 'from' or 'sender'

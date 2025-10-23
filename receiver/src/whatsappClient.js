@@ -5,6 +5,19 @@ const config = require('./config');
 const { logger } = require('./logger');
 const { handleMessages } = require('./messageHandler');
 
+const msgRetryCounterCache = (() => {
+    const cache = new Map();
+    const ttlMs = 5 * 60 * 1000; // 5 minutes
+    return {
+        get: (key) => cache.get(key),
+        set: (key, val) => {
+            cache.set(key, val);
+            setTimeout(() => cache.delete(key), ttlMs).unref?.();
+        },
+        del: (key) => cache.delete(key),
+    };
+})();
+
 let isReconnecting = false;
 let currentSocket = null;
 let reconnectCallback = null;
@@ -52,6 +65,66 @@ function setReconnectCallback(callback) {
 }
 
 /**
+ * Fetch contact profile picture URL from WhatsApp
+ * @param {object} sock - The socket instance
+ * @param {string} jid - The contact JID (phone@s.whatsapp.net or group@g.us)
+ * @returns {Promise<string|null>} The profile picture URL or null
+ */
+async function fetchContactProfilePicture(sock, jid) {
+    try {
+        const profilePicture = await sock.profilePictureUrl(jid, 'image');
+        return profilePicture || null;
+    } catch (error) {
+        logger.debug({ jid, error: error.message }, 'Could not fetch profile picture');
+        return null;
+    }
+}
+
+/**
+ * Fetch contact status/bio from WhatsApp
+ * @param {object} sock - The socket instance
+ * @param {string} jid - The contact JID (phone@s.whatsapp.net)
+ * @returns {Promise<string|null>} The status/bio or null
+ */
+async function fetchContactStatus(sock, jid) {
+    try {
+        const status = await sock.fetchStatus(jid);
+        return status?.status || null;
+    } catch (error) {
+        logger.debug({ jid, error: error.message }, 'Could not fetch contact status');
+        return null;
+    }
+}
+
+/**
+ * Convert LID to phone number JID using socket's contact store
+ * @param {object} sock - The socket instance
+ * @param {string} jid - The JID (could be LID like "123@lid" or already a phone JID)
+ * @returns {string} The phone number JID or original JID if conversion fails
+ */
+function convertLidToPhoneJid(sock, jid) {
+    if (!jid) return jid;
+    
+    if (!jid.endsWith('@lid')) {
+        return jid;
+    }
+    
+    try {
+        const contacts = sock.contacts || {};
+        for (const [contactJid, contactInfo] of Object.entries(contacts)) {
+            if (contactInfo?.id === jid) {
+                logger.debug({ lid: jid, phoneJid: contactJid }, 'Converted LID to phone JID');
+                return contactJid;
+            }
+        }
+    } catch (error) {
+        logger.debug({ jid, error: error.message }, 'Could not convert LID to phone JID');
+    }
+    
+    return jid;
+}
+
+/**
  * Establishes a connection to the WhatsApp Web service.
  * @returns {Promise<object>} The WhatsApp socket instance.
  */
@@ -85,6 +158,7 @@ async function connectToWhatsApp() {
             browser: Browsers.macOS(config.whatsapp.clientName),
             version,
             auth: state,
+            msgRetryCounterCache,
             logger: pino({
                 level: config.logging.level,
                 transport: config.nodeEnv === 'development' ? {
@@ -195,6 +269,90 @@ async function connectToWhatsApp() {
             handleMessages(sock, m);
         });
 
+        // Listen for group metadata updates (when added to group, group info changes, etc.)
+        sock.ev.on('groups.upsert', async (groups) => {
+            for (const group of groups) {
+                try {
+                    logger.info({
+                        groupId: group.id,
+                        groupName: group.subject,
+                        participantCount: group.participants?.length || 0
+                    }, 'Group metadata update received');
+
+                    // Fetch group profile picture
+                    const groupProfilePicture = await fetchContactProfilePicture(sock, group.id);
+
+                    const apiClient = require('./apiClient');
+                    await apiClient.sendGroupMetadata({
+                        groupId: group.id,
+                        groupName: group.subject || 'Group',
+                        participants: group.participants?.map(p => ({
+                            jid: convertLidToPhoneJid(sock, p.id),
+                            isAdmin: p.admin === 'admin',
+                            isSuperAdmin: p.admin === 'superadmin'
+                        })) || [],
+                        groupDescription: group.desc || '',
+                        groupProfilePictureUrl: groupProfilePicture,
+                        createdAt: group.creation ? new Date(group.creation * 1000).toISOString() : null
+                    });
+                } catch (error) {
+                    logger.error({
+                        error: error.message,
+                        groupId: group.id,
+                        stack: error.stack
+                    }, 'Error processing group metadata update');
+                }
+            }
+        });
+
+        // Listen for group description updates
+        sock.ev.on('groups.update', async (updates) => {
+            for (const update of updates) {
+                try {
+                    logger.debug({
+                        groupId: update.id,
+                        updateKeys: Object.keys(update)
+                    }, 'Group update received');
+
+                    try {
+                        const groupMetadata = await sock.groupMetadata(update.id);
+                        logger.debug({
+                            groupId: update.id,
+                            groupName: groupMetadata.subject,
+                            participantCount: groupMetadata.participants?.length || 0
+                        }, 'Fetched updated group metadata from groups.update');
+
+                        // Fetch group profile picture
+                        const groupProfilePicture = await fetchContactProfilePicture(sock, groupMetadata.id);
+
+                        const apiClient = require('./apiClient');
+                        await apiClient.sendGroupMetadata({
+                            groupId: groupMetadata.id,
+                            groupName: groupMetadata.subject || 'Group',
+                            participants: groupMetadata.participants?.map(p => ({
+                                jid: convertLidToPhoneJid(sock, p.id),
+                                isAdmin: p.admin === 'admin',
+                                isSuperAdmin: p.admin === 'superadmin'
+                            })) || [],
+                            groupDescription: groupMetadata.desc || '',
+                            groupProfilePictureUrl: groupProfilePicture,
+                            createdAt: groupMetadata.creation ? new Date(groupMetadata.creation * 1000).toISOString() : null
+                        });
+                    } catch (fetchError) {
+                        logger.warn({
+                            error: fetchError.message,
+                            groupId: update.id
+                        }, 'Could not fetch updated group metadata from groups.update');
+                    }
+                } catch (error) {
+                    logger.error({
+                        error: error.message,
+                        stack: error.stack
+                    }, 'Error processing groups.update');
+                }
+            }
+        });
+
         // Listen for message status updates (delivery and read receipts)
         sock.ev.on('messages.update', async (updates) => {
             for (const update of updates) {
@@ -256,6 +414,54 @@ async function connectToWhatsApp() {
             }
         });
 
+        // Listen for group participant updates
+        sock.ev.on('group-participants.update', async (update) => {
+            try {
+                const { id: groupId, participants, action } = update;
+                logger.info({
+                    groupId,
+                    action,
+                    participantCount: participants?.length || 0
+                }, 'Group participant update received');
+
+                try {
+                    const groupMetadata = await sock.groupMetadata(groupId);
+                    logger.debug({
+                        groupId,
+                        groupName: groupMetadata.subject,
+                        participantCount: groupMetadata.participants?.length || 0
+                    }, 'Fetched updated group metadata');
+
+                    // Fetch group profile picture
+                    const groupProfilePicture = await fetchContactProfilePicture(sock, groupMetadata.id);
+
+                    const apiClient = require('./apiClient');
+                    await apiClient.sendGroupMetadata({
+                        groupId: groupMetadata.id,
+                        groupName: groupMetadata.subject || 'Group',
+                        participants: groupMetadata.participants?.map(p => ({
+                            jid: convertLidToPhoneJid(sock, p.id),
+                            isAdmin: p.admin === 'admin',
+                            isSuperAdmin: p.admin === 'superadmin'
+                        })) || [],
+                        groupDescription: groupMetadata.desc || '',
+                        groupProfilePictureUrl: groupProfilePicture,
+                        createdAt: groupMetadata.creation ? new Date(groupMetadata.creation * 1000).toISOString() : null
+                    });
+                } catch (fetchError) {
+                    logger.warn({
+                        error: fetchError.message,
+                        groupId
+                    }, 'Could not fetch updated group metadata, skipping update');
+                }
+            } catch (error) {
+                logger.error({
+                    error: error.message,
+                    stack: error.stack
+                }, 'Error processing group participant update');
+            }
+        });
+
         // Listen for message receipts (alternative event for read receipts)
         sock.ev.on('message-receipt.update', async (receipts) => {
             for (const receipt of receipts) {
@@ -290,4 +496,4 @@ async function connectToWhatsApp() {
     }
 }
 
-module.exports = { connectToWhatsApp, setReconnectCallback, addEditMessageId, addProtocolMessageId };
+module.exports = { connectToWhatsApp, setReconnectCallback, addEditMessageId, addProtocolMessageId, fetchContactProfilePicture, fetchContactStatus, convertLidToPhoneJid };

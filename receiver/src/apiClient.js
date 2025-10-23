@@ -203,14 +203,20 @@ const sendToPHP = async (payload) => {
         logPayload.media = `[Base64 Data of ${logPayload.mimetype}, length: ${payload.media.length}]`;
     }
     
-    logger.debug({ payload: logPayload }, 'Sending message to backend');
+    logger.debug({ 
+        payload: {
+            ...logPayload,
+            senderProfilePictureUrl: logPayload.senderProfilePictureUrl ? '[URL present]' : null,
+            senderBio: logPayload.senderBio ? '[Bio present]' : null
+        }
+    }, 'Sending message to backend');
     
     try {
         const messageData = {
-            sender: payload.from,  // Map 'from' to 'sender' for the backend
-            chat: payload.from,    // Use the same value for chat as sender for direct messages
+            sender: payload.senderJid || payload.from, // Prefer group participant when provided
+            chat: payload.chat || payload.from,        // Prefer explicit chat JID (group) when provided
             type: payload.type,
-            content: payload.body !== undefined ? String(payload.body) : '', // Use 'content' instead of 'body' to match backend, ensure it's always a string
+            content: payload.body !== undefined ? String(payload.body) : '', // Ensure string content
             sending_time: payload.messageTimestamp 
                 ? new Date(payload.messageTimestamp * 1000).toISOString() 
                 : new Date().toISOString(), // Convert timestamp to ISO string
@@ -223,11 +229,25 @@ const sendToPHP = async (payload) => {
             emoji: payload.emoji || null,
             senderJid: payload.senderJid || null,
             quotedMessage: payload.quotedMessage || null,  // Include quoted message data
+            senderProfilePictureUrl: payload.senderProfilePictureUrl || null,  // Sender's WhatsApp profile picture
+            senderBio: payload.senderBio || null,  // Sender's WhatsApp bio/status
         };
         
-        logger.debug({ messageData: { ...messageData, media: messageData.media ? '[base64 data]' : null } }, 'Sending message data to backend');
+        logger.debug({ 
+            messageData: { 
+                ...messageData, 
+                media: messageData.media ? '[base64 data]' : null,
+                senderProfilePictureUrl: messageData.senderProfilePictureUrl ? '[URL present]' : null,
+                senderBio: messageData.senderBio ? '[Bio present]' : null
+            }
+        }, 'Sending message data to backend');
         
         const response = await sendMessage(messageData);
+        
+        logger.debug({ 
+            status: response.status,
+            hasProfileData: !!messageData.senderProfilePictureUrl || !!messageData.senderBio
+        }, 'Message sent to backend successfully');
         
         return true;
     } catch (error) {
@@ -351,6 +371,48 @@ const notifyMessageDeleted = async (whatsappMessageId) => {
     }
 };
 
+/**
+ * Sends group metadata to the backend when user is added to a group
+ * @param {Object} groupData - Group metadata
+ * @returns {Promise<Object>} The response from the backend
+ */
+const sendGroupMetadata = async (groupData) => {
+    try {
+        const baseUrl = config.backend.apiUrl.replace(/\/api\/whatsapp-webhook\/?$/, '');
+        
+        const response = await axios.post(`${baseUrl}/api/whatsapp-groups/create`, {
+            group_id: groupData.groupId,
+            name: groupData.groupName,
+            description: groupData.groupDescription || '',
+            participants: groupData.participants || [],
+            profile_picture_url: groupData.groupProfilePictureUrl || null,
+            created_at: groupData.createdAt
+        }, {
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Webhook-Secret': process.env.WEBHOOK_SECRET || config.backend.webhookSecret || '',
+            },
+            timeout: config.backend.timeoutMs,
+            validateStatus: (status) => status >= 200 && status < 500,
+        });
+        
+        if (response.status >= 400) {
+            logger.warn({ status: response.status, data: response.data }, 'Group metadata endpoint returned error');
+            return null;
+        }
+        
+        logger.info({ groupId: groupData.groupId }, 'Group metadata sent successfully');
+        return response.data;
+    } catch (error) {
+        logger.error({ 
+            error: error.message, 
+            stack: error.stack,
+            groupId: groupData.groupId,
+        }, 'Error sending group metadata to backend');
+        return null;
+    }
+};
+
 module.exports = { 
     sendToBackend, 
     sendMessage, 
@@ -359,5 +421,6 @@ module.exports = {
     updateMessageStatus,
     notifyMessageEdited,
     notifyMessageDeleted,
+    sendGroupMetadata,
     apiClient,
 };

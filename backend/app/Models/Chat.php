@@ -37,6 +37,21 @@ class Chat extends Model
         'metadata',
         'created_by',
         'participants',
+        'contact_profile_picture_url',
+        'contact_description',
+        'contact_info_updated_at',
+    ];
+
+    /**
+     * The attributes that should be cast to dates.
+     *
+     * @var array
+     */
+    protected $dates = [
+        'last_message_at',
+        'contact_info_updated_at',
+        'created_at',
+        'updated_at',
     ];
 
     /**
@@ -76,6 +91,7 @@ class Chat extends Model
         'avatar_url',
         'display_name',
         'is_online',
+        'contact_info',
     ];
 
     /**
@@ -235,6 +251,36 @@ class Chat extends Model
         }
 
         return $participant ?? 'Unknown';
+    }
+
+    /**
+     * Get contact info (profile picture and description).
+     */
+    public function getContactInfoAttribute(): array
+    {
+        if ($this->is_group) {
+            return [
+                'profile_picture_url' => $this->contact_profile_picture_url,
+                'description' => $this->contact_description,
+                'type' => 'group',
+            ];
+        }
+
+        // For direct chats, get the other participant's info
+        $otherUser = $this->otherUser;
+        if ($otherUser) {
+            return [
+                'profile_picture_url' => $otherUser->profile_picture_url,
+                'bio' => $otherUser->bio,
+                'type' => 'contact',
+            ];
+        }
+
+        return [
+            'profile_picture_url' => null,
+            'description' => null,
+            'type' => 'unknown',
+        ];
     }
 
     /**

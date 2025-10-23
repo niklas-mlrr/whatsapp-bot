@@ -1,5 +1,6 @@
 {
     "require": {
-        "beyondcode/laravel-websockets": "^1.14"
+        "beyondcode/laravel-websockets": "^1.14",
+        "doctrine/dbal": "^3.10"
     }
 }

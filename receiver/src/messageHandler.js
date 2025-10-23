@@ -2,6 +2,36 @@ const { downloadMediaMessage, proto } = require('@whiskeysockets/baileys');
 const { logger } = require('./logger');
 const { sendToPHP } = require('./apiClient');
 const config = require('./config');
+const { convertLidToPhoneJid } = require('./whatsappClient');
+
+ 
+function unwrapMessage(message) {
+    let content = message;
+    let depth = 0;
+    while (content && depth < 5) {
+        if (content.ephemeralMessage?.message) {
+            content = content.ephemeralMessage.message;
+        } else if (content.viewOnceMessageV2?.message) {
+            content = content.viewOnceMessageV2.message;
+        } else if (content.viewOnceMessageV2Extension?.message) {
+            content = content.viewOnceMessageV2Extension.message;
+        } else if (content.deviceSentMessage?.message) {
+            content = content.deviceSentMessage.message;
+        } else {
+            break;
+        }
+        depth++;
+    }
+    
+    // If we still have a messageContextInfo but no actual message, return the original
+    if (content?.messageContextInfo && !content?.conversation && !content?.extendedTextMessage && 
+        !content?.imageMessage && !content?.videoMessage && !content?.documentMessage && 
+        !content?.audioMessage && !content?.locationMessage) {
+        return message;
+    }
+    
+    return content;
+}
 
 /**
  * Processes incoming message events from Baileys.
@@ -18,9 +48,30 @@ async function handleMessages(sock, m) {
                 const remoteJid = msg.key.remoteJid;
                 const isGroup = remoteJid?.endsWith('@g.us');
                 
+                // Fetch sender profile picture and bio for direct chats
+                let senderProfilePicture = null;
+                let senderBio = null;
+                if (!isGroup) {
+                    logger.debug({ remoteJid }, 'Attempting to fetch sender profile info for direct chat');
+                    const { fetchContactProfilePicture, fetchContactStatus } = require('./whatsappClient');
+                    try {
+                        senderProfilePicture = await fetchContactProfilePicture(sock, remoteJid);
+                        senderBio = await fetchContactStatus(sock, remoteJid);
+                        logger.debug({ 
+                            remoteJid, 
+                            hasPicture: !!senderProfilePicture, 
+                            hasBio: !!senderBio,
+                            pictureUrl: senderProfilePicture ? senderProfilePicture.substring(0, 50) + '...' : null,
+                            bioLength: senderBio ? senderBio.length : 0
+                        }, 'Fetched sender profile info');
+                    } catch (error) {
+                        logger.debug({ remoteJid, error: error.message, stack: error.stack }, 'Could not fetch sender profile info');
+                    }
+                }
+                
                 // Extract actual message content if wrapped in messageContextInfo
                 let actualMessage = msg.message;
-                if (msg.message?.messageContextInfo) {
+                if (msg.message?.messageContextInfo && !msg.message?.conversation && !msg.message?.extendedTextMessage) {
                     // Check if there's an actual message within messageContextInfo
                     const contextKeys = Object.keys(msg.message);
                     const nonContextKey = contextKeys.find(key => 
@@ -39,23 +90,46 @@ async function handleMessages(sock, m) {
                     }
                 }
                 
+                
+                let senderJid = isGroup
+                    ? (msg.key?.participant || msg.participant || undefined)
+                    : remoteJid;
+                
+                // Convert LID to phone JID for group participants
+                if (isGroup && senderJid) {
+                    senderJid = convertLidToPhoneJid(sock, senderJid);
+                }
+
+                
+                actualMessage = unwrapMessage(actualMessage);
+
                 logger.info({
                     from: remoteJid,
                     isGroup,
                     messageId: msg.key.id,
                     messageType: Object.keys(actualMessage || {})[0]
                 }, 'New message received');
+                
+                // Debug: Log full message structure for troubleshooting
+                if (!actualMessage || Object.keys(actualMessage).length === 0) {
+                    logger.debug({
+                        remoteJid,
+                        messageId: msg.key.id,
+                        fullMessage: JSON.stringify(msg.message, null, 2)
+                    }, 'Message structure for debugging');
+                }
 
                 // Handle different message types
                 try {
                     // 1. Simple text messages
                     if (actualMessage?.conversation) {
-                        await handleTextMessage(remoteJid, actualMessage.conversation, {}, msg.key.id);
+                        logger.debug({ remoteJid, messageId: msg.key.id, hasSenderProfile: !!senderProfilePicture }, 'Handling text message');
+                        await handleTextMessage(remoteJid, actualMessage.conversation, {}, msg.key.id, senderJid, senderProfilePicture, senderBio);
                     }
                     // 2. Extended text messages (e.g., with context)
                     else if (actualMessage?.extendedTextMessage) {
                         const { text, contextInfo } = actualMessage.extendedTextMessage;
-                        await handleTextMessage(remoteJid, text, contextInfo, msg.key.id);
+                        await handleTextMessage(remoteJid, text, contextInfo, msg.key.id, senderJid, senderProfilePicture, senderBio);
                     }
                     // 3. Image messages
                     else if (actualMessage?.imageMessage) {
@@ -63,32 +137,32 @@ async function handleMessages(sock, m) {
                         if (actualMessage !== msg.message) {
                             msg.message = actualMessage;
                         }
-                        await handleImageMessage(sock, msg, remoteJid);
+                        await handleImageMessage(sock, msg, remoteJid, senderJid, senderProfilePicture, senderBio);
                     }
                     // 4. Video messages
                     else if (actualMessage?.videoMessage) {
                         if (actualMessage !== msg.message) {
                             msg.message = actualMessage;
                         }
-                        await handleVideoMessage(sock, msg, remoteJid);
+                        await handleVideoMessage(sock, msg, remoteJid, senderJid, senderProfilePicture, senderBio);
                     }
                     // 5. Document messages
                     else if (actualMessage?.documentMessage) {
                         if (actualMessage !== msg.message) {
                             msg.message = actualMessage;
                         }
-                        await handleDocumentMessage(sock, msg, remoteJid);
+                        await handleDocumentMessage(sock, msg, remoteJid, senderJid, senderProfilePicture, senderBio);
                     }
                     // 6. Audio messages
                     else if (actualMessage?.audioMessage) {
                         if (actualMessage !== msg.message) {
                             msg.message = actualMessage;
                         }
-                        await handleAudioMessage(sock, msg, remoteJid);
+                        await handleAudioMessage(sock, msg, remoteJid, senderJid, senderProfilePicture, senderBio);
                     }
                     // 7. Location messages
                     else if (actualMessage?.locationMessage) {
-                        await handleLocationMessage(msg, remoteJid);
+                        await handleLocationMessage(msg, remoteJid, senderJid, senderProfilePicture, senderBio);
                     }
                     // 8. Reaction messages
                     else if (actualMessage?.reactionMessage) {
@@ -102,10 +176,20 @@ async function handleMessages(sock, m) {
                     else if (actualMessage?.protocolMessage) {
                         await handleProtocolMessage(msg, remoteJid);
                     }
-                    // 11. Unsupported message types
+                    // 11. Sender key distribution (group encryption key setup)
+                    else if (actualMessage?.senderKeyDistributionMessage) {
+                        logger.debug({ remoteJid, messageId: msg.key.id }, 'Received sender key distribution message');
+                    }
+                    // 12. Unsupported message types
                     else {
                         const messageType = Object.keys(actualMessage || {})[0];
-                        logger.info({ messageType }, 'Unhandled message type');
+                        logger.info({ 
+                            messageType,
+                            remoteJid,
+                            messageId: msg.key.id,
+                            actualMessageKeys: Object.keys(actualMessage || {}),
+                            fullMessage: JSON.stringify(actualMessage, null, 2)
+                        }, 'Unhandled message type');
                     }
                 } catch (error) {
                     logger.error({
@@ -144,29 +228,68 @@ function extractQuotedContent(quotedMessage) {
  * @param {string} remoteJid - The sender's JID.
  * @param {string} text - The message text.
  * @param {object} [contextInfo] - Additional context information.
+ * @param {string} [messageId] - The message ID.
+ * @param {string} [senderJid] - The sender's JID (for groups).
+ * @param {string} [senderProfilePicture] - The sender's profile picture URL.
+ * @param {string} [senderBio] - The sender's bio/status.
  */
-async function handleTextMessage(remoteJid, text, contextInfo = {}, messageId = null) {
-    logger.debug({ remoteJid, textLength: text.length, hasContext: !!contextInfo, messageId }, 'Processing text message');
+async function handleTextMessage(remoteJid, text, contextInfo = {}, messageId = null, senderJid = null, senderProfilePicture = null, senderBio = null) {
+    logger.debug({ 
+        remoteJid, 
+        textLength: text.length, 
+        hasContext: !!contextInfo, 
+        messageId,
+        hasSenderProfilePicture: !!senderProfilePicture,
+        hasSenderBio: !!senderBio
+    }, 'Processing text message');
     
     // Extract quoted message info if present
     let quotedMessageData = null;
     if (contextInfo?.quotedMessage) {
+        let quotedSender = contextInfo.participant || remoteJid;
+        // Note: We don't convert LID here since we don't have socket context in this function
         quotedMessageData = {
             quotedMessageId: contextInfo.stanzaId,
             quotedContent: extractQuotedContent(contextInfo.quotedMessage),
-            quotedSender: contextInfo.participant || remoteJid
+            quotedSender: quotedSender
         };
         logger.debug({ quotedMessageData }, 'Extracted quoted message data');
     }
     
-    await sendToPHP({
+    logger.debug({
+        remoteJid,
+        messageId,
+        sendingProfileData: {
+            hasPicture: !!senderProfilePicture,
+            hasBio: !!senderBio
+        }
+    }, 'Sending message to PHP backend with profile data');
+    
+    const messageData = {
         from: remoteJid,
+        chat: remoteJid,
+        senderJid: senderJid || undefined,
         type: 'text',
         body: text,
         messageId: messageId,
         contextInfo: contextInfo || undefined,
-        quotedMessage: quotedMessageData
-    });
+        quotedMessage: quotedMessageData,
+        senderProfilePictureUrl: senderProfilePicture || undefined,
+        senderBio: senderBio || undefined
+    };
+    
+    logger.debug({ 
+        messageData: { 
+            ...messageData, 
+            media: messageData.media ? '[base64 data]' : null,
+            senderProfilePictureUrl: messageData.senderProfilePictureUrl ? '[URL present]' : null,
+            senderBio: messageData.senderBio ? '[Bio present]' : null
+        }
+    }, 'Sending message data to backend');
+    
+    await sendToPHP(messageData);
+    
+    logger.debug({ remoteJid, messageId }, 'Message sent to PHP backend');
 }
 
 /**
@@ -174,8 +297,11 @@ async function handleTextMessage(remoteJid, text, contextInfo = {}, messageId = 
  * @param {object} sock - The socket instance.
  * @param {object} msg - The message object.
  * @param {string} remoteJid - The sender's JID.
+ * @param {string} [senderJid] - The sender's JID (for groups).
+ * @param {string} [senderProfilePicture] - The sender's profile picture URL.
+ * @param {string} [senderBio] - The sender's bio/status.
  */
-async function handleImageMessage(sock, msg, remoteJid) {
+async function handleImageMessage(sock, msg, remoteJid, senderJid = null, senderProfilePicture = null, senderBio = null) {
     logger.debug({ remoteJid }, 'Processing image message');
     
     try {
@@ -204,23 +330,39 @@ async function handleImageMessage(sock, msg, remoteJid) {
         // Extract quoted message info if present
         let quotedMessageData = null;
         if (contextInfo?.quotedMessage) {
+            let quotedSender = contextInfo.participant || remoteJid;
             quotedMessageData = {
                 quotedMessageId: contextInfo.stanzaId,
                 quotedContent: extractQuotedContent(contextInfo.quotedMessage),
-                quotedSender: contextInfo.participant || remoteJid
+                quotedSender: quotedSender
             };
         }
 
-        await sendToPHP({
+        const messageData = {
             from: remoteJid,
+            chat: remoteJid,
+            senderJid: senderJid || undefined,
             type: 'image',
             body: caption,
             media: base64Image,
             mimetype: mimetype,
             messageTimestamp: msg.messageTimestamp,
             messageId: msg.key.id,
-            quotedMessage: quotedMessageData
-        });
+            quotedMessage: quotedMessageData,
+            senderProfilePictureUrl: senderProfilePicture || undefined,
+            senderBio: senderBio || undefined
+        };
+        
+        logger.debug({ 
+            messageData: { 
+                ...messageData, 
+                media: messageData.media ? '[base64 data]' : null,
+                senderProfilePictureUrl: messageData.senderProfilePictureUrl ? '[URL present]' : null,
+                senderBio: messageData.senderBio ? '[Bio present]' : null
+            }
+        }, 'Sending message data to backend');
+        
+        await sendToPHP(messageData);
     } catch (error) {
         logger.error({ 
             error: error.message, 
@@ -237,8 +379,11 @@ async function handleImageMessage(sock, msg, remoteJid) {
  * @param {object} sock - The socket instance.
  * @param {object} msg - The message object.
  * @param {string} remoteJid - The sender's JID.
+ * @param {string} [senderJid] - The sender's JID (for groups).
+ * @param {string} [senderProfilePicture] - The sender's profile picture URL.
+ * @param {string} [senderBio] - The sender's bio/status.
  */
-async function handleVideoMessage(sock, msg, remoteJid) {
+async function handleVideoMessage(sock, msg, remoteJid, senderJid = null, senderProfilePicture = null, senderBio = null) {
     logger.debug({ remoteJid }, 'Processing video message');
     
     try {
@@ -267,15 +412,18 @@ async function handleVideoMessage(sock, msg, remoteJid) {
         // Extract quoted message info if present
         let quotedMessageData = null;
         if (contextInfo?.quotedMessage) {
+            let quotedSender = contextInfo.participant || remoteJid;
             quotedMessageData = {
                 quotedMessageId: contextInfo.stanzaId,
                 quotedContent: extractQuotedContent(contextInfo.quotedMessage),
-                quotedSender: contextInfo.participant || remoteJid
+                quotedSender: quotedSender
             };
         }
 
-        await sendToPHP({
+        const messageData = {
             from: remoteJid,
+            chat: remoteJid,
+            senderJid: senderJid || undefined,
             type: 'video',
             body: caption,
             media: base64Video,
@@ -283,8 +431,21 @@ async function handleVideoMessage(sock, msg, remoteJid) {
             messageTimestamp: msg.messageTimestamp,
             messageId: msg.key.id,
             mediaSize: msg.message.videoMessage.fileLength,
-            quotedMessage: quotedMessageData
-        });
+            quotedMessage: quotedMessageData,
+            senderProfilePictureUrl: senderProfilePicture || undefined,
+            senderBio: senderBio || undefined
+        };
+        
+        logger.debug({ 
+            messageData: { 
+                ...messageData, 
+                media: messageData.media ? '[base64 data]' : null,
+                senderProfilePictureUrl: messageData.senderProfilePictureUrl ? '[URL present]' : null,
+                senderBio: messageData.senderBio ? '[Bio present]' : null
+            }
+        }, 'Sending message data to backend');
+        
+        await sendToPHP(messageData);
     } catch (error) {
         logger.error({ 
             error: error.message, 
@@ -301,8 +462,11 @@ async function handleVideoMessage(sock, msg, remoteJid) {
  * @param {object} sock - The socket instance.
  * @param {object} msg - The message object.
  * @param {string} remoteJid - The sender's JID.
+ * @param {string} [senderJid] - The sender's JID (for groups).
+ * @param {string} [senderProfilePicture] - The sender's profile picture URL.
+ * @param {string} [senderBio] - The sender's bio/status.
  */
-async function handleDocumentMessage(sock, msg, remoteJid) {
+async function handleDocumentMessage(sock, msg, remoteJid, senderJid = null, senderProfilePicture = null, senderBio = null) {
     logger.debug({ remoteJid }, 'Processing document message');
     
     try {
@@ -332,15 +496,18 @@ async function handleDocumentMessage(sock, msg, remoteJid) {
         // Extract quoted message info if present
         let quotedMessageData = null;
         if (contextInfo?.quotedMessage) {
+            let quotedSender = contextInfo.participant || remoteJid;
             quotedMessageData = {
                 quotedMessageId: contextInfo.stanzaId,
                 quotedContent: extractQuotedContent(contextInfo.quotedMessage),
-                quotedSender: contextInfo.participant || remoteJid
+                quotedSender: quotedSender
             };
         }
 
-        await sendToPHP({
+        const messageData = {
             from: remoteJid,
+            chat: remoteJid,
+            senderJid: senderJid || undefined,
             type: 'document',
             body: caption,
             fileName: fileName,
@@ -349,8 +516,21 @@ async function handleDocumentMessage(sock, msg, remoteJid) {
             messageTimestamp: msg.messageTimestamp,
             messageId: msg.key.id,
             mediaSize: msg.message.documentMessage.fileLength,
-            quotedMessage: quotedMessageData
-        });
+            quotedMessage: quotedMessageData,
+            senderProfilePictureUrl: senderProfilePicture || undefined,
+            senderBio: senderBio || undefined
+        };
+        
+        logger.debug({ 
+            messageData: { 
+                ...messageData, 
+                media: messageData.media ? '[base64 data]' : null,
+                senderProfilePictureUrl: messageData.senderProfilePictureUrl ? '[URL present]' : null,
+                senderBio: messageData.senderBio ? '[Bio present]' : null
+            }
+        }, 'Sending message data to backend');
+        
+        await sendToPHP(messageData);
     } catch (error) {
         logger.error({ 
             error: error.message, 
@@ -367,8 +547,11 @@ async function handleDocumentMessage(sock, msg, remoteJid) {
  * @param {object} sock - The socket instance.
  * @param {object} msg - The message object.
  * @param {string} remoteJid - The sender's JID.
+ * @param {string} [senderJid] - The sender's JID (for groups).
+ * @param {string} [senderProfilePicture] - The sender's profile picture URL.
+ * @param {string} [senderBio] - The sender's bio/status.
  */
-async function handleAudioMessage(sock, msg, remoteJid) {
+async function handleAudioMessage(sock, msg, remoteJid, senderJid = null, senderProfilePicture = null, senderBio = null) {
     logger.debug({ remoteJid }, 'Processing audio message');
     
     try {
@@ -396,15 +579,18 @@ async function handleAudioMessage(sock, msg, remoteJid) {
         // Extract quoted message info if present
         let quotedMessageData = null;
         if (contextInfo?.quotedMessage) {
+            let quotedSender = contextInfo.participant || remoteJid;
             quotedMessageData = {
                 quotedMessageId: contextInfo.stanzaId,
                 quotedContent: extractQuotedContent(contextInfo.quotedMessage),
-                quotedSender: contextInfo.participant || remoteJid
+                quotedSender: quotedSender
             };
         }
 
-        await sendToPHP({
+        const messageData = {
             from: remoteJid,
+            chat: remoteJid,
+            senderJid: senderJid || undefined,
             type: 'audio',
             body: '', // Audio messages don't have captions, but backend expects a content field
             media: base64Audio,
@@ -412,8 +598,21 @@ async function handleAudioMessage(sock, msg, remoteJid) {
             messageTimestamp: msg.messageTimestamp,
             messageId: msg.key.id,
             mediaSize: msg.message.audioMessage.fileLength,
-            quotedMessage: quotedMessageData
-        });
+            quotedMessage: quotedMessageData,
+            senderProfilePictureUrl: senderProfilePicture || undefined,
+            senderBio: senderBio || undefined
+        };
+        
+        logger.debug({ 
+            messageData: { 
+                ...messageData, 
+                media: messageData.media ? '[base64 data]' : null,
+                senderProfilePictureUrl: messageData.senderProfilePictureUrl ? '[URL present]' : null,
+                senderBio: messageData.senderBio ? '[Bio present]' : null
+            }
+        }, 'Sending message data to backend');
+        
+        await sendToPHP(messageData);
     } catch (error) {
         logger.error({ 
             error: error.message, 
@@ -429,14 +628,19 @@ async function handleAudioMessage(sock, msg, remoteJid) {
  * Handles location messages.
  * @param {object} msg - The message object.
  * @param {string} remoteJid - The sender's JID.
+ * @param {string} [senderJid] - The sender's JID (for groups).
+ * @param {string} [senderProfilePicture] - The sender's profile picture URL.
+ * @param {string} [senderBio] - The sender's bio/status.
  */
-async function handleLocationMessage(msg, remoteJid) {
+async function handleLocationMessage(msg, remoteJid, senderJid = null, senderProfilePicture = null, senderBio = null) {
     try {
         const location = msg.message.locationMessage;
         logger.debug({ remoteJid, location }, 'Processing location message');
 
-        await sendToPHP({
+        const messageData = {
             from: remoteJid,
+            chat: remoteJid,
+            senderJid: senderJid || undefined,
             type: 'location',
             body: location.name || 'Shared Location',
             latitude: location.degreesLatitude,
@@ -445,8 +649,21 @@ async function handleLocationMessage(msg, remoteJid) {
             address: location.address || '',
             url: location.url || '',
             messageTimestamp: msg.messageTimestamp,
-            messageId: msg.key.id
-        });
+            messageId: msg.key.id,
+            senderProfilePictureUrl: senderProfilePicture || undefined,
+            senderBio: senderBio || undefined
+        };
+        
+        logger.debug({ 
+            messageData: { 
+                ...messageData, 
+                media: messageData.media ? '[base64 data]' : null,
+                senderProfilePictureUrl: messageData.senderProfilePictureUrl ? '[URL present]' : null,
+                senderBio: messageData.senderBio ? '[Bio present]' : null
+            }
+        }, 'Sending message data to backend');
+        
+        await sendToPHP(messageData);
     } catch (error) {
         logger.error({ 
             error: error.message, 
@@ -471,14 +688,15 @@ async function handleReactionMessage(msg, remoteJid) {
         // Extract the message ID that was reacted to
         const reactedMessageId = reaction.key?.id;
         const emoji = reaction.text || ''; // Empty string means reaction removed
-        const senderJid = reaction.key?.participant || remoteJid;
+        let senderJid = reaction.key?.participant || remoteJid;
+        // Note: We don't have socket context in this function to convert LID
 
         if (!reactedMessageId) {
             logger.warn({ remoteJid }, 'Reaction message missing target message ID');
             return;
         }
 
-        await sendToPHP({
+        const messageData = {
             from: remoteJid,
             type: 'reaction',
             reactedMessageId: reactedMessageId,
@@ -486,7 +704,18 @@ async function handleReactionMessage(msg, remoteJid) {
             senderJid: senderJid,
             messageTimestamp: msg.messageTimestamp,
             messageId: msg.key.id
-        });
+        };
+        
+        logger.debug({ 
+            messageData: { 
+                ...messageData, 
+                media: messageData.media ? '[base64 data]' : null,
+                senderProfilePictureUrl: messageData.senderProfilePictureUrl ? '[URL present]' : null,
+                senderBio: messageData.senderBio ? '[Bio present]' : null
+            }
+        }, 'Sending message data to backend');
+        
+        await sendToPHP(messageData);
     } catch (error) {
         logger.error({ 
             error: error.message, 

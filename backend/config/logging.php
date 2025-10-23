@@ -54,16 +54,13 @@ return [
 
         'stack' => [
             'driver' => 'stack',
-            'channels' => explode(',', (string) env('LOG_STACK', 'single')),
-            'ignore_exceptions' => false,
+            'channels' => explode(',', (string) env('LOG_STACK', 'daily,single')),
+            'ignore_exceptions' => true,
         ],
 
         'single' => [
-            'driver' => 'custom',
-            'via' => \App\Logging\CreateDailyWithFoldersLogger::class,
-            'name' => 'laravel',
-            'base_path' => storage_path('logs'),
-            'filename' => 'laravel',
+            'driver' => 'single',
+            'path' => storage_path('logs/laravel.log'),
             'level' => env('LOG_LEVEL', 'error'),
             'replace_placeholders' => true,
         ],

@@ -41,15 +41,16 @@ const config = {
         })(),
         logToFile: process.env.LOG_TO_FILE === 'true' || process.env.NODE_ENV === 'production',
         logFilePath: (() => {
-            // Create year/month folder structure for logs
+            // Create year/month/day-based filename: app-DD.log
             const now = new Date();
             const year = now.getFullYear();
             const month = String(now.getMonth() + 1).padStart(2, '0');
-            
+            const day = String(now.getDate()).padStart(2, '0');
+
             // If LOG_FILE_PATH is set and includes a filename, extract the directory
             const envPath = process.env.LOG_FILE_PATH;
             let baseLogDir;
-            
+
             if (envPath) {
                 // Check if it ends with .log (is a file path)
                 if (envPath.endsWith('.log')) {
@@ -60,8 +61,25 @@ const config = {
             } else {
                 baseLogDir = path.join(process.cwd(), 'logs');
             }
-            
-            return path.join(baseLogDir, String(year), month, 'app.log');
+
+            return path.join(baseLogDir, String(year), month, `app-${day}.log`);
+        })(),
+        filePatternPath: (() => {
+            // Rotation pattern: logs/%Y/%m/app-%d.log (pino-roll strftime spec)
+            const envPath = process.env.LOG_FILE_PATH;
+            let baseLogDir;
+
+            if (envPath) {
+                if (envPath.endsWith('.log')) {
+                    baseLogDir = path.dirname(envPath);
+                } else {
+                    baseLogDir = envPath;
+                }
+            } else {
+                baseLogDir = path.join(process.cwd(), 'logs');
+            }
+
+            return path.join(baseLogDir, '%Y', '%m', 'app-%d.log');
         })(),
         logToConsole: process.env.LOG_TO_CONSOLE !== 'false',
         colorize: process.env.LOG_COLORIZE !== 'false',
