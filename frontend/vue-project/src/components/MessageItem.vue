@@ -527,20 +527,9 @@ const quickReactions = ['👍', '❤️', '😂', '😮', '😢', '🙏', '🔥'
 const isMe = computed(() => props.message.sender === 'me' || props.message.isMe)
 const showSenderName = computed(() => Boolean(props.isGroupChat) && !isMe.value && Boolean(props.message.sender))
 
-const senderInitials = computed(() => {
-  const sender = props.message.sender || '?'
-  return sender
-    .toString()
-    .split(' ')
-    .map((n: string) => n[0])
-    .join('')
-    .toUpperCase()
-    .slice(0, 2)
-})
-
 // Slight right offset for received messages in direct chats (no avatar present)
 const messageOffsetClass = computed(() => {
-  return !isMe.value && !props.isGroupChat ? 'ml-2 sm:ml-3' : ''
+  return !isMe.value && !props.isGroupChat ? 'ml-4 sm:ml-6' : ''
 })
 
 const senderAvatarUrl = computed(() => {
@@ -554,6 +543,30 @@ const senderAvatarUrl = computed(() => {
   } catch {
     return String(raw)
   }
+})
+
+// Better initials for cases where no avatar exists
+const senderInitials = computed(() => {
+  // Prefer explicit sender label
+  let label = (props.message.sender as string) || ''
+  if (!label || !label.trim()) {
+    const meta = (props.message as any).metadata || {}
+    label = meta.senderName || meta.sender_name || meta.name || meta.displayName || ''
+  }
+  // If label is a JID or phone, derive from digits
+  const digits = String(label).replace(/@.*$/, '').replace(/\D/g, '')
+  if (digits.length >= 2) return digits.slice(-2)
+  // Otherwise take initials of words
+  const clean = String(label).trim()
+  if (clean.length > 0) {
+    return clean
+      .split(/\s+/)
+      .map((n: string) => n[0])
+      .join('')
+      .toUpperCase()
+      .slice(0, 2)
+  }
+  return 'U'
 })
 
 const formattedTime = computed(() => {

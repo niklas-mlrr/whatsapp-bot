@@ -60,8 +60,12 @@
             :message="{
               ...message,
               isMe: isMine(message),
-              sender: isGroupChat ? getSenderLabel(message) : (typeof message.sender === 'string' ? message.sender : ''),
-              sender_name: message.sender_name || (isGroupChat ? getSenderLabel(message) : (typeof message.sender === 'string' ? message.sender : '')),
+              sender: isGroupChat 
+                ? (message.sender_name || (typeof message.sender === 'string' && message.sender.trim() ? message.sender : getSenderLabel(message))) 
+                : (typeof message.sender === 'string' ? message.sender : ''),
+              sender_name: message.sender_name || (isGroupChat 
+                ? ((typeof message.sender === 'string' && message.sender.trim()) ? message.sender : getSenderLabel(message)) 
+                : (typeof message.sender === 'string' ? message.sender : '')),
               sender_avatar_url: getSenderAvatar(message)
             }"
             :current-user="currentUser"
@@ -346,19 +350,54 @@ const isMine = (message: Message): boolean => {
   return isCurrentUser(message);
 };
 
+// Helper: normalize a phone-like value (JID or phone) to digits only for matching
+const normalizePhone = (val?: string | null): string => {
+  if (!val) return '';
+  const withoutDomain = String(val).replace(/@.*$/, '');
+  return withoutDomain.replace(/\D/g, '');
+};
+
+// Find the member for a message using multiple strategies (id, phone, JID)
+const findMemberForMessage = (message: Message): ChatMember | undefined => {
+  const anyMsg = message as any;
+  // 1) Try by id
+  const sid = anyMsg.sender_id != null ? String(anyMsg.sender_id) : (anyMsg.senderId != null ? String(anyMsg.senderId) : null);
+  if (sid) {
+    const byId = props.members.find(m => m.id === sid);
+    if (byId) return byId;
+  }
+  // 2) Try by phone candidates
+  const meta = (anyMsg.metadata && typeof anyMsg.metadata === 'object') ? anyMsg.metadata : {};
+  const phoneCandidates: string[] = [];
+  if (typeof anyMsg.sender_phone === 'string') phoneCandidates.push(anyMsg.sender_phone);
+  if (typeof meta.sender_phone === 'string') phoneCandidates.push(meta.sender_phone);
+  if (typeof meta.remoteJid === 'string') phoneCandidates.push(meta.remoteJid);
+  if (typeof anyMsg.senderJid === 'string') phoneCandidates.push(anyMsg.senderJid);
+  if (typeof anyMsg.from === 'string') phoneCandidates.push(anyMsg.from);
+  const normalizedCandidates = phoneCandidates
+    .map(p => normalizePhone(p))
+    .filter(p => p.length > 0);
+  if (normalizedCandidates.length === 0) return undefined;
+  // Compare with member phones
+  for (const cand of normalizedCandidates) {
+    const found = props.members.find((m: any) => {
+      const mPhone = m?.phone || m?.phone_number;
+      return normalizePhone(mPhone) === cand;
+    });
+    if (found) return found;
+  }
+  return undefined;
+};
+
 const getSenderName = (message: Message): string => {
   if (!props.isGroupChat || isCurrentUser(message)) return '';
-  const anyMsg = message as any;
-  const sid = anyMsg.sender_id != null ? String(anyMsg.sender_id) : (anyMsg.senderId != null ? String(anyMsg.senderId) : null);
-  const sender = sid ? props.members.find(m => m.id === sid) : undefined;
+  const sender = findMemberForMessage(message);
   return sender?.name || '';
 };
 
 const getSenderPhone = (message: Message): string => {
   if (!props.isGroupChat || isCurrentUser(message)) return '';
-  const anyMsg = message as any;
-  const sid = anyMsg.sender_id != null ? String(anyMsg.sender_id) : (anyMsg.senderId != null ? String(anyMsg.senderId) : null);
-  const sender = sid ? (props.members.find(m => m.id === sid) as any) : undefined;
+  const sender = findMemberForMessage(message) as any;
   return sender?.phone || '';
 };
 
@@ -399,8 +438,7 @@ const getSenderLabel = (message: Message): string => {
 const getSenderAvatar = (message: Message): string | null => {
   if (!props.isGroupChat) return null;
   const anyMsg = message as any;
-  const sid = anyMsg.sender_id != null ? String(anyMsg.sender_id) : (anyMsg.senderId != null ? String(anyMsg.senderId) : null);
-  const sender = sid ? (props.members.find(m => m.id === sid) as any) : undefined;
+  const sender = findMemberForMessage(message) as any;
   // 1) Prefer avatar from members list
   if (sender?.avatar_url) return sender.avatar_url as string;
   // 2) Fallback: avatar on message itself (various possible keys)
