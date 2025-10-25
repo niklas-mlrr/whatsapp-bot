@@ -1201,52 +1201,15 @@ class WhatsAppMessageService
             'reactions' => empty($reactions) ? null : $reactions
         ]);
         
-        // Broadcast the reaction update via Laravel Broadcasting
-        $user = User::find($data->sender_id);
-        if ($user) {
-            Log::channel('whatsapp')->info('Broadcasting reaction event', [
-                'message_id' => $message->id,
-                'chat_id' => $message->chat_id,
-                'user_id' => $user->id,
-                'emoji' => $data->emoji ?? '',
-                'added' => !empty($data->emoji)
-            ]);
-            
-            // Try to broadcast, but don't fail if broadcasting is unavailable
-            try {
-                broadcast(new \App\Events\MessageReaction(
-                    $message,
-                    $user,
-                    $data->emoji ?? '',
-                    !empty($data->emoji)
-                ));
-                
-                Log::channel('whatsapp')->info('Reaction event broadcasted');
-            } catch (\Exception $e) {
-                Log::channel('whatsapp')->warning('Failed to broadcast reaction event, but reaction was saved', [
-                    'error' => $e->getMessage()
-                ]);
-            }
-            
-            // Also notify via WebSocketService for compatibility
-            try {
-                $this->webSocketService->messageReactionUpdated(
-                    $message,
-                    (string) $data->sender_id,
-                    $data->emoji
-                );
-                
-                Log::channel('whatsapp')->info('WebSocketService notified');
-            } catch (\Exception $e) {
-                Log::channel('whatsapp')->warning('Failed to notify via WebSocketService, but reaction was saved', [
-                    'error' => $e->getMessage()
-                ]);
-            }
-        } else {
-            Log::channel('whatsapp')->warning('User not found for broadcasting reaction', [
-                'sender_id' => $data->sender_id
-            ]);
-        }
+        // Skip broadcasting for now to prevent job failures
+        // TODO: Fix broadcasting configuration to enable real-time reaction updates
+        Log::channel('whatsapp')->info('Reaction saved successfully, broadcasting disabled', [
+            'message_id' => $message->id,
+            'chat_id' => $message->chat_id,
+            'user_id' => $data->sender_id,
+            'emoji' => $data->emoji ?? '',
+            'added' => !empty($data->emoji)
+        ]);
         
         // Return null because reactions don't create new messages
         return null;
