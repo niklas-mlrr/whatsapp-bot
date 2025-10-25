@@ -1203,6 +1203,15 @@ class WhatsAppMessageController extends Controller
      */
     private function findOrCreateUserSafely(string $phone): User
     {
+        // Handle special case where sender is "me" (current authenticated user)
+        if ($phone === 'me') {
+            $user = auth()->user();
+            if (!$user) {
+                throw new \InvalidArgumentException("No authenticated user found for sender 'me'");
+            }
+            return $user;
+        }
+        
         // First try to find by phone if it exists
         $user = User::where('phone', $phone)->first();
         
