@@ -56,9 +56,24 @@ class WebSocketService
     public function messageReactionUpdated(WhatsAppMessage $message, string $userId, ?string $reaction): void
     {
         try {
+            // Fetch user information for the reaction
+            $user = \App\Models\User::find($userId);
+            $userName = null;
+            if ($user) {
+                // Prefer name if it's not a placeholder, otherwise use formatted phone
+                if ($user->name && strtolower($user->name) !== 'whatsapp user') {
+                    $userName = $user->name;
+                } elseif ($user->phone) {
+                    // Format phone number: remove domain and add + prefix
+                    $phone = preg_replace('/@.*$/', '', $user->phone);
+                    $userName = preg_match('/^\d+$/', $phone) ? '+' . $phone : $phone;
+                }
+            }
+            
             Broadcast::event('chat.' . $message->chat_id, 'message-reaction-updated', [
                 'message_id' => $message->id,
                 'user_id' => $userId,
+                'user_name' => $userName,
                 'reaction' => $reaction,
                 'event' => 'message-reaction-updated',
             ]);

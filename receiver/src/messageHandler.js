@@ -61,6 +61,10 @@ async function handleMessages(sock, m) {
                     try {
                         senderProfilePicture = await fetchContactProfilePicture(sock, remoteJid);
                         senderBio = await fetchContactStatus(sock, remoteJid);
+                        if (typeof senderBio === 'string') {
+                            // Trim to backend validation limit
+                            senderBio = senderBio.slice(0, 500);
+                        }
                         logger.debug({ 
                             remoteJid, 
                             hasPicture: !!senderProfilePicture, 
@@ -303,7 +307,7 @@ async function handleTextMessage(remoteJid, text, contextInfo = {}, messageId = 
         contextInfo: contextInfo || undefined,
         quotedMessage: quotedMessageData,
         senderProfilePictureUrl: senderProfilePicture || undefined,
-        senderBio: senderBio || undefined
+        senderBio: (senderBio ?? undefined)
     };
     
     logger.debug({ 
@@ -378,7 +382,7 @@ async function handleImageMessage(sock, msg, remoteJid, senderJid = null, sender
             messageId: msg.key.id,
             quotedMessage: quotedMessageData,
             senderProfilePictureUrl: senderProfilePicture || undefined,
-            senderBio: senderBio || undefined
+            senderBio: (senderBio ?? undefined)
         };
         
         logger.debug({ 

@@ -993,10 +993,79 @@ class ChatController extends Controller
             
             // Decode reactions if it's a JSON string
             $reactions = null;
+            $reactionUsers = null;
             if (isset($m->reactions)) {
                 $reactions = is_string($m->reactions) ? json_decode($m->reactions, true) : $m->reactions;
                 if (!is_array($reactions)) {
                     $reactions = null;
+                } else {
+                    // Build reaction_users mapping: user_id => name or phone
+                    $reactionUsers = [];
+                    $userIds = array_keys($reactions);
+                    if (!empty($userIds)) {
+                        // First, get the chat info to determine if it's a group chat
+                        $chatInfo = DB::selectOne("SELECT is_group FROM chats WHERE id = ?", [$m->chat_id]);
+                        $isGroupChat = $chatInfo && $chatInfo->is_group;
+                        
+                        if ($isGroupChat) {
+                            // For group chats, try to get contact names from chats table first
+                            $users = DB::select("
+                                SELECT u.id, u.name, u.phone, c.name as contact_name
+                                FROM users u
+                                LEFT JOIN chats c ON (
+                                    c.is_group = false 
+                                    AND JSON_CONTAINS(c.participants, JSON_QUOTE(u.phone))
+                                )
+                                WHERE u.id IN (" . implode(',', array_map('intval', $userIds)) . ")
+                            ");
+                            
+                            foreach ($users as $user) {
+                                $displayName = null;
+                                
+                                // Prefer contact name from chats table if available and not a phone number
+                                if ($user->contact_name && $user->contact_name !== $user->phone) {
+                                    $isPhoneNumber = preg_match('/^[+\d\s\-_@.]+$/', $user->contact_name);
+                                    if (!$isPhoneNumber) {
+                                        $displayName = $user->contact_name;
+                                    }
+                                }
+                                
+                                // Fallback to user name if it's not a placeholder
+                                if (!$displayName && $user->name && strtolower($user->name) !== 'whatsapp user' && strtolower($user->name) !== 'temporary user') {
+                                    $displayName = $user->name;
+                                }
+                                
+                                // Last resort: format phone number
+                                if (!$displayName && $user->phone) {
+                                    $phone = preg_replace('/@.*$/', '', $user->phone);
+                                    $phone = preg_match('/^\d+$/', $phone) ? '+' . $phone : $phone;
+                                    $displayName = $phone;
+                                }
+                                
+                                $reactionUsers[(string)$user->id] = $displayName ?: 'Unknown';
+                            }
+                        } else {
+                            // For individual chats, use the original logic
+                            $users = DB::select("
+                                SELECT id, name, phone
+                                FROM users
+                                WHERE id IN (" . implode(',', array_map('intval', $userIds)) . ")
+                            ");
+                            foreach ($users as $user) {
+                                // Prefer name if it's not a placeholder, otherwise use formatted phone
+                                if ($user->name && strtolower($user->name) !== 'whatsapp user' && strtolower($user->name) !== 'temporary user') {
+                                    $reactionUsers[(string)$user->id] = $user->name;
+                                } elseif ($user->phone) {
+                                    // Format phone number: remove domain and add + prefix
+                                    $phone = preg_replace('/@.*$/', '', $user->phone);
+                                    $phone = preg_match('/^\d+$/', $phone) ? '+' . $phone : $phone;
+                                    $reactionUsers[(string)$user->id] = $phone;
+                                } else {
+                                    $reactionUsers[(string)$user->id] = 'Unknown';
+                                }
+                            }
+                        }
+                    }
                 }
             }
             
@@ -1066,6 +1135,7 @@ class ChatController extends Controller
                 'filename' => $filename,
                 'size' => $fileSize,
                 'reactions' => $reactions,
+                'reaction_users' => $reactionUsers,
                 'reply_to_message_id' => $m->reply_to_message_id ?? null,
                 'quoted_message' => $quotedMessage,
                 'sender_avatar_url' => $senderAvatarUrl,
@@ -1243,10 +1313,79 @@ class ChatController extends Controller
                 
                 // Decode reactions if it's a JSON string
                 $reactions = null;
+                $reactionUsers = null;
                 if (isset($m->reactions)) {
                     $reactions = is_string($m->reactions) ? json_decode($m->reactions, true) : $m->reactions;
                     if (!is_array($reactions)) {
                         $reactions = null;
+                    } else {
+                        // Build reaction_users mapping: user_id => name or phone
+                        $reactionUsers = [];
+                        $userIds = array_keys($reactions);
+                        if (!empty($userIds)) {
+                            // First, get the chat info to determine if it's a group chat
+                            $chatInfo = DB::selectOne("SELECT is_group FROM chats WHERE id = ?", [$m->chat_id]);
+                            $isGroupChat = $chatInfo && $chatInfo->is_group;
+                            
+                            if ($isGroupChat) {
+                                // For group chats, try to get contact names from chats table first
+                                $users = DB::select("
+                                    SELECT u.id, u.name, u.phone, c.name as contact_name
+                                    FROM users u
+                                    LEFT JOIN chats c ON (
+                                        c.is_group = false 
+                                        AND JSON_CONTAINS(c.participants, JSON_QUOTE(u.phone))
+                                    )
+                                    WHERE u.id IN (" . implode(',', array_map('intval', $userIds)) . ")
+                                ");
+                                
+                                foreach ($users as $user) {
+                                    $displayName = null;
+                                    
+                                    // Prefer contact name from chats table if available and not a phone number
+                                    if ($user->contact_name && $user->contact_name !== $user->phone) {
+                                        $isPhoneNumber = preg_match('/^[+\d\s\-_@.]+$/', $user->contact_name);
+                                        if (!$isPhoneNumber) {
+                                            $displayName = $user->contact_name;
+                                        }
+                                    }
+                                    
+                                    // Fallback to user name if it's not a placeholder
+                                    if (!$displayName && $user->name && strtolower($user->name) !== 'whatsapp user' && strtolower($user->name) !== 'temporary user') {
+                                        $displayName = $user->name;
+                                    }
+                                    
+                                    // Last resort: format phone number
+                                    if (!$displayName && $user->phone) {
+                                        $phone = preg_replace('/@.*$/', '', $user->phone);
+                                        $phone = preg_match('/^\d+$/', $phone) ? '+' . $phone : $phone;
+                                        $displayName = $phone;
+                                    }
+                                    
+                                    $reactionUsers[(string)$user->id] = $displayName ?: 'Unknown';
+                                }
+                            } else {
+                                // For individual chats, use the original logic
+                                $users = DB::select("
+                                    SELECT id, name, phone
+                                    FROM users
+                                    WHERE id IN (" . implode(',', array_map('intval', $userIds)) . ")
+                                ");
+                                foreach ($users as $user) {
+                                    // Prefer name if it's not a placeholder, otherwise use formatted phone
+                                    if ($user->name && strtolower($user->name) !== 'whatsapp user' && strtolower($user->name) !== 'temporary user') {
+                                        $reactionUsers[(string)$user->id] = $user->name;
+                                    } elseif ($user->phone) {
+                                        // Format phone number: remove domain and add + prefix
+                                        $phone = preg_replace('/@.*$/', '', $user->phone);
+                                        $phone = preg_match('/^\d+$/', $phone) ? '+' . $phone : $phone;
+                                        $reactionUsers[(string)$user->id] = $phone;
+                                    } else {
+                                        $reactionUsers[(string)$user->id] = 'Unknown';
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 
@@ -1319,6 +1458,7 @@ class ChatController extends Controller
                     'filename' => $filename,
                     'size' => $fileSize,
                     'reactions' => $reactions,
+                    'reaction_users' => $reactionUsers,
                     'reply_to_message_id' => $m->reply_to_message_id ?? null,
                     'quoted_message' => $quotedMessage,
                     'sender_avatar_url' => $senderAvatarUrl,
@@ -1403,6 +1543,123 @@ class ChatController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'error' => 'Failed to get last read message',
+                'message' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get members for a group chat with resolved names
+     */
+    public function getMembers(Request $request, $chatId)
+    {
+        try {
+            $user = $request->user() ?: User::getFirstUser();
+            
+            // Get the chat
+            $chat = Chat::findOrFail($chatId);
+            
+            if (!$chat->is_group) {
+                return response()->json([
+                    'error' => 'This endpoint is only for group chats'
+                ], 400);
+            }
+            
+            $participants = $chat->participants ?? [];
+            $members = [];
+            
+            foreach ($participants as $participant) {
+                // Skip 'me' participant
+                if ($participant === 'me') {
+                    $members[] = [
+                        'id' => $user->id,
+                        'name' => 'You',
+                        'phone' => 'me',
+                        'avatar_url' => null
+                    ];
+                    continue;
+                }
+                
+                // Normalize phone number - handle different formats
+                $phoneNumber = preg_replace('/@.*$/', '', $participant);
+                $phoneNumber = preg_replace('/[^\d]/', '', $phoneNumber);
+                
+                // Skip obviously fake or invalid phone numbers
+                if (strlen($phoneNumber) < 7 || strlen($phoneNumber) > 15) {
+                    $members[] = [
+                        'id' => $phoneNumber,
+                        'name' => 'Unknown User',
+                        'phone' => $participant,
+                        'avatar_url' => null
+                    ];
+                    continue;
+                }
+                
+                // Look up contact name from chats table first - this is the primary source
+                $contactChat = Chat::where('is_group', false)
+                    ->where(function($query) use ($participant, $phoneNumber) {
+                        $query->whereJsonContains('participants', $participant)
+                              ->orWhereJsonContains('participants', $phoneNumber)
+                              ->orWhereJsonContains('participants', '+' . $phoneNumber);
+                    })
+                    ->first();
+                
+                $contactName = null;
+                if ($contactChat && $contactChat->name && $contactChat->name !== $participant) {
+                    // Check if the name is not just a phone number
+                    $isPhoneNumber = preg_match('/^[+\d\s\-_@.]+$/', $contactChat->name);
+                    if (!$isPhoneNumber) {
+                        $contactName = $contactChat->name;
+                    }
+                }
+                
+                // Only fallback to user table if we have NO contact name from chats table
+                // AND the user has a real name (not "WhatsApp User")
+                if (!$contactName) {
+                    $userRecord = User::where('phone', $phoneNumber)
+                        ->orWhere('phone', $participant)
+                        ->orWhere('phone', '+' . $phoneNumber)
+                        ->first();
+                    
+                    // Only use user name if it's not the default "WhatsApp User"
+                    if ($userRecord && $userRecord->name && $userRecord->name !== 'WhatsApp User') {
+                        $contactName = $userRecord->name;
+                    }
+                }
+                
+                // Format display name
+                $displayName = $contactName;
+                if (!$displayName) {
+                    // Only format as phone number if it looks like a real phone number
+                    if (strlen($phoneNumber) >= 10 && strlen($phoneNumber) <= 15) {
+                        $displayName = $this->formatPhoneNumberForDisplay($participant);
+                    } else {
+                        $displayName = 'Unknown User';
+                    }
+                }
+                
+                $members[] = [
+                    'id' => $phoneNumber,
+                    'name' => $displayName,
+                    'phone' => $participant,
+                    'avatar_url' => $contactChat->contact_profile_picture_url ?? null
+                ];
+            }
+            
+            return response()->json([
+                'success' => true,
+                'data' => $members
+            ]);
+            
+        } catch (\Exception $e) {
+            \Log::error('Error fetching group chat members: ' . $e->getMessage(), [
+                'chat_id' => $chatId,
+                'user_id' => $request->user()->id ?? 'unknown',
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'error' => 'Failed to fetch group chat members',
                 'message' => $e->getMessage()
             ], 500);
         }

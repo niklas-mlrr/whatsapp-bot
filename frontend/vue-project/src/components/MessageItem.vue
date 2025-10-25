@@ -322,16 +322,20 @@
       <!-- Message reactions -->
       <div v-if="hasReactions" class="flex flex-wrap gap-1 mt-1 px-1">
         <button 
-          v-for="(emoji, userId) in message.reactions" 
-          :key="userId"
-          @click="handleReactionClick(emoji)"
-          class="text-sm bg-gray-100 dark:bg-zinc-700 hover:bg-gray-200 dark:hover:bg-zinc-600 rounded-full px-2 py-0.5 transition-colors cursor-pointer border border-gray-200 dark:border-zinc-600 flex items-center gap-1"
-          :title="getReactionTooltip(userId)"
+          v-for="(userIds, emoji) in groupedReactions" 
+          :key="emoji"
+          @click="onReactionChipClick(emoji)"
+          @mouseenter="activeTooltipEmoji = String(emoji)"
+          @mouseleave="activeTooltipEmoji = null"
+          class="relative text-sm bg-gray-100 dark:bg-zinc-700 hover:bg-gray-200 dark:hover:bg-zinc-600 rounded-full px-2 py-0.5 transition-colors cursor-pointer border border-gray-200 dark:border-zinc-600 flex items-center gap-1"
         >
           <span>{{ emoji }}</span>
-          <span v-if="getReactionCount(emoji) > 1" class="text-xs text-gray-600 dark:text-gray-300">
-            {{ getReactionCount(emoji) }}
+          <span v-if="userIds.length > 1" class="text-xs text-gray-600 dark:text-gray-300">
+            {{ userIds.length }}
           </span>
+          <div v-if="activeTooltipEmoji === String(emoji)" class="absolute -top-7 left-1/2 -translate-x-1/2 whitespace-pre leading-tight text-xs bg-black text-white px-2 py-1 rounded shadow pointer-events-none z-10">
+            <span v-html="getGroupedReactionTooltip(emoji).replace(/\n/g, '<br/>')"></span>
+          </div>
         </button>
         <button 
           @click="toggleReactionPicker"
@@ -439,6 +443,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, defineComponent } from 'vue'
 import { API_CONFIG } from '@/config/api'
+import { useChatStore } from '@/stores/chat'
 
 const props = defineProps<{ 
   message: {
@@ -483,7 +488,10 @@ const props = defineProps<{
     name: string
   }
   isGroupChat?: boolean
+  members?: Array<{ id: string | number; name?: string; phone?: string; phone_number?: string }>
 }>()
+
+const chatStore = useChatStore()
 
 // Document messages are handled in the template
 
@@ -505,6 +513,7 @@ const audioDuration = ref(0)
 const isVideoPlaying = ref(false)
 const isImageLoading = ref(true)
 const showReactionPicker = ref(false)
+const activeTooltipEmoji = ref<string | null>(null)
 
 // Emoji categories for the picker
 const emojiCategories = {
@@ -692,9 +701,21 @@ const bubbleClass = computed(() => {
   return baseClasses.join(' ')
 })
 
-// Reaction computed properties
 const hasReactions = computed(() => {
   return props.message.reactions && Object.keys(props.message.reactions).length > 0
+})
+
+const groupedReactions = computed<Record<string, Array<string | number>>>(() => {
+  const result: Record<string, Array<string | number>> = {}
+  const reactions: any = props.message.reactions || {}
+  if (typeof reactions !== 'object') return result
+  for (const [userId, emoji] of Object.entries(reactions)) {
+    if (!emoji) continue
+    const key = String(emoji)
+    if (!result[key]) result[key] = []
+    result[key].push(userId)
+  }
+  return result
 })
 
 // Message status computed property
@@ -766,14 +787,16 @@ function addReaction(emoji: string) {
   showReactionPicker.value = false
 }
 
-function handleReactionClick(emoji: string) {
-  // If it's my reaction, remove it; otherwise, add it
+function onReactionChipClick(emoji: string) {
   const currentUserId = getCurrentUserId()
   if (currentUserId && props.message.reactions && props.message.reactions[currentUserId] === emoji) {
     emit('remove-reaction', { messageId: props.message.id })
-  } else {
-    emit('add-reaction', { messageId: props.message.id, emoji })
+    return
   }
+  activeTooltipEmoji.value = String(emoji)
+  window.setTimeout(() => {
+    if (activeTooltipEmoji.value === String(emoji)) activeTooltipEmoji.value = null
+  }, 1200)
 }
 
 function isMyReaction(userId: string | number): boolean {
@@ -781,9 +804,92 @@ function isMyReaction(userId: string | number): boolean {
   return currentUserId !== null && String(userId) === String(currentUserId)
 }
 
-function getReactionTooltip(userId: string | number): string {
-  // In a real app, you'd look up the user's name
-  return isMyReaction(userId) ? 'You reacted' : `User ${userId} reacted`
+function formatPhone(val?: string): string {
+  if (!val) return ''
+  const digits = String(val).replace(/@.*$/, '').replace(/\D/g, '')
+  return digits ? `+${digits}` : String(val)
+}
+
+function isPhoneLike(val?: string): boolean {
+  if (!val) return false
+  const s = String(val)
+  if (/@(s\.whatsapp\.net|g\.us)$/.test(s)) return true
+  const digits = s.replace(/\D/g, '')
+  return s.startsWith('+') || digits.length >= 7
+}
+
+function isNumericOnly(val?: string): boolean {
+  if (!val) return false
+  return /^\d+$/.test(String(val).trim())
+}
+
+function resolveUserLabelById(userId: string | number): string {
+  if (isMyReaction(userId)) return 'Du'
+
+  const list = Array.isArray(props.members) ? props.members : []
+  // 1) Exact member match by id
+  const found = list.find(m => String(m.id) === String(userId))
+  if (found) {
+    if (found.name && String(found.name).trim()) return String(found.name)
+    // Prefer mapped non-phone label before phone
+    const mappedTry = (props.message as any).reaction_users?.[String(userId)]
+    if (mappedTry && !isPhoneLike(String(mappedTry)) && !isNumericOnly(String(mappedTry))) return String(mappedTry)
+    const phone = (found as any).phone || (found as any).phone_number
+    if (phone) return formatPhone(String(phone))
+  }
+
+  const map = (props.message as any).reaction_users || {}
+
+  // 2) Direct chat: if it's not me, prefer the other participant's name
+  if (!props.isGroupChat) {
+    const currentUserId = getCurrentUserId()
+    if (currentUserId !== null && String(userId) !== String(currentUserId)) {
+      // Prefer the only other member in the chat
+      const other = list.find(m => String(m.id) !== String(currentUserId))
+      if (other) {
+        if (other.name && String(other.name).trim()) return String(other.name)
+        // Prefer mapped non-phone label before phone
+        const mappedOther = (props.message as any).reaction_users?.[String(userId)]
+        if (mappedOther && !isPhoneLike(String(mappedOther)) && !isNumericOnly(String(mappedOther))) return String(mappedOther)
+        const phone = (other as any).phone || (other as any).phone_number
+        if (phone) return formatPhone(String(phone))
+      }
+      // Fallback to message sender label if available
+      const senderName = (props.message as any).sender_name
+      const sender = (props.message as any).sender
+      if (senderName && String(senderName).trim() && String(senderName).toLowerCase() !== 'whatsapp user') {
+        return String(senderName)
+      }
+      if (sender && String(sender).trim() && String(sender).toLowerCase() !== 'whatsapp user') {
+        return String(sender)
+      }
+    }
+  }
+
+  // 3) Mapping: prefer non-phone-like and non-numeric-only labels
+  const mapped = map && typeof map === 'object' ? String(map[String(userId)] || '') : ''
+  if (mapped && !isPhoneLike(mapped) && !isNumericOnly(mapped)) return mapped
+
+  // 4) If we have a member phone, use it; otherwise use mapped phone if present
+  if (found) {
+    const phone = (found as any).phone || (found as any).phone_number
+    if (phone) return formatPhone(String(phone))
+  }
+  if (mapped) return formatPhone(mapped)
+
+  // 5) Last resort: unknown (avoid showing raw numeric id)
+  return 'Unbekannt'
+}
+
+function getGroupedReactionTooltip(emoji: string): string {
+  const users = groupedReactions.value[String(emoji)] || []
+  if (users.length === 0) return ''
+  const lines = users.map(uid => {
+    if (isMyReaction(uid)) return 'Du hast reagiert'
+    const label = resolveUserLabelById(uid)
+    return `${label} hat reagiert`
+  })
+  return lines.join('\n')
 }
 
 function getReactionCount(emoji: string): number {

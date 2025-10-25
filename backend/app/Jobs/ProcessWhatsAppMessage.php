@@ -83,6 +83,21 @@ class ProcessWhatsAppMessage implements ShouldQueue
 
         try {
             // Process the message through the service
+            Log::channel('whatsapp')->info('Queue job calling messageService->handle()', [
+                'type' => $this->messageData->type,
+                'sender' => $this->messageData->sender
+            ]);
+            
+            // Add more detailed logging
+            Log::channel('whatsapp')->info('MessageData details', [
+                'type' => $this->messageData->type,
+                'sender' => $this->messageData->sender,
+                'chat' => $this->messageData->chat,
+                'messageId' => $this->messageData->messageId,
+                'emoji' => $this->messageData->emoji ?? 'null',
+                'reactedMessageId' => $this->messageData->reactedMessageId ?? 'null'
+            ]);
+            
             $messageService->handle($this->messageData);
 
             Log::channel('whatsapp')->info('Successfully processed queued message', [
@@ -95,6 +110,8 @@ class ProcessWhatsAppMessage implements ShouldQueue
                 'attempt' => $this->attempts(),
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
+                'message_type' => $this->messageData->type,
+                'sender' => $this->messageData->sender,
             ]);
 
             // Re-throw to let Laravel's queue system handle retries

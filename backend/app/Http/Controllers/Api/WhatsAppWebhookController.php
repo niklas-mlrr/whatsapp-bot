@@ -44,6 +44,12 @@ class WhatsAppWebhookController extends Controller
         try {
             $messageData = WhatsAppMessageData::fromRequest($request);
             
+            Log::channel('whatsapp')->info('Webhook received message', [
+                'type' => $messageData->type,
+                'sender' => $messageData->sender,
+                'chat' => $messageData->chat
+            ]);
+            
             // Check if queue is enabled
             $queueConnection = config('queue.default');
             

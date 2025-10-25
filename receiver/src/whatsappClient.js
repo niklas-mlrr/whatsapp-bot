@@ -153,8 +153,24 @@ async function fetchContactProfilePicture(sock, jid) {
  */
 async function fetchContactStatus(sock, jid) {
     try {
-        const status = await sock.fetchStatus(jid);
-        return status?.status || null;
+        // Normalize JID to ensure correct query format
+        const primary = jidNormalizedUser(jid);
+        const attempts = Array.from(new Set([primary, jid].filter(Boolean)));
+
+        for (const target of attempts) {
+            try {
+                const statusObj = await sock.fetchStatus(target);
+                const raw = typeof statusObj?.status === 'string' ? statusObj.status : null;
+                const trimmed = typeof raw === 'string' ? raw.trim() : null;
+                logger.info({ jid: target, hasStatus: !!trimmed, length: trimmed ? trimmed.length : 0 }, 'Fetched contact status');
+                if (trimmed) {
+                    return trimmed;
+                }
+            } catch (innerErr) {
+                logger.info({ jid: target, error: innerErr.message }, 'fetchStatus attempt failed');
+            }
+        }
+        return null;
     } catch (error) {
         logger.debug({ jid, error: error.message }, 'Could not fetch contact status');
         return null;

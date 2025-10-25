@@ -797,31 +797,69 @@ const textareaClasses = computed(() => {
 
 // Normalized members for the selected chat (id, name, phone)
 type Member = { id: string; name: string; phone?: string; avatar_url?: string }
-const membersForChat = computed<Member[]>(() => {
-  const participants = selectedChat.value?.participants || []
-  const normalizePhone = (val?: string | null) => {
-    if (!val) return ''
-    const withoutDomain = String(val).replace(/@.*$/, '')
-    return withoutDomain.replace(/\D/g, '')
-  }
-  return participants.map((p: any) => {
-    if (typeof p === 'string') {
-      const phoneDigits = normalizePhone(p)
-      return {
-        id: phoneDigits || String(p),
-        name: '',
-        phone: p,
-        avatar_url: undefined
+const membersForChat = ref<Member[]>([])
+
+// Fetch group chat members with contact names
+const fetchGroupChatMembers = async (chatId: string) => {
+  if (!selectedChat.value?.is_group) {
+    // For direct chats, create members from participants
+    const participants = selectedChat.value?.participants || []
+    const normalizePhone = (val?: string | null) => {
+      if (!val) return ''
+      const withoutDomain = String(val).replace(/@.*$/, '')
+      return withoutDomain.replace(/\D/g, '')
+    }
+    membersForChat.value = participants.map((p: any) => {
+      if (typeof p === 'string') {
+        const phoneDigits = normalizePhone(p)
+        return {
+          id: phoneDigits || String(p),
+          name: selectedChat.value?.name || '',
+          phone: p,
+          avatar_url: selectedChat.value?.contact_info?.profile_picture_url
+        }
       }
+      return {
+        id: p?.id?.toString?.() || String(p?.id ?? ''),
+        name: String(p?.name ?? ''),
+        phone: p?.phone ?? p?.phone_number,
+        avatar_url: p?.avatar_url ?? p?.profile_picture_url ?? p?.contact_info?.profile_picture_url ?? undefined
+      }
+    })
+    return
+  }
+
+  try {
+    const response = await apiClient.get(`/chats/${chatId}/members`)
+    membersForChat.value = response.data.data || []
+  } catch (error) {
+    console.error('Error fetching group chat members:', error)
+    // Fallback to participants if API fails
+    const participants = selectedChat.value?.participants || []
+    const normalizePhone = (val?: string | null) => {
+      if (!val) return ''
+      const withoutDomain = String(val).replace(/@.*$/, '')
+      return withoutDomain.replace(/\D/g, '')
     }
-    return {
-      id: p?.id?.toString?.() || String(p?.id ?? ''),
-      name: String(p?.name ?? ''),
-      phone: p?.phone ?? p?.phone_number,
-      avatar_url: p?.avatar_url ?? p?.profile_picture_url ?? p?.contact_info?.profile_picture_url ?? undefined
-    }
-  })
-})
+    membersForChat.value = participants.map((p: any) => {
+      if (typeof p === 'string') {
+        const phoneDigits = normalizePhone(p)
+        return {
+          id: phoneDigits || String(p),
+          name: '',
+          phone: p,
+          avatar_url: undefined
+        }
+      }
+      return {
+        id: p?.id?.toString?.() || String(p?.id ?? ''),
+        name: String(p?.name ?? ''),
+        phone: p?.phone ?? p?.phone_number,
+        avatar_url: p?.avatar_url ?? p?.profile_picture_url ?? p?.contact_info?.profile_picture_url ?? undefined
+      }
+    })
+  }
+}
 
 // Derive current user for this chat: the member with phone === 'me'
 const currentUserForChat = computed(() => {
@@ -835,6 +873,10 @@ const currentUserForChat = computed(() => {
 
 async function selectChat(chat: any) {
   selectedChat.value = chat
+  // Fetch members for group chats
+  if (chat?.id) {
+    await fetchGroupChatMembers(chat.id)
+  }
   // Hide sidebar on mobile when chat is selected
   showSidebarOnMobile.value = false
   

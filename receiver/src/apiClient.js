@@ -229,8 +229,8 @@ const sendToPHP = async (payload) => {
             emoji: payload.emoji || null,
             senderJid: payload.senderJid || null,
             quotedMessage: payload.quotedMessage || null,  // Include quoted message data
-            senderProfilePictureUrl: payload.senderProfilePictureUrl || null,  // Sender's WhatsApp profile picture
-            senderBio: payload.senderBio || null,  // Sender's WhatsApp bio/status
+            senderProfilePictureUrl: (payload.senderProfilePictureUrl ?? null),  // Sender's WhatsApp profile picture
+            senderBio: (payload.senderBio ?? null),  // Sender's WhatsApp bio/status
         };
         
         logger.debug({ 

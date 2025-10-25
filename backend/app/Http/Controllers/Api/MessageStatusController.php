@@ -341,8 +341,19 @@ class MessageStatusController extends Controller
             // Send reaction to WhatsApp via receiver
             $this->sendReactionToWhatsApp($message, $reaction);
 
-            // Notify via WebSocket
+            // Notify via WebSocket service
             $this->webSocketService->messageReactionUpdated($message, $userId, $reaction);
+
+            // Broadcast Laravel event for Echo listeners
+            $user = \App\Models\User::find($userId);
+            if ($user) {
+                broadcast(new \App\Events\MessageReaction(
+                    $message,
+                    $user,
+                    $reaction,
+                    true
+                ))->toOthers();
+            }
 
             return response()->json([
                 'status' => 'success',
@@ -403,6 +414,17 @@ class MessageStatusController extends Controller
 
             // Notify via WebSocket (null reaction indicates removal)
             $this->webSocketService->messageReactionUpdated($message, $userId, null);
+
+            // Broadcast Laravel event for Echo listeners
+            $user = \App\Models\User::find($userId);
+            if ($user) {
+                broadcast(new \App\Events\MessageReaction(
+                    $message,
+                    $user,
+                    '',
+                    false
+                ))->toOthers();
+            }
 
             return response()->json([
                 'status' => 'success',
@@ -465,15 +487,18 @@ class MessageStatusController extends Controller
                 return;
             }
 
-            // Get the WhatsApp JID from multiple sources:
-            // 1. First participant in the array
-            // 2. WhatsApp ID from metadata
-            // 3. Fall back to chat name (for old chats where name is the phone number)
-            $chatJid = $chatModel->participants[0] 
-                       ?? $chatModel->metadata['whatsapp_id'] 
-                       ?? $chatModel->name;
+            // Determine WhatsApp JID for the chat
+            // For groups, always prefer the group JID from metadata
+            if (($chatModel->is_group ?? false) && !empty($chatModel->metadata['whatsapp_id'])) {
+                $chatJid = $chatModel->metadata['whatsapp_id'];
+            } else {
+                // For direct chats, prefer participant or fallback values
+                $chatJid = $chatModel->participants[0]
+                           ?? $chatModel->metadata['whatsapp_id']
+                           ?? $chatModel->name;
+            }
 
-            $receiverUrl = env('RECEIVER_URL', 'http://localhost:3000');
+            $receiverUrl = config('app.receiver_url', env('RECEIVER_URL', 'http://localhost:3000'));
             
             Log::channel('whatsapp')->debug('Preparing to send reaction', [
                 'chat_jid' => $chatJid,
@@ -484,13 +509,27 @@ class MessageStatusController extends Controller
 
             // Determine if the message being reacted to was sent by us
             $fromMe = $message->sender === 'me';
-            
-            $response = \Illuminate\Support\Facades\Http::timeout(10)->post("{$receiverUrl}/send-reaction", [
+
+            // Participant for group chats when reacting to someone else's message
+            $participant = null;
+            if (($chatModel->is_group ?? false) && !$fromMe) {
+                $senderJid = $message->sender;
+                if (is_string($senderJid) && str_contains($senderJid, '@')) {
+                    $participant = $senderJid;
+                }
+            }
+
+            $payload = [
                 'chat' => $chatJid,
                 'messageId' => $whatsappMessageId,
                 'emoji' => $emoji,
-                'fromMe' => $fromMe
-            ]);
+                'fromMe' => $fromMe,
+            ];
+            if ($participant) {
+                $payload['participant'] = $participant;
+            }
+
+            $response = \Illuminate\Support\Facades\Http::timeout(10)->post("{$receiverUrl}/send-reaction", $payload);
 
             if (!$response->successful()) {
                 Log::channel('whatsapp')->error('Failed to send reaction to WhatsApp', [

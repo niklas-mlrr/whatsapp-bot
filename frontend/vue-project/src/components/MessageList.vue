@@ -78,6 +78,7 @@
             }"
             :current-user="currentUser"
             :is-group-chat="isGroupChat"
+            :members="members"
             @open-image-preview="handleOpenImagePreview"
             @add-reaction="handleAddReaction"
             @remove-reaction="handleRemoveReaction"
@@ -173,16 +174,15 @@ interface Message {
   filename?: string;
   size?: number;
   reactions?: Record<string, any> | string | null;
+  reaction_users?: Record<string, string>;
   metadata?: Record<string, any> | string | null;
   sending_time?: string;
   is_group?: boolean | string | number;
   description?: string;
   avatar_url?: string | null;
-  // Reply/Quote fields
   reply_to_message_id?: string | number;
   quoted_message?: any;
   reply_to_message?: any;
-  // Optional backend/client flags for ownership
   is_from_me?: boolean;
   is_mine?: boolean;
 }
@@ -206,6 +206,7 @@ interface ChatMember {
   id: string;
   name: string;
   phone?: string;
+  phone_number?: string;
 }
 
 const props = defineProps({
@@ -368,6 +369,11 @@ const isMine = (message: Message): boolean => {
   return isCurrentUser(message);
 };
 
+// Derive current user for this chat: always use authenticated user id
+const currentUserForChat = computed(() => {
+  return { id: props.currentUser.id, name: props.currentUser.name }
+})
+
 // Helper: normalize a phone-like value (JID or phone) to digits only for matching
 const normalizePhone = (val?: string | null): string => {
   if (!val) return '';
@@ -426,7 +432,7 @@ const findMemberForMessage = (message: Message): ChatMember | undefined => {
 const getSenderName = (message: Message): string => {
   if (!props.isGroupChat || isCurrentUser(message)) return '';
   const sender = findMemberForMessage(message);
-  if (sender?.name) return sender.name;
+  if (sender?.name && String(sender.name).trim()) return String(sender.name);
   // Try to pull name from a known direct chat contact
   const anyMsg = message as any;
   const meta = (anyMsg.metadata && typeof anyMsg.metadata === 'object') ? anyMsg.metadata : {};
@@ -538,6 +544,58 @@ const formatDayLabel = (dateString: string): string => {
   if (isSameDay(d, today)) return 'Today';
   if (isSameDay(d, yesterday)) return 'Yesterday';
   return d.toLocaleDateString([], { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' });
+};
+
+// Backfill reaction_users labels for all messages without it
+const backfillReactionUserLabels = () => {
+  try {
+    messages.value = messages.value.map((m: any) => {
+      if (!m || !m.reactions || typeof m.reactions !== 'object') return m;
+      const existing: Record<string, string> = m.reaction_users || {};
+      const filled: Record<string, string> = { ...existing };
+      for (const uid of Object.keys(m.reactions)) {
+        if (!filled[uid]) {
+          // Resolve via members
+          const member = (props.members as any[])?.find?.((mm: any) => String(mm?.id) === String(uid));
+          if (member) {
+            const name = member.name && String(member.name).trim();
+            if (name) filled[uid] = String(member.name);
+            else if ((member as any).phone || (member as any).phone_number) {
+              const raw = String((member as any).phone || (member as any).phone_number);
+              const digits = raw.replace(/@.*$/, '').replace(/\D/g, '');
+              if (digits) filled[uid] = `+${digits}`; else filled[uid] = raw;
+            }
+          }
+          // Resolve via prior messages by sender_id
+          if (!filled[uid]) {
+            const msgByUser = messages.value.find((mm: any) => String(mm?.sender_id) === String(uid));
+            if (msgByUser) {
+              const direct = (msgByUser as any).sender_name || (msgByUser as any).sender?.name;
+              if (direct && String(direct).trim()) filled[uid] = String(direct);
+              else {
+                try {
+                  const candidate = getSenderLabel(msgByUser as any);
+                  if (candidate && String(candidate).trim()) filled[uid] = String(candidate);
+                } catch {}
+              }
+              if (!filled[uid]) {
+                const meta = (msgByUser as any).metadata || {};
+                const raw = meta.sender_phone || meta.remoteJid || (msgByUser as any).sender_phone || '';
+                if (raw && typeof raw === 'string') {
+                  const digits = raw.replace(/@.*$/, '').replace(/\D/g, '');
+                  if (digits) filled[uid] = `+${digits}`;
+                }
+              }
+            }
+          }
+        }
+      }
+      if (Object.keys(filled).length > 0 && JSON.stringify(filled) !== JSON.stringify(existing)) {
+        return { ...m, reaction_users: filled };
+      }
+      return m;
+    });
+  } catch {}
 };
 
 // Check if unread indicator is needed before this message
@@ -664,6 +722,8 @@ const loadMoreMessages = async () => {
       messages.value = [...normalizedNew, ...messages.value];
       // Update cursor to the oldest loaded message id
       lastMessageId.value = normalizedNew[0].id;
+      // Ensure reaction tooltips have proper labels
+      backfillReactionUserLabels();
       
       // Check if there are more messages to load
       hasMoreMessages.value = normalizedNew.length === 20;
@@ -808,6 +868,7 @@ const normalizeMessage = (msg: any): Message => {
     filename: msg.filename || undefined,
     size: msg.size || undefined,
     reactions: msg.reactions || {},
+    reaction_users: msg.reaction_users || undefined,
     metadata: msg.metadata || {},
     // IMPORTANT: Preserve reply/quote data
     reply_to_message_id: msg.reply_to_message_id || undefined,
@@ -818,6 +879,23 @@ const normalizeMessage = (msg: any): Message => {
     // Stable flag the template can rely on
     is_mine: normalizedIsMine,
   };
+  // Derive reaction_users if not provided by API
+  if (!normalized.reaction_users && normalized.reactions && typeof normalized.reactions === 'object') {
+    const mapping: Record<string, string> = {};
+    try {
+      const members: Array<any> = (props as any).members || [];
+      for (const uid of Object.keys(normalized.reactions)) {
+        const found = members.find(m => String(m.id) === String(uid));
+        if (found) {
+          const label = (found.name && String(found.name).trim()) ? String(found.name) : (found.phone || found.phone_number || '');
+          if (label) mapping[String(uid)] = String(label);
+        }
+      }
+    } catch {}
+    if (Object.keys(mapping).length > 0) {
+      normalized.reaction_users = mapping;
+    }
+  }
   
   return normalized;
 };
@@ -872,6 +950,9 @@ const fetchLatestMessages = async () => {
           const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
           return dateA - dateB; // Oldest first (newest at bottom)
         });
+
+        // Backfill reaction_users labels for all messages without it
+        backfillReactionUserLabels();
 
         // Maintain a correct 'before' cursor (oldest loaded message)
         if (messages.value.length > 0) {
@@ -1443,6 +1524,7 @@ const setupWebSocketListeners = () => {
       if (messageIndex !== -1) {
         const message = messages.value[messageIndex];
         let updatedReactions = message.reactions || {};
+        let updatedReactionUsers: Record<string, string> = (message as any).reaction_users || {};
         
         if (typeof updatedReactions === 'string') {
           updatedReactions = {};
@@ -1454,16 +1536,54 @@ const setupWebSocketListeners = () => {
             ...updatedReactions,
             [event.user.id]: event.reaction
           };
+
+          // Store a human-readable label for tooltips
+          const existing = updatedReactionUsers[String(event.user.id)];
+          if (!existing) {
+            let label = (event.user && event.user.name) ? String(event.user.name) : '';
+            if (!label || label.trim().length === 0) {
+              const member = (props.members || []).find((m: any) => String(m.id) === String(event.user.id));
+              if (member) {
+                label = member.name || member.phone || member.phone_number || '';
+              }
+            }
+            if (!label || label.trim().length === 0) {
+              const msgByUser = messages.value.find((mm: any) => String(mm?.sender_id) === String(event.user.id));
+              if (msgByUser) {
+                try {
+                  const candidate = getSenderLabel(msgByUser as any);
+                  if (candidate && String(candidate).trim()) label = String(candidate);
+                } catch {}
+                if (!label || label.trim().length === 0) {
+                  const meta = (msgByUser as any).metadata || {};
+                  const raw = meta.sender_phone || meta.remoteJid || (msgByUser as any).sender_phone || '';
+                  if (raw && typeof raw === 'string') {
+                    const digits = raw.replace(/@.*$/, '').replace(/\D/g, '');
+                    if (digits) label = `+${digits}`;
+                  }
+                }
+              }
+            }
+            updatedReactionUsers = { ...updatedReactionUsers };
+            if (label && label.trim().length > 0) {
+              updatedReactionUsers[String(event.user.id)] = label;
+            }
+          }
         } else {
           // Remove reaction
           updatedReactions = { ...updatedReactions };
           delete updatedReactions[event.user.id];
+          if (updatedReactionUsers && updatedReactionUsers[String(event.user.id)]) {
+            updatedReactionUsers = { ...updatedReactionUsers };
+            delete updatedReactionUsers[String(event.user.id)];
+          }
         }
         
         // Use Vue's reactivity by creating a new object
         messages.value[messageIndex] = {
           ...message,
-          reactions: updatedReactions
+          reactions: updatedReactions,
+          reaction_users: updatedReactionUsers
         };
       }
     });
@@ -1553,7 +1673,7 @@ const fetchMessages = async (params: { chatId: string; limit: number; before?: s
       }
       
       // Use the message as-is from the API, only add fallbacks for truly missing fields
-      return {
+      const base: any = {
         id: msg.id || '',
         sender_id: msg.sender_id || '',
         chat_id: msg.chat_id || params.chatId,
@@ -1564,6 +1684,24 @@ const fetchMessages = async (params: { chatId: string; limit: number; before?: s
         // Spread all other fields from API (including type, content, deleted_at, etc.)
         ...msg
       };
+      // Backfill reaction_users if missing
+      if (!base.reaction_users && base.reactions && typeof base.reactions === 'object') {
+        const mapping: Record<string, string> = {};
+        try {
+          const members: Array<any> = (props as any).members || [];
+          for (const uid of Object.keys(base.reactions)) {
+            const found = members.find((m: any) => String(m.id) === String(uid));
+            if (found) {
+              const label = (found.name && String(found.name).trim()) ? String(found.name) : (found.phone || found.phone_number || '');
+              if (label) mapping[String(uid)] = String(label);
+            }
+          }
+        } catch {}
+        if (Object.keys(mapping).length > 0) {
+          base.reaction_users = mapping;
+        }
+      }
+      return base;
     });
     
     return {

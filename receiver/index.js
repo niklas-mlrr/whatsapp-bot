@@ -522,12 +522,22 @@ async function start() {
         }
         
         try {
-            // Ensure chat has proper JID format (@s.whatsapp.net)
-            const chatJid = chat.includes('@s.whatsapp.net') ? chat : 
-                           chat.endsWith('@') ? `${chat}s.whatsapp.net` : 
-                           `${chat}@s.whatsapp.net`;
-            
-            // Send reaction to WhatsApp
+            // Normalize chat JID
+            // - Keep group JIDs (@g.us) as-is
+            // - Keep any JID that already contains an '@'
+            // - Convert bare numbers to @s.whatsapp.net
+            let chatJid;
+            if (typeof chat === 'string' && chat.includes('@')) {
+                chatJid = chat; // already a JID (could be @g.us or @s.whatsapp.net)
+            } else {
+                const number = String(chat || '').replace(/^\+/, '');
+                chatJid = `${number}@s.whatsapp.net`;
+            }
+
+            // Optional participant for group reactions
+            const { participant } = req.body || {};
+
+            // Build reaction payload for Baileys
             const reactionMessage = {
                 react: {
                     text: emoji || '', // Empty string removes the reaction
@@ -538,7 +548,12 @@ async function start() {
                     }
                 }
             };
-            
+
+            // If this is a group chat and a participant was provided, include it
+            if (typeof participant === 'string' && participant.includes('@') && chatJid.endsWith('@g.us')) {
+                reactionMessage.react.key.participant = participant;
+            }
+
             console.log('Sending reaction to WhatsApp:', reactionMessage);
             await sockInstance.sendMessage(chatJid, reactionMessage);
             

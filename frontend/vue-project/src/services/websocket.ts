@@ -377,6 +377,26 @@ export function useWebSocket() {
           callbacks.forEach(cb => cb(data));
         }
       });
+
+      // Also listen to direct websocket service events (non-Laravel broadcast)
+      channel.listen('message.reaction_updated', (data: any) => {
+        // Normalize payload to ReactionEvent shape expected by UI
+        const normalized: ReactionEvent = {
+          message_id: String(data.message_id ?? data.messageId ?? ''),
+          chat_id: String(data.chat_id ?? chatId),
+          user: {
+            id: String(data.user?.id ?? data.user_id ?? ''),
+            name: String(data.user?.name ?? data.user_name ?? ''),
+          },
+          reaction: String(data.reaction ?? ''),
+          added: Boolean(data.reaction)
+        };
+
+        const callbacks = reactionCallbacks.get(chatId);
+        if (callbacks) {
+          callbacks.forEach(cb => cb(normalized));
+        }
+      });
     }
 
     // Return cleanup function

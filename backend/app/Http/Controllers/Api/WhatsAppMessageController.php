@@ -389,7 +389,10 @@ class WhatsAppMessageController extends Controller
 
         // Update the contact info if needed
         if ($shouldUpdate && !empty($updates)) {
-            $updates['contact_info_updated_at'] = now();
+            // Only set contact_info_updated_at if the column exists
+            if (\Illuminate\Support\Facades\Schema::hasColumn('chats', 'contact_info_updated_at')) {
+                $updates['contact_info_updated_at'] = now();
+            }
             $chat->update($updates);
         }
     }
@@ -430,14 +433,8 @@ class WhatsAppMessageController extends Controller
             $data['sending_time'] = now();
         }
         // Resolve sender and chat to IDs required by whatsapp_messages schema
-        // 1) Resolve or create user by phone
-        $user = User::firstOrCreate(
-            ['phone' => $data['sender']],
-            [
-                'name' => 'WhatsApp User',
-                'password' => bcrypt(Str::random(32)),
-            ]
-        );
+        // 1) Resolve or create user by phone - safely
+        $user = $this->findOrCreateUserSafely($data['sender']);
         
         // Update user profile picture and bio if provided
         if (!empty($data['senderProfilePictureUrl']) || !empty($data['senderBio'])) {
@@ -983,16 +980,9 @@ class WhatsAppMessageController extends Controller
                 ], 404);
             }
             
-            // Get or create user
+            // Get or create user safely
             $senderPhone = $data['senderJid'] ?? $data['sender'];
-            $user = User::firstOrCreate(
-                ['phone' => $senderPhone],
-                [
-                    'name' => 'WhatsApp User',
-                    'password' => bcrypt(Str::random(32)),
-                    'status' => 'offline',
-                ]
-            );
+            $user = $this->findOrCreateUserSafely($senderPhone);
             
             // Get current reactions
             $reactions = $message->reactions ?? [];
@@ -1206,5 +1196,97 @@ class WhatsAppMessageController extends Controller
                 'error' => $e->getMessage()
             ], 500);
         }
+    }
+    
+    /**
+     * Find or create a user for the given phone number - safely
+     */
+    private function findOrCreateUserSafely(string $phone): User
+    {
+        // First try to find by phone if it exists
+        $user = User::where('phone', $phone)->first();
+        
+        if ($user) {
+            return $user;
+        }
+        
+        // Validate phone number before creating user
+        \Log::debug('Validating phone number', [
+            'phone' => $phone,
+            'isValid' => $this->isValidPhoneNumber($phone)
+        ]);
+        
+        if (!$this->isValidPhoneNumber($phone)) {
+            \Log::warning('Skipping user creation for invalid phone number', [
+                'phone' => $phone,
+            ]);
+            
+            // Return a default user or throw an exception
+            throw new \InvalidArgumentException("Invalid phone number: {$phone}");
+        }
+        
+        // If not found by phone, create a new user
+        try {
+            $user = User::create([
+                'name' => 'WhatsApp User', // Default name
+                'password' => bcrypt(Str::random(16)), // Random password
+                'phone' => $phone,
+                'status' => 'offline',
+                'last_seen_at' => now(),
+            ]);
+            
+            \Log::info('Created new user', [
+                'user_id' => $user->id,
+                'phone' => $phone,
+            ]);
+            
+            return $user;
+        } catch (\Exception $e) {
+            \Log::error('Failed to create user', [
+                'phone' => $phone,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            
+            // If user creation fails, try to find an existing user by phone again
+            // in case it was created by another process
+            $user = User::where('phone', $phone)->first();
+            
+            if ($user) {
+                return $user;
+            }
+            
+            // If we still can't find the user, rethrow the exception
+            throw $e;
+        }
+    }
+    
+    /**
+     * Validate if a phone number is valid for user creation
+     */
+    private function isValidPhoneNumber(string $phone): bool
+    {
+        // Remove @suffix if present
+        $cleanPhone = preg_replace('/@.*$/', '', $phone);
+        
+        // Extract only digits
+        $digits = preg_replace('/[^\d]/', '', $cleanPhone);
+        
+        // Check if it's a reasonable phone number length
+        if (strlen($digits) < 7 || strlen($digits) > 15) {
+            return false;
+        }
+        
+        // Skip obviously fake numbers (like the ones we saw)
+        if (str_contains($phone, '@lid') || str_contains($phone, '@g.us')) {
+            return false;
+        }
+        
+        // Skip numbers that are too long or too short
+        if (strlen($digits) > 15 || strlen($digits) < 7) {
+            return false;
+        }
+        
+        return true;
     }
 }

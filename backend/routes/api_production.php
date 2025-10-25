@@ -99,6 +99,9 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
         // Get latest messages for a chat
         Route::get('/{chat}/messages/latest', [ChatController::class, 'latestMessages']);
 
+        // Get group chat members with contact names
+        Route::get('/{chat}/members', [ChatController::class, 'getMembers']);
+
         // Delete a chat
         Route::delete('/{chat}', [ChatController::class, 'destroy']);
     });

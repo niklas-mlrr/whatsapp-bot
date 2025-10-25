@@ -25,6 +25,12 @@ class WhatsAppMessageService
 
     public function handle(WhatsAppMessageData $data, int $retryCount = 0): void
     {
+        Log::channel('whatsapp')->info('WhatsAppMessageService.handle() called', [
+            'type' => $data->type,
+            'sender' => $data->sender,
+            'retry_count' => $retryCount
+        ]);
+        
         try {
             // First check if message already exists
             if ($data->messageId) {
@@ -40,14 +46,17 @@ class WhatsAppMessageService
 
             // Process with timeout protection
             DB::transaction(function() use ($data) {
-                // Find or create user
-                $user = User::firstOrCreate(
-                    ['phone' => $data->sender],
-                    [
-                        'name' => 'WhatsApp User', 
-                        'password' => Hash::make(Str::random(32))
-                    ]
-                );
+                // Find or create user - but only for valid phone numbers
+                Log::channel('whatsapp')->debug('About to call findOrCreateUserSafely', [
+                    'sender' => $data->sender,
+                    'type' => $data->type
+                ]);
+                $user = $this->findOrCreateUserSafely($data->sender);
+                Log::channel('whatsapp')->debug('findOrCreateUserSafely returned', [
+                    'user_id' => $user->id,
+                    'phone' => $user->phone
+                ]);
+
 
                 // Find or create chat
                 $chat = $this->findOrCreateChat($data->chat, $user->id);
@@ -909,7 +918,10 @@ class WhatsAppMessageService
             ]);
 
             if (!empty($chatUpdates)) {
-                $chatUpdates['contact_info_updated_at'] = now();
+                // Only set contact_info_updated_at if the column exists
+                if (\Illuminate\Support\Facades\Schema::hasColumn('chats', 'contact_info_updated_at')) {
+                    $chatUpdates['contact_info_updated_at'] = now();
+                }
                 $chat->update($chatUpdates);
                 Log::channel('whatsapp')->info('Updated chat contact info', [
                     'chat_id' => $chat->id,
@@ -940,15 +952,85 @@ class WhatsAppMessageService
     }
     
     /**
-     * Find or create a user for the given phone number
+     * Find or create a user for the given phone number - safely
      */
-    private function findOrCreateUser(string $phone): User
+    private function findOrCreateUserSafely(string $phone): User
     {
         // First try to find by phone if it exists
         $user = User::where('phone', $phone)->first();
         
         if ($user) {
             return $user;
+        }
+        
+        // Validate phone number before creating user
+        Log::channel('whatsapp')->debug('Validating phone number', [
+            'phone' => $phone,
+            'isValid' => $this->isValidPhoneNumber($phone)
+        ]);
+        
+        if (!$this->isValidPhoneNumber($phone)) {
+            Log::channel('whatsapp')->warning('Invalid phone number detected, using mapping approach', [
+                'phone' => $phone,
+            ]);
+            
+            // For @lid numbers, try to find the real phone number from chat_user mapping
+            // This should map 150599471509579@lid to 4917646765869
+            $mapping = DB::table('chat_user')
+                ->where('whatsapp_id', $phone)
+                ->first();
+            
+            if ($mapping) {
+                // Found mapping, use the real user
+                $user = User::find($mapping->user_id);
+                if ($user) {
+                    Log::channel('whatsapp')->info('Found mapped user for invalid phone', [
+                        'phone' => $phone,
+                        'mapped_user_id' => $user->id,
+                        'real_phone' => $user->phone
+                    ]);
+                    return $user;
+                }
+            }
+            
+            // No mapping found, create a temporary user
+            // This will be mapped later when we have the real phone number
+            $user = User::where('phone', 'like', '%@lid')->first();
+            
+            if ($user) {
+                Log::channel('whatsapp')->info('Using existing @lid user for invalid phone', [
+                    'phone' => $phone,
+                    'existing_user_id' => $user->id
+                ]);
+                return $user;
+            }
+            
+            // Create a temporary user for @lid numbers
+            try {
+                $user = User::create([
+                    'name' => 'Temporary User', // Special name to identify temporary users
+                    'password' => bcrypt(Str::random(16)), // Random password
+                    'phone' => $phone,
+                    'status' => 'offline',
+                    'last_seen_at' => now(),
+                ]);
+                
+                Log::channel('whatsapp')->info('Created temporary user for invalid phone', [
+                    'user_id' => $user->id,
+                    'phone' => $phone,
+                    'note' => 'This should be mapped to real phone number 4917646765869'
+                ]);
+                
+                return $user;
+            } catch (\Exception $e) {
+                Log::channel('whatsapp')->error('Failed to create temporary user', [
+                    'phone' => $phone,
+                    'error' => $e->getMessage(),
+                ]);
+                
+                // If we can't create a user, throw an exception
+                throw new \InvalidArgumentException("Invalid phone number: {$phone}");
+            }
         }
         
         // If not found by phone, create a new user
@@ -986,6 +1068,48 @@ class WhatsAppMessageService
             throw $e;
         }
     }
+    
+    /**
+     * Validate if a phone number is valid for user creation
+     */
+    private function isValidPhoneNumber(string $phone): bool
+    {
+        // Remove @suffix if present
+        $cleanPhone = preg_replace('/@.*$/', '', $phone);
+        
+        // Extract only digits
+        $digits = preg_replace('/[^\d]/', '', $cleanPhone);
+        
+        // Check if it's a reasonable phone number length
+        if (strlen($digits) < 7 || strlen($digits) > 15) {
+            return false;
+        }
+        
+        // Skip obviously fake numbers (like the ones we saw)
+        if (str_contains($phone, '@lid') || str_contains($phone, '@g.us')) {
+            return false;
+        }
+        
+        // Skip numbers that are too long or too short
+        if (strlen($digits) > 15 || strlen($digits) < 7) {
+            return false;
+        }
+        
+        return true;
+    }
+    
+    /**
+     * Extract real phone number from WhatsApp JID
+     * Handles cases like "150599471509579@lid" -> "4917646765869"
+     */
+    private function extractRealPhoneNumber(string $phone): string
+    {
+        // For now, return the original phone number
+        // TODO: Implement proper mapping from WhatsApp JID to real phone number
+        // This might require looking up in a mapping table or using WhatsApp's API
+        return $phone;
+    }
+
     
     /**
      * Resolve the reply_to_message_id from quotedMessage data
