@@ -1212,23 +1212,36 @@ class WhatsAppMessageService
                 'added' => !empty($data->emoji)
             ]);
             
-            broadcast(new \App\Events\MessageReaction(
-                $message,
-                $user,
-                $data->emoji ?? '',
-                !empty($data->emoji)
-            ));
-            
-            Log::channel('whatsapp')->info('Reaction event broadcasted');
+            // Try to broadcast, but don't fail if broadcasting is unavailable
+            try {
+                broadcast(new \App\Events\MessageReaction(
+                    $message,
+                    $user,
+                    $data->emoji ?? '',
+                    !empty($data->emoji)
+                ));
+                
+                Log::channel('whatsapp')->info('Reaction event broadcasted');
+            } catch (\Exception $e) {
+                Log::channel('whatsapp')->warning('Failed to broadcast reaction event, but reaction was saved', [
+                    'error' => $e->getMessage()
+                ]);
+            }
             
             // Also notify via WebSocketService for compatibility
-            $this->webSocketService->messageReactionUpdated(
-                $message,
-                (string) $data->sender_id,
-                $data->emoji
-            );
-            
-            Log::channel('whatsapp')->info('WebSocketService notified');
+            try {
+                $this->webSocketService->messageReactionUpdated(
+                    $message,
+                    (string) $data->sender_id,
+                    $data->emoji
+                );
+                
+                Log::channel('whatsapp')->info('WebSocketService notified');
+            } catch (\Exception $e) {
+                Log::channel('whatsapp')->warning('Failed to notify via WebSocketService, but reaction was saved', [
+                    'error' => $e->getMessage()
+                ]);
+            }
         } else {
             Log::channel('whatsapp')->warning('User not found for broadcasting reaction', [
                 'sender_id' => $data->sender_id

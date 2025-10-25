@@ -20,9 +20,12 @@ class EnhancedWebSocketService
             config('broadcasting.connections.pusher.secret'),
             config('broadcasting.connections.pusher.app_id'),
             [
+                'host' => config('broadcasting.connections.pusher.options.host'),
+                'port' => config('broadcasting.connections.pusher.options.port'),
+                'scheme' => config('broadcasting.connections.pusher.options.scheme'),
+                'useTLS' => config('broadcasting.connections.pusher.options.useTLS'),
+                'encrypted' => config('broadcasting.connections.pusher.options.encrypted'),
                 'cluster' => config('broadcasting.connections.pusher.options.cluster'),
-                'useTLS' => true,
-                'encrypted' => true,
             ]
         );
     }
