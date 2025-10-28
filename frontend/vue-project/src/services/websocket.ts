@@ -111,7 +111,7 @@ export function useWebSocket() {
   const isConnected = ref(false);
   const socketId = ref<string | null>(null);
   const authStore = useAuthStore();
-  let retryTimeoutId: NodeJS.Timeout | null = null;
+  let retryTimeoutId: number | null = null;
 
   // Connect to WebSocket server
   const connect = async (retryCount = 0, maxRetries = 3): Promise<boolean> => {

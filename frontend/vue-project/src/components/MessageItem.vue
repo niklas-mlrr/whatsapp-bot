@@ -1191,7 +1191,7 @@ function getTotalVotes(): number {
 
 async function handlePollVote(optionIndex: number) {
   try {
-    const response = await fetch(`${API_CONFIG.baseURL}/messages/${props.message.id}/vote`, {
+    const response = await fetch(`${API_CONFIG.BASE_URL}/messages/${props.message.id}/vote`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1209,11 +1209,8 @@ async function handlePollVote(optionIndex: number) {
     }
     
     // Refresh the message to get updated vote counts
-    if (emit) {
-      // Trigger a message update
-      const updatedMessage = await response.json()
-      console.log('Vote successful:', updatedMessage)
-    }
+    const updatedMessage = await response.json()
+    console.log('Vote successful:', updatedMessage)
   } catch (error) {
     console.error('Error voting on poll:', error)
     alert('Failed to vote on poll')

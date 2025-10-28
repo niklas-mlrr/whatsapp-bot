@@ -31,6 +31,7 @@ export const sendMessage = (data: {
   sending_time?: string;
   filename?: string;
   size?: number;
+  pollData?: any;
 }) =>
   apiClient.post('/messages', data);
 
