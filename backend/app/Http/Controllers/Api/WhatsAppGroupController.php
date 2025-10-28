@@ -68,7 +68,7 @@ class WhatsAppGroupController extends Controller
                 [
                     'name' => $validated['name'],
                     'is_group' => true,
-                    'pending_approval' => true,
+                    'pending_approval' => false, // We have full metadata, no need for approval
                     'participants' => $participantJids,
                     'metadata' => [
                         'whatsapp_id' => $validated['group_id'],
@@ -92,6 +92,7 @@ class WhatsAppGroupController extends Controller
                 $metadata['profile_picture_url'] = $validated['profile_picture_url'] ?? ($metadata['profile_picture_url'] ?? null);
                 $updates = [
                     'name' => $validated['name'],
+                    'pending_approval' => false, // We have full metadata now, approve the group
                     // Only update participants list when we received some valid phone JIDs; otherwise keep existing
                     // 'participants' => $participantJids,
                     'metadata' => $metadata,
