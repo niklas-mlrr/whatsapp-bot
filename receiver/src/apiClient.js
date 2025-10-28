@@ -231,6 +231,8 @@ const sendToPHP = async (payload) => {
             quotedMessage: payload.quotedMessage || null,  // Include quoted message data
             senderProfilePictureUrl: (payload.senderProfilePictureUrl ?? null),  // Sender's WhatsApp profile picture
             senderBio: (payload.senderBio ?? null),  // Sender's WhatsApp bio/status
+            pollData: payload.pollData || null,  // Poll data for poll messages
+            pollMessageId: payload.pollMessageId || null,  // Poll message ID for poll updates
         };
         
         logger.debug({ 

@@ -254,6 +254,7 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     Route::prefix('messages/{message}')->group(function () {
         Route::post('read', [MessageStatusController::class, 'markAsRead']);
         Route::post('react', [MessageStatusController::class, 'react']);
+        Route::post('vote', [WhatsAppMessageController::class, 'vote']);
     });
 
     // Chat management

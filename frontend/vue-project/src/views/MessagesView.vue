@@ -347,7 +347,7 @@
             <ul>
               <li @click="selectAddImage" class="px-4 py-2 hover:bg-green-50 dark:hover:bg-zinc-700 cursor-pointer dark:text-gray-200">Bild hinzufügen</li>
               <li @click="selectAddFile" class="px-4 py-2 hover:bg-green-50 dark:hover:bg-zinc-700 cursor-pointer dark:text-gray-200">Datei hinzufügen</li>
-              <!-- Future: <li class='px-4 py-2 hover:bg-green-50 cursor-pointer'>Create poll</li> -->
+              <li @click="selectCreatePoll" class="px-4 py-2 hover:bg-green-50 dark:hover:bg-zinc-700 cursor-pointer dark:text-gray-200">Umfrage erstellen</li>
             </ul>
           </div>
         </div>
@@ -423,6 +423,86 @@
             </button>
           </div>
         </form>
+      </div>
+    </div>
+
+    <!-- Poll Creation Modal -->
+    <div v-if="showPollModal" class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4" @click.self="closePollModal">
+      <div class="bg-white dark:bg-zinc-800 rounded-lg shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+        <div class="p-6">
+          <h3 class="text-xl font-bold text-gray-900 dark:text-gray-100 mb-4">📊 Umfrage erstellen</h3>
+          
+          <form @submit.prevent="createPoll" class="space-y-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Frage</label>
+              <input
+                v-model="pollQuestion"
+                type="text"
+                required
+                autofocus
+                maxlength="255"
+                class="w-full px-4 py-2 border border-gray-300 dark:border-zinc-700 rounded-lg bg-white dark:bg-zinc-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-green-400"
+                placeholder="Geben Sie Ihre Frage ein..."
+              />
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Antwortoptionen</label>
+              <div class="space-y-2">
+                <div v-for="(option, index) in pollOptions" :key="index" class="flex gap-2">
+                  <input
+                    v-model="pollOptions[index]"
+                    type="text"
+                    required
+                    maxlength="100"
+                    class="flex-1 px-3 py-2 border border-gray-300 dark:border-zinc-700 rounded-lg bg-white dark:bg-zinc-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-green-400"
+                    :placeholder="`Option ${index + 1}`"
+                  />
+                  <button
+                    v-if="pollOptions.length > 2"
+                    type="button"
+                    @click="removePollOption(index)"
+                    class="px-3 py-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+                    title="Option entfernen"
+                  >
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              
+              <button
+                v-if="pollOptions.length < 12"
+                type="button"
+                @click="addPollOption"
+                class="mt-2 px-3 py-2 text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 rounded-lg transition-colors text-sm flex items-center gap-1"
+              >
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                </svg>
+                Option hinzufügen
+              </button>
+            </div>
+
+            <div class="flex gap-2 pt-4">
+              <button
+                type="button"
+                @click="closePollModal"
+                class="flex-1 py-2 border border-gray-300 dark:border-zinc-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors"
+              >
+                Abbrechen
+              </button>
+              <button
+                type="submit"
+                :disabled="isCreatingPoll || !pollQuestion.trim() || pollOptions.length < 2 || pollOptions.some(opt => !opt.trim())"
+                class="flex-1 py-2 bg-green-500 dark:bg-green-600 text-white rounded-lg hover:bg-green-600 dark:hover:bg-green-500 transition-colors disabled:bg-gray-300 dark:disabled:bg-zinc-700"
+              >
+                {{ isCreatingPoll ? 'Wird erstellt...' : 'Umfrage senden' }}
+              </button>
+            </div>
+          </form>
+        </div>
       </div>
     </div>
   </div>
@@ -573,6 +653,12 @@ const messageInput = ref<HTMLTextAreaElement | null>(null)
 const textareaHeight = ref<number>(40) // Start with min height (2.5rem = 40px)
 const replyToMessage = ref<any | null>(null)
 const editingMessage = ref<any | null>(null)
+
+// Poll creation state
+const showPollModal = ref(false)
+const pollQuestion = ref('')
+const pollOptions = ref(['', ''])
+const isCreatingPoll = ref(false)
 
 // WebSocket for typing indicators and new chat notifications
 const { notifyTyping, connect: connectWebSocket } = useWebSocket()
@@ -1145,6 +1231,91 @@ function selectAddFile() {
   setTimeout(() => {
     document.getElementById('file-upload-input')?.click()
   }, 100)
+}
+
+function selectCreatePoll() {
+  showMenu.value = false
+  showPollModal.value = true
+  // Reset poll form
+  pollQuestion.value = ''
+  pollOptions.value = ['', '']
+}
+
+function addPollOption() {
+  if (pollOptions.value.length < 12) {
+    pollOptions.value.push('')
+  }
+}
+
+function removePollOption(index: number) {
+  if (pollOptions.value.length > 2) {
+    pollOptions.value.splice(index, 1)
+  }
+}
+
+function closePollModal() {
+  showPollModal.value = false
+  pollQuestion.value = ''
+  pollOptions.value = ['', '']
+  isCreatingPoll.value = false
+}
+
+async function createPoll() {
+  if (!selectedChat.value || !pollQuestion.value.trim() || pollOptions.value.length < 2) {
+    return
+  }
+
+  // Validate that all options have content
+  const validOptions = pollOptions.value.filter(opt => opt.trim())
+  if (validOptions.length < 2) {
+    alert('Bitte geben Sie mindestens 2 gültige Antwortoptionen ein.')
+    return
+  }
+
+  isCreatingPoll.value = true
+
+  try {
+    const pollData = {
+      name: pollQuestion.value.trim(),
+      options: validOptions.map(option => ({
+        optionName: option.trim()
+      })),
+      pollType: 'POLL',
+      pollContentType: 'TEXT',
+      selectableOptionsCount: 0
+    }
+
+    // Create a readable content representation for the message
+    const content = `📊 **${pollData.name}**\n\n` + 
+      pollData.options.map((option, index) => `${index + 1}. ${option.optionName}`).join('\n')
+
+    // Get the WhatsApp JID (phone number) from chat participants
+    // Same logic as sendMessageHandler
+    const chatJid = selectedChat.value.metadata?.whatsapp_id 
+                    || selectedChat.value.participants?.[0] 
+                    || selectedChat.value.original_name
+                    || selectedChat.value.name;
+
+    await sendMessage({
+      sender: 'me',
+      chat: chatJid,
+      type: 'poll',
+      content: content,
+      pollData: pollData
+    })
+
+    // Close the modal and reset form
+    closePollModal()
+    
+    // Clear the input
+    input.value = ''
+    
+  } catch (error) {
+    console.error('Error creating poll:', error)
+    alert('Fehler beim Erstellen der Umfrage. Bitte versuchen Sie es erneut.')
+  } finally {
+    isCreatingPoll.value = false
+  }
 }
 
 const handleLogout = async () => {

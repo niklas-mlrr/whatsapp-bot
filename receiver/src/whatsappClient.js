@@ -22,6 +22,8 @@ let isReconnecting = false;
 let currentSocket = null;
 let reconnectCallback = null;
 let reconnectTimeout = null;
+let conflictRetryCount = 0;
+const MAX_CONFLICT_RETRIES = 1; // Allow one retry after conflict
 
 // Track edit message IDs to skip their status updates
 const editMessageIds = new Set();
@@ -336,9 +338,40 @@ async function connectToWhatsApp() {
                 if (statusCode === DisconnectReason.loggedOut) {
                     logger.fatal('Device logged out. Please delete the auth directory and restart.');
                     process.exit(1);
+                } else if (statusCode === 440) {
+                    // Status 440 = conflict (another instance is connected)
+                    if (conflictRetryCount < MAX_CONFLICT_RETRIES) {
+                        conflictRetryCount++;
+                        logger.warn(`Connection conflict detected (attempt ${conflictRetryCount}/${MAX_CONFLICT_RETRIES + 1}). Another WhatsApp Web instance may be connected.`);
+                        logger.warn('Waiting 30 seconds for the other instance to fully disconnect, then retrying...');
+                        
+                        if (reconnectTimeout) {
+                            logger.warn('Reconnect already scheduled, skipping duplicate schedule');
+                            return;
+                        }
+                        
+                        reconnectTimeout = setTimeout(async () => {
+                            reconnectTimeout = null;
+                            try {
+                                logger.info('Retrying connection after conflict...');
+                                const newSock = await connectToWhatsApp();
+                                if (reconnectCallback && newSock) {
+                                    reconnectCallback(newSock);
+                                }
+                            } catch (err) {
+                                logger.error({ err }, 'Reconnection after conflict failed');
+                            }
+                        }, 30000); // 30 second delay
+                    } else {
+                        logger.error('Connection conflict detected: Another WhatsApp Web instance is already connected.');
+                        logger.error('This usually means another receiver instance (e.g., on remote server) is running.');
+                        logger.error('Please stop the other instance or use different auth directories for each instance.');
+                        logger.error('Maximum conflict retries reached. Not reconnecting automatically to prevent connection loop.');
+                        process.exit(1);
+                    }
                 } else if (shouldReconnect) {
                     // Use exponential backoff for reconnection
-                    const retryDelay = statusCode === 440 ? 10000 : 5000; // 10s for conflict, 5s for others
+                    const retryDelay = 5000; // 5s for other errors
                     logger.info(`Reconnecting to WhatsApp in ${retryDelay/1000} seconds...`);
                     if (reconnectTimeout) {
                         logger.warn('Reconnect already scheduled, skipping duplicate schedule');
@@ -362,6 +395,7 @@ async function connectToWhatsApp() {
             } else if (connection === 'open') {
                 logger.info('Successfully connected to WhatsApp');
                 isReconnecting = false;
+                conflictRetryCount = 0; // Reset conflict counter on successful connection
                 if (reconnectTimeout) {
                     clearTimeout(reconnectTimeout);
                     reconnectTimeout = null;

@@ -13,8 +13,11 @@ const initializeWebSocket = () => {
   if (authStore.isAuthenticated) {
     connect().then(connected => {
       if (!connected) {
-        console.error('Failed to connect to WebSocket');
+        console.warn('Failed to connect to WebSocket - app will continue without real-time updates');
+        console.info('To enable real-time features, start the WebSocket server: npm run start:reverb');
       }
+    }).catch(error => {
+      console.warn('WebSocket connection failed:', error.message);
     });
   } else {
     disconnect();

@@ -423,6 +423,15 @@ class WhatsAppMessageController extends Controller
             // Sender profile info
             'senderProfilePictureUrl' => 'nullable|url',
             'senderBio' => 'nullable|string|max:500',
+            // Poll data
+            'pollData' => 'nullable|array',
+            'pollData.name' => 'nullable|string|max:255',
+            'pollData.options' => 'nullable|array|min:2|max:12',
+            'pollData.options.*.optionName' => 'nullable|string|max:100',
+            'pollData.options.*.name' => 'nullable|string|max:100',
+            'pollData.pollType' => 'nullable|string|in:POLL',
+            'pollData.pollContentType' => 'nullable|string|in:TEXT',
+            'pollData.selectableOptionsCount' => 'nullable|integer|min:0',
         ]);
         
         // Handle reaction messages separately
@@ -619,6 +628,18 @@ class WhatsAppMessageController extends Controller
             $metadata['file_size'] = $data['size'];
         }
         
+        if ($data['type'] === 'poll' && !empty($data['pollData'])) {
+            $metadata['poll_data'] = $data['pollData'];
+            
+            // Initialize vote counts for each option
+            $voteCounts = [];
+            $options = $data['pollData']['options'] ?? [];
+            foreach ($options as $index => $option) {
+                $voteCounts[strval($index)] = 0;
+            }
+            $metadata['poll_vote_counts'] = $voteCounts;
+        }
+        
         \Log::info('Message metadata prepared', [
             'metadata' => $metadata,
             'has_filename' => !empty($data['filename']),
@@ -657,6 +678,11 @@ class WhatsAppMessageController extends Controller
 
             if (!empty($data['size'])) {
                 $sendPayload['size'] = $data['size'];
+            }
+            
+            // Include poll data if this is a poll message
+            if ($data['type'] === 'poll' && !empty($data['pollData'])) {
+                $sendPayload['pollData'] = $data['pollData'];
             }
             
             // Include reply_to_message_id if this is a reply
@@ -1297,5 +1323,122 @@ class WhatsAppMessageController extends Controller
         }
         
         return true;
+    }
+    
+    /**
+     * Vote on a poll message
+     * 
+     * POST /api/messages/{message}/vote
+     */
+    public function vote(Request $request, WhatsAppMessage $message): JsonResponse
+    {
+        // Validate this is a poll message
+        if ($message->type !== 'poll') {
+            return response()->json([
+                'error' => 'This message is not a poll'
+            ], 400);
+        }
+        
+        // Validate the vote
+        $validated = $request->validate([
+            'option_index' => 'required|integer|min:0',
+        ]);
+        
+        $optionIndex = $validated['option_index'];
+        $user = $request->user();
+        
+        // Get poll data to validate option index
+        $pollData = $message->metadata['poll_data'] ?? [];
+        $options = $pollData['options'] ?? [];
+        
+        if ($optionIndex >= count($options)) {
+            return response()->json([
+                'error' => 'Invalid option index'
+            ], 400);
+        }
+        
+        // Get existing vote counts or initialize
+        $voteCounts = $message->metadata['poll_vote_counts'] ?? [];
+        
+        // Handle both array and object formats
+        if (is_array($voteCounts) && array_keys($voteCounts) === range(0, count($voteCounts) - 1)) {
+            // Convert array to object with numeric keys
+            $result = [];
+            foreach ($voteCounts as $index => $count) {
+                $result[strval($index)] = $count ?: 0;
+            }
+            $voteCounts = $result;
+        }
+        
+        // Initialize missing vote counts
+        foreach ($options as $index => $option) {
+            if (!isset($voteCounts[strval($index)])) {
+                $voteCounts[strval($index)] = 0;
+            }
+        }
+        
+        // Check if user already voted
+        $existingVote = \App\Models\PollVote::where('message_id', $message->id)
+            ->where('user_id', $user->id)
+            ->first();
+        
+        if ($existingVote) {
+            // User is changing their vote
+            $oldIndex = $existingVote->option_index;
+            
+            // Decrement old vote count
+            if (isset($voteCounts[strval($oldIndex)]) && $voteCounts[strval($oldIndex)] > 0) {
+                $voteCounts[strval($oldIndex)]--;
+            }
+            
+            // Update the vote
+            $existingVote->update([
+                'option_index' => $optionIndex,
+                'voted_at' => now(),
+            ]);
+        } else {
+            // New vote
+            \App\Models\PollVote::create([
+                'message_id' => $message->id,
+                'user_id' => $user->id,
+                'option_index' => $optionIndex,
+                'voted_at' => now(),
+            ]);
+        }
+        
+        // Increment new vote count
+        if (!isset($voteCounts[strval($optionIndex)])) {
+            $voteCounts[strval($optionIndex)] = 0;
+        }
+        $voteCounts[strval($optionIndex)]++;
+        
+        // Update message metadata with new vote counts
+        $metadata = $message->metadata;
+        $metadata['poll_vote_counts'] = $voteCounts;
+        $message->update(['metadata' => $metadata]);
+        
+        // Broadcast the vote update
+        try {
+            broadcast(new \App\Events\MessageReaction(
+                $message,
+                $user,
+                'poll_vote',
+                true
+            ))->toOthers();
+        } catch (\Exception $e) {
+            \Log::error('Failed to broadcast poll vote update', [
+                'error' => $e->getMessage(),
+            ]);
+        }
+        
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Vote recorded',
+            'data' => [
+                'option_index' => $optionIndex,
+                'vote_counts' => $voteCounts,
+                'total_votes' => array_sum($voteCounts),
+            ]
+        ]);
     }
 }

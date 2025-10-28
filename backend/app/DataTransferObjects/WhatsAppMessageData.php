@@ -27,7 +27,11 @@ class WhatsAppMessageData
         public ?string $senderProfilePictureUrl = null,
         public ?string $senderBio = null,
         public ?int $sender_id = null,
-        public ?int $chat_id = null
+        public ?int $chat_id = null,
+        // Poll data (optional)
+        public ?array $pollData = null,
+        // Poll update data
+        public ?string $pollMessageId = null
     ) {
     }
 
@@ -74,7 +78,9 @@ class WhatsAppMessageData
             senderJid: $validated['senderJid'] ?? null,
             quotedMessage: $validated['quotedMessage'] ?? null,
             senderProfilePictureUrl: $validated['senderProfilePictureUrl'] ?? null,
-            senderBio: $validated['senderBio'] ?? null
+            senderBio: $validated['senderBio'] ?? null,
+            pollData: $validated['pollData'] ?? null,
+            pollMessageId: $validated['pollMessageId'] ?? null
         );
     }
 }

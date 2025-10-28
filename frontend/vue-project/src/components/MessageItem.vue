@@ -99,6 +99,43 @@
           </span>
         </template>
         
+        <!-- Poll message -->
+        <template v-else-if="message.type === 'poll'">
+          <div class="bg-gray-50 dark:bg-zinc-800 rounded-lg p-4 border border-gray-200 dark:border-zinc-700">
+            <div class="flex items-center gap-2 mb-3">
+              <svg class="w-5 h-5 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+              </svg>
+              <span class="font-semibold text-gray-900 dark:text-gray-100">Umfrage</span>
+            </div>
+            
+            <h3 class="font-medium text-gray-900 dark:text-gray-100 mb-3">
+              {{ getPollQuestion() }}
+            </h3>
+            
+            <div class="space-y-2">
+              <div 
+                v-for="(option, index) in getPollOptions()" 
+                :key="index"
+                @click="handlePollVote(index)"
+                class="flex items-center justify-between p-2 bg-white dark:bg-zinc-700 rounded border border-gray-200 dark:border-zinc-600 hover:bg-gray-50 dark:hover:bg-zinc-600 transition-colors cursor-pointer group"
+              >
+                <div class="flex items-center flex-1">
+                  <div class="w-4 h-4 border-2 border-gray-300 dark:border-zinc-500 rounded-full mr-3 flex-shrink-0 group-hover:border-green-500 dark:group-hover:border-green-400 transition-colors"></div>
+                  <span class="text-gray-900 dark:text-gray-100 flex-1">{{ option }}</span>
+                </div>
+                <span v-if="getPollVoteCount(index) > 0" class="text-sm font-medium text-green-600 dark:text-green-400 ml-2">
+                  {{ getPollVoteCount(index) }}
+                </span>
+              </div>
+            </div>
+            
+            <div class="mt-3 text-xs text-gray-500 dark:text-gray-400">
+              {{ getTotalVotes() }} Stimme{{ getTotalVotes() !== 1 ? 'n' : '' }}
+            </div>
+          </div>
+        </template>
+        
         <!-- Image message -->
         <template v-else-if="message.type === 'image' || message.mimetype?.startsWith('image/')">
           <div class="relative group">
@@ -444,6 +481,9 @@
 import { ref, computed, onMounted, onUnmounted, defineComponent } from 'vue'
 import { API_CONFIG } from '@/config/api'
 import { useChatStore } from '@/stores/chat'
+import { useAuthStore } from '@/stores/auth'
+
+const authStore = useAuthStore()
 
 const props = defineProps<{ 
   message: {
@@ -1037,6 +1077,147 @@ function openMediaViewer(event: Event) {
     src: imageSrc.value,
     caption: props.message.content
   })
+}
+
+// Poll helper functions
+function getPollQuestion(): string {
+  if (props.message.type !== 'poll') return ''
+  
+  const metadata = props.message.metadata
+  if (!metadata) return ''
+  
+  let pollData
+  if (typeof metadata === 'string') {
+    try {
+      const parsed = JSON.parse(metadata)
+      pollData = parsed?.poll_data
+    } catch {
+      return ''
+    }
+  } else {
+    pollData = metadata.poll_data
+  }
+  
+  return pollData?.name || ''
+}
+
+function getPollOptions(): string[] {
+  if (props.message.type !== 'poll') return []
+  
+  const metadata = props.message.metadata
+  if (!metadata) return []
+  
+  let pollData
+  if (typeof metadata === 'string') {
+    try {
+      const parsed = JSON.parse(metadata)
+      pollData = parsed?.poll_data
+    } catch {
+      return []
+    }
+  } else {
+    pollData = metadata.poll_data
+  }
+  
+  if (!pollData?.options || !Array.isArray(pollData.options)) return []
+  
+  return pollData.options.map((option: any) => 
+    option.optionName || option.name || option || ''
+  ).filter((option: string) => option.trim())
+}
+
+function getPollVoteCounts(): Record<number, number> {
+  if (props.message.type !== 'poll') return {}
+  
+  const metadata = props.message.metadata
+  if (!metadata) return {}
+  
+  let voteCounts
+  if (typeof metadata === 'string') {
+    try {
+      const parsed = JSON.parse(metadata)
+      voteCounts = parsed?.poll_vote_counts
+    } catch {
+      return {}
+    }
+  } else {
+    voteCounts = metadata.poll_vote_counts
+  }
+  
+  // Handle both array and object formats
+  if (Array.isArray(voteCounts)) {
+    // Convert array to object with numeric keys
+    const result: Record<number, number> = {}
+    voteCounts.forEach((count, index) => {
+      result[index] = count || 0
+    })
+    return result
+  }
+  
+  // Handle object format (Laravel might convert numeric keys to array)
+  if (typeof voteCounts === 'object' && voteCounts !== null) {
+    const result: Record<number, number> = {}
+    Object.keys(voteCounts).forEach(key => {
+      const index = parseInt(key, 10)
+      if (!isNaN(index)) {
+        result[index] = voteCounts[key] || 0
+      }
+    })
+    return result
+  }
+  
+  // If vote counts don't exist or are empty, initialize them to 0 for each option
+  if (!voteCounts || Object.keys(voteCounts).length === 0) {
+    const options = getPollOptions()
+    const result: Record<number, number> = {}
+    for (let i = 0; i < options.length; i++) {
+      result[i] = 0
+    }
+    return result
+  }
+  
+  return {}
+}
+
+function getPollVoteCount(index: number): number {
+  const voteCounts = getPollVoteCounts()
+  return voteCounts[index] || 0
+}
+
+function getTotalVotes(): number {
+  const voteCounts = getPollVoteCounts()
+  return Object.values(voteCounts).reduce((sum, count) => sum + count, 0)
+}
+
+async function handlePollVote(optionIndex: number) {
+  try {
+    const response = await fetch(`${API_CONFIG.baseURL}/messages/${props.message.id}/vote`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authStore.token}`
+      },
+      body: JSON.stringify({
+        option_index: optionIndex
+      })
+    })
+    
+    if (!response.ok) {
+      const error = await response.json()
+      alert(error.error || 'Failed to vote')
+      return
+    }
+    
+    // Refresh the message to get updated vote counts
+    if (emit) {
+      // Trigger a message update
+      const updatedMessage = await response.json()
+      console.log('Vote successful:', updatedMessage)
+    }
+  } catch (error) {
+    console.error('Error voting on poll:', error)
+    alert('Failed to vote on poll')
+  }
 }
 
 // Close reaction picker when clicking outside

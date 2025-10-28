@@ -4,6 +4,11 @@ const { sendToPHP } = require('./apiClient');
 const config = require('./config');
 // Note: Avoid importing from whatsappClient at top-level to prevent circular dependency
 
+// Cache to track which groups have had metadata fetched recently (to prevent repeated fetches)
+// Map: groupId -> timestamp of last fetch
+const groupMetadataFetchCache = new Map();
+const METADATA_FETCH_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+
  
 function unwrapMessage(message) {
     let content = message;
@@ -142,6 +147,63 @@ async function handleMessages(sock, m) {
                     messageType: Object.keys(actualMessage || {})[0]
                 }, 'New message received');
                 
+                // Proactively fetch group metadata for group messages
+                // This ensures Community Announcement groups and other special groups get proper metadata
+                if (isGroup) {
+                    // Check if we've fetched metadata for this group recently
+                    const lastFetch = groupMetadataFetchCache.get(remoteJid);
+                    const now = Date.now();
+                    const shouldFetch = !lastFetch || (now - lastFetch) > METADATA_FETCH_COOLDOWN_MS;
+                    
+                    if (shouldFetch) {
+                        try {
+                            logger.debug({ groupId: remoteJid }, 'Fetching group metadata for incoming message');
+                            const groupMetadata = await sock.groupMetadata(remoteJid);
+                            
+                            // Fetch group profile picture
+                            const { fetchContactProfilePicture } = require('./whatsappClient');
+                            const groupProfilePicture = await fetchContactProfilePicture(sock, remoteJid);
+                            
+                            // Send to backend
+                            const { sendGroupMetadata } = require('./apiClient');
+                            const { convertLidToPhoneJid } = require('./whatsappClient');
+                            const participants = groupMetadata.participants?.map(p => ({
+                                jid: convertLidToPhoneJid(sock, p.id),
+                                isAdmin: p.admin === 'admin',
+                                isSuperAdmin: p.admin === 'superadmin'
+                            })).filter(pp => typeof pp.jid === 'string' && pp.jid.endsWith('@s.whatsapp.net')) || [];
+                            
+                            await sendGroupMetadata({
+                                groupId: groupMetadata.id,
+                                groupName: groupMetadata.subject || 'Group',
+                                participants,
+                                groupDescription: groupMetadata.desc || '',
+                                groupProfilePictureUrl: groupProfilePicture,
+                                createdAt: groupMetadata.creation ? new Date(groupMetadata.creation * 1000).toISOString() : null
+                            });
+                            
+                            // Update cache with current timestamp
+                            groupMetadataFetchCache.set(remoteJid, now);
+                            
+                            logger.debug({ 
+                                groupId: remoteJid, 
+                                groupName: groupMetadata.subject,
+                                participantCount: participants.length 
+                            }, 'Group metadata fetched and sent to backend');
+                        } catch (error) {
+                            logger.debug({ 
+                                groupId: remoteJid, 
+                                error: error.message 
+                            }, 'Could not fetch group metadata for incoming message (group may not exist or no permission)');
+                        }
+                    } else {
+                        logger.debug({ 
+                            groupId: remoteJid,
+                            lastFetchAgo: Math.round((now - lastFetch) / 1000) + 's'
+                        }, 'Skipping group metadata fetch (recently fetched)');
+                    }
+                }
+                
                 // Debug: Log full message structure for troubleshooting
                 if (!actualMessage || Object.keys(actualMessage).length === 0) {
                     logger.debug({
@@ -200,15 +262,23 @@ async function handleMessages(sock, m) {
                     else if (actualMessage?.reactionMessage) {
                         await handleReactionMessage(msg, remoteJid);
                     }
-                    // 9. Edited messages
+                    // 9. Poll messages
+                    else if (actualMessage?.pollCreationMessageV3) {
+                        await handlePollMessage(msg, remoteJid, senderJid, senderProfilePicture, senderBio);
+                    }
+                    // 9a. Poll update messages (votes)
+                    else if (actualMessage?.pollUpdateMessage) {
+                        await handlePollUpdateMessage(msg, remoteJid);
+                    }
+                    // 10. Edited messages
                     else if (actualMessage?.editedMessage) {
                         await handleEditedMessage(msg, remoteJid);
                     }
-                    // 10. Protocol messages (deletions, etc.)
+                    // 11. Protocol messages (deletions, etc.)
                     else if (actualMessage?.protocolMessage) {
                         await handleProtocolMessage(msg, remoteJid);
                     }
-                    // 11. Sender key distribution (group encryption key setup)
+                    // 12. Sender key distribution (group encryption key setup)
                     else if (actualMessage?.senderKeyDistributionMessage) {
                         logger.debug({ remoteJid, messageId: msg.key.id }, 'Received sender key distribution message');
                     }
@@ -865,6 +935,129 @@ async function handleProtocolMessage(msg, remoteJid) {
     }
 }
 
+/**
+ * Handles poll messages.
+ * @param {Object} msg - The message object.
+ * @param {string} remoteJid - The sender's JID.
+ * @param {string} [senderJid] - The sender's JID (for groups).
+ * @param {string} [senderProfilePicture] - The sender's profile picture URL.
+ * @param {string} [senderBio] - The sender's bio/status.
+ */
+async function handlePollMessage(msg, remoteJid, senderJid = null, senderProfilePicture = null, senderBio = null) {
+    try {
+        const pollData = msg.message.pollCreationMessageV3;
+        const messageId = msg.key.id;
+        
+        logger.info({
+            remoteJid,
+            messageId,
+            pollName: pollData.name,
+            optionsCount: pollData.options?.length || 0,
+            pollType: pollData.pollType,
+            contentType: pollData.pollContentType
+        }, 'Processing poll message');
+        
+        // Extract poll information
+        const pollInfo = {
+            name: pollData.name || 'Poll',
+            options: pollData.options?.map(option => ({
+                optionName: option.optionName || ''
+            })) || [],
+            selectableOptionsCount: pollData.selectableOptionsCount || 0,
+            pollContentType: pollData.pollContentType || 'TEXT',
+            pollType: pollData.pollType || 'POLL'
+        };
+        
+        // Create a readable content representation
+        const content = `📊 **${pollInfo.name}**\n\n` + 
+            pollInfo.options.map((option, index) => `${index + 1}. ${option.optionName}`).join('\n');
+        
+        const messageData = {
+            from: remoteJid,
+            chat: remoteJid,
+            senderJid: senderJid || undefined,
+            type: 'poll',
+            body: content,
+            messageId: messageId,
+            senderProfilePictureUrl: senderProfilePicture || undefined,
+            senderBio: senderBio || undefined,
+            pollData: pollInfo
+        };
+        
+        logger.debug({ 
+            messageData: { 
+                ...messageData, 
+                pollData: messageData.pollData,
+                senderProfilePictureUrl: messageData.senderProfilePictureUrl ? '[URL present]' : null,
+                senderBio: messageData.senderBio ? '[Bio present]' : null
+            }
+        }, 'Sending poll message data to backend');
+        
+        await sendToPHP(messageData);
+        
+        logger.debug({ remoteJid, messageId }, 'Poll message sent to PHP backend');
+        
+    } catch (error) {
+        logger.error({ 
+            error: error.message, 
+            stack: error.stack,
+            remoteJid,
+            messageId: msg.key.id 
+        }, 'Error processing poll message');
+    }
+}
+
+/**
+ * Handles poll update messages (when someone votes on a poll).
+ * @param {Object} msg - The message object.
+ * @param {string} remoteJid - The sender's JID.
+ */
+async function handlePollUpdateMessage(msg, remoteJid) {
+    try {
+        const pollUpdate = msg.message.pollUpdateMessage;
+        const messageId = msg.key.id;
+        
+        logger.info({
+            remoteJid,
+            messageId,
+            pollMessageId: pollUpdate.pollCreationMessageKey?.id,
+            fromMe: pollUpdate.pollCreationMessageKey?.fromMe,
+            pollUpdateStructure: JSON.stringify(pollUpdate, null, 2)
+        }, 'Processing poll update message (vote)');
+        
+        // Extract the poll message ID from the update
+        const pollMessageId = pollUpdate.pollCreationMessageKey?.id;
+        
+        if (!pollMessageId) {
+            logger.warn({ remoteJid, messageId }, 'Poll update missing pollCreationMessageKey.id');
+            return;
+        }
+        
+        // Send the poll update to the backend
+        // The backend will need to handle updating vote counts
+        const messageData = {
+            from: remoteJid,
+            chat: remoteJid,
+            type: 'poll_update',
+            messageId: messageId,
+            pollMessageId: pollMessageId,
+            senderTimestampMs: pollUpdate.senderTimestampMs
+        };
+        
+        await sendToPHP(messageData);
+        
+        logger.debug({ remoteJid, messageId }, 'Poll update sent to PHP backend');
+        
+    } catch (error) {
+        logger.error({ 
+            error: error.message, 
+            stack: error.stack,
+            remoteJid,
+            messageId: msg.key.id 
+        }, 'Error processing poll update message');
+    }
+}
+
 module.exports = { 
     handleMessages, 
     handleTextMessage, 
@@ -874,6 +1067,8 @@ module.exports = {
     handleAudioMessage, 
     handleLocationMessage,
     handleReactionMessage,
+    handlePollMessage,
+    handlePollUpdateMessage,
     handleEditedMessage,
     handleProtocolMessage
 };

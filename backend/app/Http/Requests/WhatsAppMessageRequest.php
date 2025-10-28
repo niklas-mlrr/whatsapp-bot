@@ -60,6 +60,17 @@ class WhatsAppMessageRequest extends FormRequest
             // Sender profile info (for contact info updates)
             'senderProfilePictureUrl' => ['nullable', 'url'],
             'senderBio' => ['nullable', 'string', 'max:500'],
+            // Poll data
+            'pollData' => ['nullable', 'array'],
+            'pollData.name' => ['nullable', 'string', 'max:255'],
+            'pollData.options' => ['nullable', 'array', 'min:2', 'max:12'],
+            'pollData.options.*.optionName' => ['nullable', 'string', 'max:100'],
+            'pollData.options.*.name' => ['nullable', 'string', 'max:100'],
+            'pollData.pollType' => ['nullable', 'string', 'in:POLL'],
+            'pollData.pollContentType' => ['nullable', 'string', 'in:TEXT'],
+            'pollData.selectableOptionsCount' => ['nullable', 'integer', 'min:0'],
+            // Poll update data
+            'pollMessageId' => ['nullable', 'string'],
         ];
 
         // Add required validation for either 'from' or 'sender'

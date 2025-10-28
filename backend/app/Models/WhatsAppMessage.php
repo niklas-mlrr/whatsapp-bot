@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Support\Facades\Storage;
 use App\Models\User;
 use App\Models\Chat;
+use App\Models\PollVote;
 
 class WhatsAppMessage extends Model
 {
@@ -179,6 +180,14 @@ class WhatsAppMessage extends Model
     public function replyToMessage(): BelongsTo
     {
         return $this->belongsTo(WhatsAppMessage::class, 'reply_to_message_id');
+    }
+    
+    /**
+     * Get the poll votes for this message (if it's a poll).
+     */
+    public function pollVotes(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(PollVote::class, 'message_id');
     }
 
     // Accessors & Mutators

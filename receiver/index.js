@@ -476,6 +476,50 @@ async function start() {
                     });
                     throw new Error(`Failed to process audio: ${error.message}`);
                 }
+            } else if (type === 'poll') {
+                console.log('Processing poll message for', chat);
+                try {
+                    const { pollData } = req.body;
+                    
+                    if (!pollData || !pollData.name || !pollData.options || pollData.options.length === 0) {
+                        throw new Error('Poll data is required with name and options');
+                    }
+                    
+                    // Validate poll options
+                    if (pollData.options.length < 2) {
+                        throw new Error('Poll must have at least 2 options');
+                    }
+                    
+                    if (pollData.options.length > 12) {
+                        throw new Error('Poll can have at most 12 options');
+                    }
+                    
+                    console.log('Sending poll to WhatsApp:', {
+                        name: pollData.name,
+                        optionsCount: pollData.options.length,
+                        pollType: pollData.pollType || 'POLL',
+                        contentType: pollData.pollContentType || 'TEXT'
+                    });
+
+                    // Create poll message structure for Baileys
+                    // Send poll using the pollCreationMessage format
+                    const messageOptions = quotedMessage ? { quoted: quotedMessage, waitForAck: false } : { quoted: null, waitForAck: false };
+                    
+                    sentMessage = await sockInstance.sendMessage(targetChat, {
+                        poll: {
+                            name: pollData.name,
+                            selectableOptionsCount: pollData.selectableOptionsCount || 0,
+                            values: pollData.options.map(option => option.optionName || option.name || option)
+                        }
+                    }, messageOptions);
+                } catch (error) {
+                    console.error('Error processing poll:', {
+                        error: error.message,
+                        stack: error.stack,
+                        pollData: req.body.pollData
+                    });
+                    throw new Error(`Failed to process poll: ${error.message}`);
+                }
             } else {
                 const error = `Unsupported message type '${type}' or missing media`;
                 console.error(error);

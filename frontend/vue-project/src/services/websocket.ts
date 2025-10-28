@@ -111,9 +111,10 @@ export function useWebSocket() {
   const isConnected = ref(false);
   const socketId = ref<string | null>(null);
   const authStore = useAuthStore();
+  let retryTimeoutId: NodeJS.Timeout | null = null;
 
   // Connect to WebSocket server
-  const connect = async (): Promise<boolean> => {
+  const connect = async (retryCount = 0, maxRetries = 3): Promise<boolean> => {
     try {
       if (echo) {
         echo.disconnect();
@@ -136,30 +137,75 @@ export function useWebSocket() {
         },
       } as any);
 
-      // Wait for connection
+      // Wait for connection with timeout
       await new Promise<void>((resolve, reject) => {
         if (!echo) return reject('Echo not initialized');
 
+        const timeoutId = setTimeout(() => {
+          reject(new Error('WebSocket connection timeout'));
+        }, 10000); // 10 second timeout
+
         echo.connector.pusher.connection.bind('connected', () => {
+          clearTimeout(timeoutId);
           isConnected.value = true;
           socketId.value = echo?.socketId() || null;
+          console.log('WebSocket connected successfully');
           resolve();
         });
 
         echo.connector.pusher.connection.bind('error', (error: any) => {
+          clearTimeout(timeoutId);
+          console.error('WebSocket connection error:', error);
           reject(error);
+        });
+
+        echo.connector.pusher.connection.bind('unavailable', () => {
+          clearTimeout(timeoutId);
+          console.warn('WebSocket connection unavailable - server may not be running');
+          // Don't reject immediately, give it time to retry
+        });
+
+        echo.connector.pusher.connection.bind('disconnected', () => {
+          console.log('WebSocket disconnected');
+        });
+
+        echo.connector.pusher.connection.bind('failed', () => {
+          clearTimeout(timeoutId);
+          console.error('WebSocket connection failed');
+          reject(new Error('WebSocket connection failed - server may not be running'));
         });
       });
 
       return true;
     } catch (error) {
       console.error('WebSocket connection error:', error);
+      
+      // Retry logic
+      if (retryCount < maxRetries) {
+        const delay = Math.min(1000 * Math.pow(2, retryCount), 10000); // Exponential backoff, max 10s
+        console.log(`Retrying WebSocket connection in ${delay}ms (attempt ${retryCount + 1}/${maxRetries})`);
+        
+        return new Promise((resolve) => {
+          retryTimeoutId = setTimeout(async () => {
+            const result = await connect(retryCount + 1, maxRetries);
+            resolve(result);
+          }, delay);
+        });
+      }
+      
+      // Return false instead of throwing, allowing the app to continue
       return false;
     }
   };
 
   // Disconnect from WebSocket server
   const disconnect = () => {
+    // Clear any pending retry attempts
+    if (retryTimeoutId) {
+      clearTimeout(retryTimeoutId);
+      retryTimeoutId = null;
+    }
+    
     if (echo) {
       echo.disconnect();
       echo = null;

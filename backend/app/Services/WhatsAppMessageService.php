@@ -83,6 +83,8 @@ class WhatsAppMessageService
                     'location' => $this->handleLocationMessage($data),
                     'contact' => $this->handleContactMessage($data),
                     'reaction' => $this->handleReactionMessage($data),
+                    'poll' => $this->handlePollMessage($data),
+                    'poll_update' => $this->handlePollUpdate($data),
                     default => $this->handleUnknownMessage($data),
                 };
 
@@ -1212,6 +1214,99 @@ class WhatsAppMessageService
         ]);
         
         // Return null because reactions don't create new messages
+        return null;
+    }
+    
+    /**
+     * Handles poll messages.
+     */
+    private function handlePollMessage(WhatsAppMessageData $data): WhatsAppMessage
+    {
+        Log::channel('whatsapp')->info("Poll message received from '{$data->sender}'", [
+            'poll_name' => $data->pollData['name'] ?? 'Unknown',
+            'options_count' => count($data->pollData['options'] ?? []),
+        ]);
+
+        // Resolve reply_to_message_id if this is a reply
+        $replyToMessageId = $this->resolveReplyToMessageId($data->quotedMessage);
+
+        // Initialize vote counts for each option as an object
+        $voteCounts = [];
+        $options = $data->pollData['options'] ?? [];
+        foreach ($options as $index => $option) {
+            $voteCounts[strval($index)] = 0;
+        }
+
+        return WhatsAppMessage::create([
+            'sender' => $data->sender,
+            'sender_id' => $data->sender_id,
+            'chat' => $data->chat,
+            'chat_id' => $data->chat_id,
+            'type' => 'poll',
+            'direction' => 'incoming',
+            'status' => 'delivered',
+            'content' => $this->sanitizeContent($data->content ?? ''),
+            'reply_to_message_id' => $replyToMessageId,
+            'sending_time' => $data->sending_time ?? now(),
+            'metadata' => [
+                'poll_data' => $data->pollData,
+                'poll_vote_counts' => $voteCounts, // Initialize vote counts
+                'original_content' => $data->content,
+                'message_id' => $data->messageId,
+            ],
+        ]);
+    }
+    
+    /**
+     * Handles poll update messages (when someone votes via WhatsApp).
+     */
+    private function handlePollUpdate(WhatsAppMessageData $data): ?WhatsAppMessage
+    {
+        Log::channel('whatsapp')->info("Poll update received", [
+            'poll_message_id' => $data->pollMessageId,
+            'sender' => $data->sender,
+        ]);
+        
+        // Find the poll message by WhatsApp message ID
+        $pollMessage = null;
+        
+        if ($data->pollMessageId) {
+            $pollMessage = WhatsAppMessage::where('metadata->message_id', $data->pollMessageId)
+                ->first();
+        }
+        
+        // If pollMessageId is null or poll not found, try to find the most recent poll in this chat
+        if (!$pollMessage || $pollMessage->type !== 'poll') {
+            Log::channel('whatsapp')->warning('Poll not found for update, trying to find recent poll', [
+                'poll_message_id' => $data->pollMessageId,
+                'chat' => $data->chat,
+            ]);
+            
+            // Find the most recent poll message in this chat
+            $pollMessage = WhatsAppMessage::where('chat_id', $data->chat_id)
+                ->where('type', 'poll')
+                ->orderBy('created_at', 'desc')
+                ->first();
+        }
+        
+        if (!$pollMessage || $pollMessage->type !== 'poll') {
+            Log::channel('whatsapp')->warning('No poll found for update', [
+                'poll_message_id' => $data->pollMessageId,
+                'chat_id' => $data->chat_id,
+            ]);
+            return null;
+        }
+        
+        // Note: WhatsApp poll updates are encrypted, so we can't decode which option was selected
+        // We rely on the frontend API endpoint to handle voting instead
+        // This handler just logs that a vote occurred
+        
+        Log::channel('whatsapp')->debug('Poll vote received via WhatsApp', [
+            'poll_id' => $pollMessage->id,
+            'voter' => $data->sender,
+        ]);
+        
+        // Return null to indicate no new message should be created
         return null;
     }
     
