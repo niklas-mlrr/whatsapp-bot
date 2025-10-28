@@ -267,6 +267,10 @@ async function connectToWhatsApp() {
             keepAliveIntervalMs: 30000, // Send keepalive every 30 seconds
             connectTimeoutMs: 60000, // 60 second timeout for initial connection
             defaultQueryTimeoutMs: undefined, // Disable query timeout to prevent premature disconnects
+            // Critical for community groups: handle decryption failures gracefully
+            shouldIgnoreJid: () => false, // Don't ignore any JIDs
+            retryRequestDelayMs: 250, // Retry failed decryptions quickly
+            maxMsgRetryCount: 5, // Allow more retries for community group messages
             getMessage: async (key) => {
                 try {
                     const id = key?.id;

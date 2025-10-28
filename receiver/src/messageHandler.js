@@ -53,7 +53,26 @@ async function handleMessages(sock, m) {
                 const remoteJid = msg.key.remoteJid;
                 const isGroup = remoteJid?.endsWith('@g.us');
                 if (!msg.message) {
-                    logger.debug({ remoteJid, messageId: msg.key.id }, 'Skipping message with no content (likely decryption failed)');
+                    // Log more details for group messages (especially community groups)
+                    if (isGroup) {
+                        logger.warn({ 
+                            remoteJid, 
+                            messageId: msg.key.id,
+                            participant: msg.key.participant,
+                            senderLid: msg.key.senderLid,
+                            hasParticipantPn: !!msg.key.participantPn
+                        }, 'Skipping group message with no content - decryption failed (requesting retry)');
+                        
+                        // Request retry for community group messages that failed to decrypt
+                        try {
+                            await sock.sendReceipt(remoteJid, msg.key.participant || msg.key.remoteJid, [msg.key.id], 'retry');
+                            logger.info({ messageId: msg.key.id, remoteJid }, 'Sent retry receipt for failed decryption');
+                        } catch (retryError) {
+                            logger.debug({ error: retryError.message, messageId: msg.key.id }, 'Could not send retry receipt');
+                        }
+                    } else {
+                        logger.debug({ remoteJid, messageId: msg.key.id }, 'Skipping message with no content (likely decryption failed)');
+                    }
                     continue;
                 }
                 
