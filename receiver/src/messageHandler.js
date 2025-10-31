@@ -2,15 +2,10 @@ import { downloadMediaMessage, proto } from '@whiskeysockets/baileys';
 import { logger } from './logger.js';
 import { sendToPHP, sendGroupMetadata } from './apiClient.js';
 import config from './config.js';
-import { fetchContactProfilePicture, fetchContactStatus, recordLidToPhone, convertLidToPhoneJid, addEditMessageId, addProtocolMessageId } from './whatsappClient.js';
+import { fetchContactProfilePicture, fetchContactStatus, recordLidToPhone, convertLidToPhoneJid, addEditMessageId, addProtocolMessageId, shouldSendGroupMetadata } from './whatsappClient.js';
 import * as apiClient from './apiClient.js';
 
 // Note: Avoid importing from whatsappClient at top-level to prevent circular dependency
-
-// Cache to track which groups have had metadata fetched recently (to prevent repeated fetches)
-// Map: groupId -> timestamp of last fetch
-const groupMetadataFetchCache = new Map();
-const METADATA_FETCH_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 
  
 function unwrapMessage(message) {
@@ -172,29 +167,23 @@ async function handleMessages(sock, m) {
                 // Proactively fetch group metadata for group messages
                 // This ensures Community Announcement groups and other special groups get proper metadata
                 if (isGroup) {
-                    // Check if we've fetched metadata for this group recently
-                    const lastFetch = groupMetadataFetchCache.get(remoteJid);
-                    const now = Date.now();
-                    const shouldFetch = !lastFetch || (now - lastFetch) > METADATA_FETCH_COOLDOWN_MS;
-                    
-                    if (shouldFetch) {
-                        try {
-                            logger.debug({ groupId: remoteJid }, 'Fetching group metadata for incoming message');
-                            const groupMetadata = await sock.groupMetadata(remoteJid);
-                            
-                            // Fetch group profile picture
-                            // Already imported at top: fetchContactProfilePicture
-                            const groupProfilePicture = await fetchContactProfilePicture(sock, remoteJid);
-                            
-                            // Send to backend
-                            // Already imported at top: sendGroupMetadata
-                            // Already imported at top
-                            const participants = groupMetadata.participants?.map(p => ({
-                                jid: convertLidToPhoneJid(sock, p.id),
-                                isAdmin: p.admin === 'admin',
-                                isSuperAdmin: p.admin === 'superadmin'
-                            })).filter(pp => typeof pp.jid === 'string' && pp.jid.endsWith('@s.whatsapp.net')) || [];
-                            
+                    try {
+                        logger.debug({ groupId: remoteJid }, 'Fetching group metadata for incoming message');
+                        const groupMetadata = await sock.groupMetadata(remoteJid);
+                        
+                        // Fetch group profile picture
+                        // Already imported at top: fetchContactProfilePicture
+                        const groupProfilePicture = await fetchContactProfilePicture(sock, remoteJid);
+                        
+                        // Send to backend using global deduplication
+                        // Already imported at top: sendGroupMetadata
+                        const participants = groupMetadata.participants?.map(p => ({
+                            jid: convertLidToPhoneJid(sock, p.id),
+                            isAdmin: p.admin === 'admin',
+                            isSuperAdmin: p.admin === 'superadmin'
+                        })).filter(pp => typeof pp.jid === 'string' && pp.jid.endsWith('@s.whatsapp.net')) || [];
+                        
+                        if (shouldSendGroupMetadata(groupMetadata.id)) {
                             await sendGroupMetadata({
                                 groupId: groupMetadata.id,
                                 groupName: groupMetadata.subject || 'Group',
@@ -203,26 +192,20 @@ async function handleMessages(sock, m) {
                                 groupProfilePictureUrl: groupProfilePicture,
                                 createdAt: groupMetadata.creation ? new Date(groupMetadata.creation * 1000).toISOString() : null
                             });
-                            
-                            // Update cache with current timestamp
-                            groupMetadataFetchCache.set(remoteJid, now);
-                            
-                            logger.debug({ 
-                                groupId: remoteJid, 
-                                groupName: groupMetadata.subject,
-                                participantCount: participants.length 
-                            }, 'Group metadata fetched and sent to backend');
-                        } catch (error) {
-                            logger.debug({ 
-                                groupId: remoteJid, 
-                                error: error.message 
-                            }, 'Could not fetch group metadata for incoming message (group may not exist or no permission)');
+                        } else {
+                            logger.debug({ groupId: groupMetadata.id }, 'Skipping duplicate group metadata send in message handler');
                         }
-                    } else {
+                        
                         logger.debug({ 
-                            groupId: remoteJid,
-                            lastFetchAgo: Math.round((now - lastFetch) / 1000) + 's'
-                        }, 'Skipping group metadata fetch (recently fetched)');
+                            groupId: remoteJid, 
+                            groupName: groupMetadata.subject,
+                            participantCount: participants.length 
+                        }, 'Group metadata fetched and sent to backend');
+                    } catch (error) {
+                        logger.debug({ 
+                            groupId: remoteJid, 
+                            error: error.message 
+                        }, 'Could not fetch group metadata for incoming message (group may not exist or no permission)');
                     }
                 }
                 

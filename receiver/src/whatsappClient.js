@@ -31,6 +31,12 @@ const editMessageIds = new Set();
 const protocolMessageIds = new Set();
 // Store recently sent messages so we can satisfy retry requests from recipients
 // Map: messageId -> { message: proto content, expiresAt: number }
+const messageStore = new Map();
+
+// Global cache to prevent duplicate group metadata sends
+// Map: groupId -> timestamp of last send
+const groupMetadataSendCache = new Map();
+const GROUP_METADATA_DEDUP_WINDOW_MS = 30000; // 30 seconds deduplication window
 
 function indexContactsLidMapping(sock) {
     try {
@@ -48,7 +54,6 @@ function indexContactsLidMapping(sock) {
         logger.debug({ err: err.message }, 'Failed to index contacts LID mapping');
     }
 }
-const messageStore = new Map();
 
 // Map LID JIDs to phone JIDs when we discover them from message events
 // key: '123456789@lid' -> value: '491234567890@s.whatsapp.net'
@@ -213,6 +218,28 @@ function convertLidToPhoneJid(sock, jid) {
 
     // Unknown LID: keep as-is; caller may filter it out until we learn mapping
     return jid;
+}
+
+/**
+ * Check if group metadata should be sent to backend (deduplication)
+ * @param {string} groupId - The group ID
+ * @returns {boolean} - True if metadata should be sent
+ */
+function shouldSendGroupMetadata(groupId) {
+    const now = Date.now();
+    const lastSent = groupMetadataSendCache.get(groupId);
+    
+    if (!lastSent || (now - lastSent) > GROUP_METADATA_DEDUP_WINDOW_MS) {
+        groupMetadataSendCache.set(groupId, now);
+        return true;
+    }
+    
+    logger.debug({ 
+        groupId, 
+        lastSentAgo: Math.round((now - lastSent) / 1000) + 's',
+        dedupWindow: GROUP_METADATA_DEDUP_WINDOW_MS / 1000 + 's'
+    }, 'Skipping group metadata send (recently sent)');
+    return false;
 }
 
 /**
@@ -420,14 +447,18 @@ async function connectToWhatsApp() {
                                 isSuperAdmin: p.admin === 'superadmin'
                             })).filter(pp => typeof pp.jid === 'string' && pp.jid.endsWith('@s.whatsapp.net'));
 
-                            await apiClient.sendGroupMetadata({
-                                groupId: g.id,
-                                groupName: g.subject || 'Group',
-                                participants,
-                                groupDescription: g.desc || '',
-                                groupProfilePictureUrl: groupProfilePicture,
-                                createdAt: g.creation ? new Date(g.creation * 1000).toISOString() : null
-                            });
+                            if (shouldSendGroupMetadata(g.id)) {
+                                await apiClient.sendGroupMetadata({
+                                    groupId: g.id,
+                                    groupName: g.subject || 'Group',
+                                    participants,
+                                    groupDescription: g.desc || '',
+                                    groupProfilePictureUrl: groupProfilePicture,
+                                    createdAt: g.creation ? new Date(g.creation * 1000).toISOString() : null
+                                });
+                            } else {
+                                logger.debug({ groupId: g.id }, 'Skipping duplicate group metadata send on connect');
+                            }
                         } catch (err) {
                             logger.warn({ err: err.message, groupId: g.id }, 'Failed to push group metadata on connect');
                         }
@@ -488,18 +519,22 @@ async function connectToWhatsApp() {
                     // Fetch group profile picture
                     const groupProfilePicture = await fetchContactProfilePicture(sock, group.id);
 
-                    await apiClient.sendGroupMetadata({
-                        groupId: group.id,
-                        groupName: group.subject || 'Group',
-                        participants: group.participants?.map(p => ({
-                            jid: convertLidToPhoneJid(sock, p.id),
-                            isAdmin: p.admin === 'admin',
-                            isSuperAdmin: p.admin === 'superadmin'
-                        })) || [],
-                        groupDescription: group.desc || '',
-                        groupProfilePictureUrl: groupProfilePicture,
-                        createdAt: group.creation ? new Date(group.creation * 1000).toISOString() : null
-                    });
+                    if (shouldSendGroupMetadata(group.id)) {
+                        await apiClient.sendGroupMetadata({
+                            groupId: group.id,
+                            groupName: group.subject || 'Group',
+                            participants: group.participants?.map(p => ({
+                                jid: convertLidToPhoneJid(sock, p.id),
+                                isAdmin: p.admin === 'admin',
+                                isSuperAdmin: p.admin === 'superadmin'
+                            })) || [],
+                            groupDescription: group.desc || '',
+                            groupProfilePictureUrl: groupProfilePicture,
+                            createdAt: group.creation ? new Date(group.creation * 1000).toISOString() : null
+                        });
+                    } else {
+                        logger.debug({ groupId: group.id }, 'Skipping duplicate group metadata send in groups.upsert');
+                    }
                 } catch (error) {
                     logger.error({
                         error: error.message,
@@ -536,14 +571,18 @@ async function connectToWhatsApp() {
                             isSuperAdmin: p.admin === 'superadmin'
                         })).filter(pp => typeof pp.jid === 'string' && pp.jid.endsWith('@s.whatsapp.net')) || [];
 
-                        await apiClient.sendGroupMetadata({
-                            groupId: groupMetadata.id,
-                            groupName: groupMetadata.subject || 'Group',
-                            participants,
-                            groupDescription: groupMetadata.desc || '',
-                            groupProfilePictureUrl: groupProfilePicture,
-                            createdAt: groupMetadata.creation ? new Date(groupMetadata.creation * 1000).toISOString() : null
-                        });
+                        if (shouldSendGroupMetadata(groupMetadata.id)) {
+                            await apiClient.sendGroupMetadata({
+                                groupId: groupMetadata.id,
+                                groupName: groupMetadata.subject || 'Group',
+                                participants,
+                                groupDescription: groupMetadata.desc || '',
+                                groupProfilePictureUrl: groupProfilePicture,
+                                createdAt: groupMetadata.creation ? new Date(groupMetadata.creation * 1000).toISOString() : null
+                            });
+                        } else {
+                            logger.debug({ groupId: groupMetadata.id }, 'Skipping duplicate group metadata send in groups.update');
+                        }
                     } catch (fetchError) {
                         logger.warn({
                             error: fetchError.message,
@@ -646,14 +685,18 @@ async function connectToWhatsApp() {
                         isSuperAdmin: p.admin === 'superadmin'
                     })).filter(pp => typeof pp.jid === 'string' && pp.jid.endsWith('@s.whatsapp.net')) || [];
 
-                    await apiClient.sendGroupMetadata({
-                        groupId: groupMetadata.id,
-                        groupName: groupMetadata.subject || 'Group',
-                        participants,
-                        groupDescription: groupMetadata.desc || '',
-                        groupProfilePictureUrl: groupProfilePicture,
-                        createdAt: groupMetadata.creation ? new Date(groupMetadata.creation * 1000).toISOString() : null
-                    });
+                    if (shouldSendGroupMetadata(groupMetadata.id)) {
+                        await apiClient.sendGroupMetadata({
+                            groupId: groupMetadata.id,
+                            groupName: groupMetadata.subject || 'Group',
+                            participants,
+                            groupDescription: groupMetadata.desc || '',
+                            groupProfilePictureUrl: groupProfilePicture,
+                            createdAt: groupMetadata.creation ? new Date(groupMetadata.creation * 1000).toISOString() : null
+                        });
+                    } else {
+                        logger.debug({ groupId: groupMetadata.id }, 'Skipping duplicate group metadata send in group-participants.update');
+                    }
 
                     // Retry once after a short delay to catch newly learned contacts mapping
                     setTimeout(async () => {
@@ -665,14 +708,20 @@ async function connectToWhatsApp() {
                                 isAdmin: p.admin === 'admin',
                                 isSuperAdmin: p.admin === 'superadmin'
                             })).filter(pp => typeof pp.jid === 'string' && pp.jid.endsWith('@s.whatsapp.net')) || [];
-                            await apiClient.sendGroupMetadata({
-                                groupId: refreshed.id,
-                                groupName: refreshed.subject || 'Group',
-                                participants: participants2,
-                                groupDescription: refreshed.desc || '',
-                                groupProfilePictureUrl: groupProfilePicture,
-                                createdAt: refreshed.creation ? new Date(refreshed.creation * 1000).toISOString() : null
-                            });
+                            
+                            // Bypass deduplication for retry since we want to update with new participant mappings
+                            if (shouldSendGroupMetadata(refreshed.id)) {
+                                await apiClient.sendGroupMetadata({
+                                    groupId: refreshed.id,
+                                    groupName: refreshed.subject || 'Group',
+                                    participants: participants2,
+                                    groupDescription: refreshed.desc || '',
+                                    groupProfilePictureUrl: groupProfilePicture,
+                                    createdAt: refreshed.creation ? new Date(refreshed.creation * 1000).toISOString() : null
+                                });
+                            } else {
+                                logger.debug({ groupId: refreshed.id }, 'Skipping retry group metadata send (recently sent)');
+                            }
                         } catch (err2) {
                             logger.debug({ err: err2.message, groupId }, 'Retry push of group metadata failed');
                         }
@@ -724,4 +773,4 @@ async function connectToWhatsApp() {
     }
 }
 
-export { connectToWhatsApp, setReconnectCallback, addEditMessageId, addProtocolMessageId, fetchContactProfilePicture, fetchContactStatus, convertLidToPhoneJid, storeSentMessage, recordLidToPhone };
+export { connectToWhatsApp, setReconnectCallback, addEditMessageId, addProtocolMessageId, fetchContactProfilePicture, fetchContactStatus, convertLidToPhoneJid, storeSentMessage, recordLidToPhone, shouldSendGroupMetadata };
