@@ -1,9 +1,10 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers, jidDecode, jidNormalizedUser } = require('@whiskeysockets/baileys');
-const { Boom } = require('@hapi/boom');
-const pino = require('pino');
-const config = require('./config');
-const { logger } = require('./logger');
-const { handleMessages } = require('./messageHandler');
+import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers, jidDecode, jidNormalizedUser } from '@whiskeysockets/baileys';
+import { Boom } from '@hapi/boom';
+import pino from 'pino';
+import config from './config.js';
+import { logger } from './logger.js';
+import { handleMessages } from './messageHandler.js';
+import * as apiClient from './apiClient.js';
 
 const msgRetryCounterCache = (() => {
     const cache = new Map();
@@ -410,7 +411,6 @@ async function connectToWhatsApp() {
                     // Build initial LID mapping from contacts
                     indexContactsLidMapping(sock);
                     const all = await sock.groupFetchAllParticipating();
-                    const apiClient = require('./apiClient');
                     for (const g of Object.values(all || {})) {
                         try {
                             const groupProfilePicture = await fetchContactProfilePicture(sock, g.id);
@@ -488,7 +488,6 @@ async function connectToWhatsApp() {
                     // Fetch group profile picture
                     const groupProfilePicture = await fetchContactProfilePicture(sock, group.id);
 
-                    const apiClient = require('./apiClient');
                     await apiClient.sendGroupMetadata({
                         groupId: group.id,
                         groupName: group.subject || 'Group',
@@ -531,7 +530,6 @@ async function connectToWhatsApp() {
                         // Fetch group profile picture
                         const groupProfilePicture = await fetchContactProfilePicture(sock, groupMetadata.id);
 
-                        const apiClient = require('./apiClient');
                         const participants = groupMetadata.participants?.map(p => ({
                             jid: convertLidToPhoneJid(sock, p.id),
                             isAdmin: p.admin === 'admin',
@@ -613,7 +611,6 @@ async function connectToWhatsApp() {
                         logger.debug({ messageId, numericStatus, status }, 'Message status changed');
                         
                         // Send status update to backend
-                        const apiClient = require('./apiClient');
                         await apiClient.updateMessageStatus(messageId, status);
                     }
                 } catch (error) {
@@ -643,7 +640,6 @@ async function connectToWhatsApp() {
                     // Fetch group profile picture
                     const groupProfilePicture = await fetchContactProfilePicture(sock, groupMetadata.id);
 
-                    const apiClient = require('./apiClient');
                     const participants = groupMetadata.participants?.map(p => ({
                         jid: convertLidToPhoneJid(sock, p.id),
                         isAdmin: p.admin === 'admin',
@@ -710,7 +706,6 @@ async function connectToWhatsApp() {
                         logger.debug({ messageId, status, receiptInfo }, 'Message receipt status changed');
                         
                         // Send status update to backend
-                        const apiClient = require('./apiClient');
                         await apiClient.updateMessageStatus(messageId, status);
                     }
                 } catch (error) {
@@ -729,4 +724,4 @@ async function connectToWhatsApp() {
     }
 }
 
-module.exports = { connectToWhatsApp, setReconnectCallback, addEditMessageId, addProtocolMessageId, fetchContactProfilePicture, fetchContactStatus, convertLidToPhoneJid, storeSentMessage, recordLidToPhone };
+export { connectToWhatsApp, setReconnectCallback, addEditMessageId, addProtocolMessageId, fetchContactProfilePicture, fetchContactStatus, convertLidToPhoneJid, storeSentMessage, recordLidToPhone };

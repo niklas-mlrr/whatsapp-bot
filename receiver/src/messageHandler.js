@@ -1,7 +1,10 @@
-const { downloadMediaMessage, proto } = require('@whiskeysockets/baileys');
-const { logger } = require('./logger');
-const { sendToPHP } = require('./apiClient');
-const config = require('./config');
+import { downloadMediaMessage, proto } from '@whiskeysockets/baileys';
+import { logger } from './logger.js';
+import { sendToPHP, sendGroupMetadata } from './apiClient.js';
+import config from './config.js';
+import { fetchContactProfilePicture, fetchContactStatus, recordLidToPhone, convertLidToPhoneJid, addEditMessageId, addProtocolMessageId } from './whatsappClient.js';
+import * as apiClient from './apiClient.js';
+
 // Note: Avoid importing from whatsappClient at top-level to prevent circular dependency
 
 // Cache to track which groups have had metadata fetched recently (to prevent repeated fetches)
@@ -81,7 +84,7 @@ async function handleMessages(sock, m) {
                 let senderBio = null;
                 if (!isGroup) {
                     logger.debug({ remoteJid }, 'Attempting to fetch sender profile info for direct chat');
-                    const { fetchContactProfilePicture, fetchContactStatus } = require('./whatsappClient');
+                    // Already imported at top: fetchContactProfilePicture, fetchContactStatus
                     try {
                         senderProfilePicture = await fetchContactProfilePicture(sock, remoteJid);
                         senderBio = await fetchContactStatus(sock, remoteJid);
@@ -133,14 +136,14 @@ async function handleMessages(sock, m) {
                     if (senderJid.endsWith('@lid') && msg.key && msg.key.participantPn) {
                         logger.debug({ from: senderJid, to: msg.key.participantPn }, 'Using participantPn as senderJid');
                         try {
-                            const { recordLidToPhone } = require('./whatsappClient');
+                            // Already imported at top: recordLidToPhone
                             recordLidToPhone(senderJid, msg.key.participantPn);
                         } catch (_) {}
                         senderJid = msg.key.participantPn;
                     } else if (senderJid.endsWith('@lid')) {
                         // Try contact store conversion as fallback
                         try {
-                            const { convertLidToPhoneJid } = require('./whatsappClient');
+                            // Already imported at top
                             if (typeof convertLidToPhoneJid === 'function') {
                                 const converted = convertLidToPhoneJid(sock, senderJid);
                                 if (converted !== senderJid) {
@@ -180,12 +183,12 @@ async function handleMessages(sock, m) {
                             const groupMetadata = await sock.groupMetadata(remoteJid);
                             
                             // Fetch group profile picture
-                            const { fetchContactProfilePicture } = require('./whatsappClient');
+                            // Already imported at top: fetchContactProfilePicture
                             const groupProfilePicture = await fetchContactProfilePicture(sock, remoteJid);
                             
                             // Send to backend
-                            const { sendGroupMetadata } = require('./apiClient');
-                            const { convertLidToPhoneJid } = require('./whatsappClient');
+                            // Already imported at top: sendGroupMetadata
+                            // Already imported at top
                             const participants = groupMetadata.participants?.map(p => ({
                                 jid: convertLidToPhoneJid(sock, p.id),
                                 isAdmin: p.admin === 'admin',
@@ -858,7 +861,7 @@ async function handleEditedMessage(msg, remoteJid) {
         const editedMessage = msg.message.editedMessage;
         
         // Track this edit message ID to skip status updates
-        const { addEditMessageId } = require('./whatsappClient');
+        // Already imported at top: addEditMessageId
         addEditMessageId(msg.key.id);
         
         // The edited message structure contains the protocol message with the original ID
@@ -893,7 +896,7 @@ async function handleEditedMessage(msg, remoteJid) {
         }
         
         // Notify backend about the edit
-        const apiClient = require('./apiClient');
+        // Already imported at top: apiClient
         await apiClient.notifyMessageEdited(originalMessageId, newContent);
         
     } catch (error) {
@@ -916,7 +919,7 @@ async function handleProtocolMessage(msg, remoteJid) {
         const protocolMessage = msg.message.protocolMessage;
         
         // Track this protocol message ID to skip status updates
-        const { addProtocolMessageId } = require('./whatsappClient');
+        // Already imported at top: addProtocolMessageId
         addProtocolMessageId(msg.key.id);
         
         // Check if this is a message deletion
@@ -935,7 +938,7 @@ async function handleProtocolMessage(msg, remoteJid) {
             }
             
             // Notify backend about the deletion
-            const apiClient = require('./apiClient');
+            // Already imported at top: apiClient
             await apiClient.notifyMessageDeleted(deletedMessageId);
         } else {
             logger.debug({ 
@@ -1077,7 +1080,7 @@ async function handlePollUpdateMessage(msg, remoteJid) {
     }
 }
 
-module.exports = { 
+export { 
     handleMessages, 
     handleTextMessage, 
     handleImageMessage, 

@@ -1,7 +1,7 @@
-const pino = require('pino');
-const config = require('./config');
-const path = require('path');
-const fs = require('fs');
+import pino from 'pino';
+import config from './config.js';
+import path from 'path';
+import fs from 'fs';
 
 // Ensure log directory exists
 const ensureLogDirectoryExists = (filePath) => {
@@ -185,8 +185,10 @@ process.on('exit', (code) => {
     });
 });
 
-module.exports = {
+const createChildLogger = (name) => logger.child({ module: name });
+
+export {
     logger,
     requestLogger,
-    createChildLogger: (name) => logger.child({ module: name }),
+    createChildLogger,
 };

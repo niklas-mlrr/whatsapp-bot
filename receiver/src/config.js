@@ -1,5 +1,6 @@
-require('dotenv').config();
-const path = require('path');
+import 'dotenv/config';
+import path from 'path';
+import fs from 'fs';
 
 /**
  * Configuration object for the WhatsApp bot
@@ -158,8 +159,8 @@ const requiredDirs = [
 
 requiredDirs.forEach(dir => {
     try {
-        if (dir && !require('fs').existsSync(dir)) {
-            require('fs').mkdirSync(dir, { recursive: true });
+        if (dir && !fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
         }
     } catch (error) {
         console.error(`[CONFIG ERROR] Failed to create directory ${dir}:`, error.message);
@@ -167,4 +168,4 @@ requiredDirs.forEach(dir => {
     }
 });
 
-module.exports = config;
+export default config;

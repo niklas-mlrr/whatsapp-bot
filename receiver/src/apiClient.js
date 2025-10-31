@@ -1,9 +1,11 @@
-const axios = require('axios');
-const FormData = require('form-data');
-const fs = require('fs');
-const path = require('path');
-const config = require('./config');
-const logger = require('./logger').createChildLogger('apiClient');
+import axios from 'axios';
+import FormData from 'form-data';
+import fs from 'fs';
+import path from 'path';
+import config from './config.js';
+import { createChildLogger } from './logger.js';
+
+const logger = createChildLogger('apiClient');
 
 // Create an axios instance with default config
 const apiClient = axios.create({
@@ -419,7 +421,7 @@ const sendGroupMetadata = async (groupData) => {
     }
 };
 
-module.exports = { 
+export { 
     sendToBackend, 
     sendMessage, 
     uploadFile,

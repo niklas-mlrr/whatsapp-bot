@@ -1,11 +1,12 @@
-const { connectToWhatsApp, setReconnectCallback, storeSentMessage } = require('./src/whatsappClient');
-const express = require('express');
-const bodyParser = require('body-parser');
-const axios = require('axios');
-const fs = require('fs');
-const { promisify } = require('util');
-const stream = require('stream');
-const path = require('path');
+import { connectToWhatsApp, setReconnectCallback, storeSentMessage } from './src/whatsappClient.js';
+import express from 'express';
+import bodyParser from 'body-parser';
+import axios from 'axios';
+import fs from 'fs';
+import { promisify } from 'util';
+import stream from 'stream';
+import path from 'path';
+import * as whatsappClient from './src/whatsappClient.js';
 
 const pipeline = promisify(stream.pipeline);
 
@@ -653,7 +654,6 @@ async function start() {
             
             // Track the new delete message ID to ignore its status updates
             if (result?.key?.id) {
-                const whatsappClient = require('./src/whatsappClient');
                 whatsappClient.addEditMessageId(result.key.id);
                 console.log('Tracking delete message ID:', result.key.id);
             }
@@ -711,7 +711,6 @@ async function start() {
             
             // Track the new edit message ID to ignore its status updates
             if (result?.key?.id) {
-                const whatsappClient = require('./src/whatsappClient');
                 whatsappClient.addEditMessageId(result.key.id);
                 console.log('Tracking edit message ID:', result.key.id);
             }
