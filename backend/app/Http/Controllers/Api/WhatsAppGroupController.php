@@ -82,7 +82,16 @@ class WhatsAppGroupController extends Controller
                 ]
             );
 
-            if (!$group->wasRecentlyCreated) {
+            if ($group->wasRecentlyCreated) {
+                Log::channel('whatsapp')->info('Group created', [
+                    'group_id' => $group->id,
+                    'whatsapp_id' => $validated['group_id'],
+                    'name' => $validated['name'],
+                    'participant_count' => count($participantJids),
+                    'is_new' => true
+                ]);
+            } else {
+                // Update existing group
                 $metadata = $group->metadata ?? [];
                 $metadata['description'] = $validated['description'] ?? ($metadata['description'] ?? '');
                 $metadata['created_at'] = $validated['created_at'] ?? ($metadata['created_at'] ?? null);
@@ -109,9 +118,14 @@ class WhatsAppGroupController extends Controller
                 }
 
                 $group->update($updates);
-                Log::channel('whatsapp')->info('Group updated', ['group_id' => $group->id]);
-            } else {
-                Log::channel('whatsapp')->info('Group created', ['group_id' => $group->id]);
+                Log::channel('whatsapp')->info('Group updated', [
+                    'group_id' => $group->id,
+                    'whatsapp_id' => $validated['group_id'],
+                    'name' => $validated['name'],
+                    'existing_name' => $group->name,
+                    'participant_count' => count($participantJids),
+                    'is_new' => false
+                ]);
             }
 
             $operator = User::getFirstUser();

@@ -223,21 +223,42 @@ function convertLidToPhoneJid(sock, jid) {
 /**
  * Check if group metadata should be sent to backend (deduplication)
  * @param {string} groupId - The group ID
+ * @param {object} groupData - Optional group data to check community status
  * @returns {boolean} - True if metadata should be sent
  */
-function shouldSendGroupMetadata(groupId) {
+function shouldSendGroupMetadata(groupId, groupData = null) {
+    // Filter out community parent groups - they have the same name as their announcement group
+    // but we only want to store the actual announcement group
+    if (groupData && groupData.isCommunity) {
+        logger.debug({ 
+            groupId, 
+            groupName: groupData.subject,
+            reason: 'Community parent group filtered out'
+        }, 'Skipping community parent group - only storing announcement groups');
+        return false;
+    }
+    
+    // Also filter by group ID pattern - community parent groups often end with @g.us 
+    // but have specific patterns. For now, we'll rely on the isCommunity flag.
+    
     const now = Date.now();
     const lastSent = groupMetadataSendCache.get(groupId);
     
     if (!lastSent || (now - lastSent) > GROUP_METADATA_DEDUP_WINDOW_MS) {
         groupMetadataSendCache.set(groupId, now);
+        logger.debug({ 
+            groupId, 
+            timestamp: now,
+            action: 'ALLOWED' 
+        }, 'Group metadata send check passed');
         return true;
     }
     
     logger.debug({ 
         groupId, 
         lastSentAgo: Math.round((now - lastSent) / 1000) + 's',
-        dedupWindow: GROUP_METADATA_DEDUP_WINDOW_MS / 1000 + 's'
+        dedupWindow: GROUP_METADATA_DEDUP_WINDOW_MS / 1000 + 's',
+        action: 'SKIPPED'
     }, 'Skipping group metadata send (recently sent)');
     return false;
 }
@@ -447,7 +468,15 @@ async function connectToWhatsApp() {
                                 isSuperAdmin: p.admin === 'superadmin'
                             })).filter(pp => typeof pp.jid === 'string' && pp.jid.endsWith('@s.whatsapp.net'));
 
-                            if (shouldSendGroupMetadata(g.id)) {
+                            if (shouldSendGroupMetadata(g.id, g)) {
+                                logger.info({
+                                    groupId: g.id,
+                                    groupName: g.subject,
+                                    participantCount: participants.length,
+                                    source: 'connectToWhatsApp',
+                                    isCommunity: g.isCommunity || false
+                                }, 'Sending group metadata to backend');
+                                
                                 await apiClient.sendGroupMetadata({
                                     groupId: g.id,
                                     groupName: g.subject || 'Group',
@@ -513,13 +542,24 @@ async function connectToWhatsApp() {
                     logger.info({
                         groupId: group.id,
                         groupName: group.subject,
-                        participantCount: group.participants?.length || 0
+                        participantCount: group.participants?.length || 0,
+                        fullGroupStructure: JSON.stringify(group, null, 2)
                     }, 'Group metadata update received');
 
                     // Fetch group profile picture
                     const groupProfilePicture = await fetchContactProfilePicture(sock, group.id);
 
-                    if (shouldSendGroupMetadata(group.id)) {
+                    if (shouldSendGroupMetadata(group.id, group)) {
+                        logger.info({
+                            groupId: group.id,
+                            groupName: group.subject,
+                            participantCount: group.participants?.length || 0,
+                            source: 'groups.upsert',
+                            isCommunity: group.isCommunity || false,
+                            groupType: group.type || 'unknown',
+                            parentGroup: group.parentGroup || null
+                        }, 'Sending group metadata to backend');
+                        
                         await apiClient.sendGroupMetadata({
                             groupId: group.id,
                             groupName: group.subject || 'Group',
@@ -571,7 +611,7 @@ async function connectToWhatsApp() {
                             isSuperAdmin: p.admin === 'superadmin'
                         })).filter(pp => typeof pp.jid === 'string' && pp.jid.endsWith('@s.whatsapp.net')) || [];
 
-                        if (shouldSendGroupMetadata(groupMetadata.id)) {
+                        if (shouldSendGroupMetadata(groupMetadata.id, groupMetadata)) {
                             await apiClient.sendGroupMetadata({
                                 groupId: groupMetadata.id,
                                 groupName: groupMetadata.subject || 'Group',
@@ -685,7 +725,7 @@ async function connectToWhatsApp() {
                         isSuperAdmin: p.admin === 'superadmin'
                     })).filter(pp => typeof pp.jid === 'string' && pp.jid.endsWith('@s.whatsapp.net')) || [];
 
-                    if (shouldSendGroupMetadata(groupMetadata.id)) {
+                    if (shouldSendGroupMetadata(groupMetadata.id, groupMetadata)) {
                         await apiClient.sendGroupMetadata({
                             groupId: groupMetadata.id,
                             groupName: groupMetadata.subject || 'Group',
@@ -710,7 +750,7 @@ async function connectToWhatsApp() {
                             })).filter(pp => typeof pp.jid === 'string' && pp.jid.endsWith('@s.whatsapp.net')) || [];
                             
                             // Bypass deduplication for retry since we want to update with new participant mappings
-                            if (shouldSendGroupMetadata(refreshed.id)) {
+                            if (shouldSendGroupMetadata(refreshed.id, refreshed)) {
                                 await apiClient.sendGroupMetadata({
                                     groupId: refreshed.id,
                                     groupName: refreshed.subject || 'Group',

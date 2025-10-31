@@ -183,7 +183,7 @@ async function handleMessages(sock, m) {
                             isSuperAdmin: p.admin === 'superadmin'
                         })).filter(pp => typeof pp.jid === 'string' && pp.jid.endsWith('@s.whatsapp.net')) || [];
                         
-                        if (shouldSendGroupMetadata(groupMetadata.id)) {
+                        if (shouldSendGroupMetadata(groupMetadata.id, groupMetadata)) {
                             await sendGroupMetadata({
                                 groupId: groupMetadata.id,
                                 groupName: groupMetadata.subject || 'Group',
