@@ -51,6 +51,7 @@ class WhatsAppMessage extends Model
         'chat',
         'direction',
         'quoted_message',
+        'media_duration',
     ];
 
     protected static function boot()
@@ -311,6 +312,14 @@ class WhatsAppMessage extends Model
             'sender_name' => $quotedMsg->sender_name,
             'created_at' => $quotedMsg->created_at,
         ];
+    }
+    
+    /**
+     * Get the media duration (for audio/video messages).
+     */
+    public function getMediaDurationAttribute(): ?int
+    {
+        return $this->metadata['duration'] ?? null;
     }
     
     // Helper Methods

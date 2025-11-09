@@ -194,4 +194,33 @@ class WebSocketService
             ]);
         }
     }
+
+    public function contactUpdated(\App\Models\Contact $contact): void
+    {
+        try {
+            // Broadcast to a global contacts channel
+            Broadcast::event('contacts', 'contact.updated', [
+                'contact' => [
+                    'id' => $contact->id,
+                    'phone' => $contact->phone,
+                    'name' => $contact->name,
+                    'profile_picture_url' => $contact->profile_picture_url,
+                    'bio' => $contact->bio,
+                    'updated_at' => $contact->updated_at?->toIso8601String(),
+                ],
+                'event' => 'contact.updated',
+            ]);
+            
+            Log::channel('whatsapp')->info('Contact update broadcast sent', [
+                'contact_id' => $contact->id,
+                'phone' => $contact->phone,
+                'has_profile_picture' => !empty($contact->profile_picture_url),
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Failed to send contact update notification', [
+                'error' => $e->getMessage(),
+                'contact_id' => $contact->id,
+            ]);
+        }
+    }
 }

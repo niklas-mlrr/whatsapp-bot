@@ -47,9 +47,10 @@ class WhatsAppMessageRequest extends FormRequest
             'contextInfo' => ['sometimes', 'array'],
             'messageId' => ['nullable', 'string'],
             'isGroup' => ['sometimes', 'boolean'],
-            'messageTimestamp' => ['sometimes', 'string'],
+            'messageTimestamp' => ['sometimes', 'integer'], // Unix timestamp from WhatsApp
             'fileName' => ['nullable', 'string'],
             'mediaSize' => ['nullable', 'integer'],
+            'duration' => ['nullable', 'integer'],
             'reactedMessageId' => ['nullable', 'string'],
             'emoji' => ['nullable', 'string'],
             'senderJid' => ['nullable', 'string'],
@@ -77,10 +78,16 @@ class WhatsAppMessageRequest extends FormRequest
         ];
 
         // Add required validation for either 'from' or 'sender'
+        // Convert messageTimestamp (unix timestamp) to sending_time if present
+        $sendingTime = $this->input('sending_time') 
+            ?? $this->input('timestamp') 
+            ?? ($this->input('messageTimestamp') ? date('Y-m-d H:i:s', $this->input('messageTimestamp')) : null)
+            ?? now()->toDateTimeString();
+            
         $this->mergeIfMissing([
             'from' => $this->input('sender'),
             'sender' => $this->input('from'),
-            'sending_time' => $this->input('sending_time') ?? $this->input('timestamp') ?? now()->toDateTimeString(),
+            'sending_time' => $sendingTime,
             'content' => $this->input('content') ?? $this->input('body'),
         ]);
 

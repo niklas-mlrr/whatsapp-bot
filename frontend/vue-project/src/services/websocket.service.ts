@@ -101,12 +101,10 @@ export const useWebSockets = () => {
         isConnected.value = true;
         socketId.value = pusher.connection.socket_id;
         connectionCallbacks.forEach(callback => callback());
-        console.log('WebSocket connected');
       });
 
       pusher.connection.bind('disconnected', () => {
         isConnected.value = false;
-        console.log('WebSocket disconnected');
       });
 
       pusher.connection.bind('error', (error: any) => {

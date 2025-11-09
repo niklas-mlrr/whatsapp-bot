@@ -98,7 +98,13 @@
                       <div v-if="!viewingParticipant" class="space-y-2 max-h-72 overflow-y-auto pr-1">
                         <div v-for="p in participantsList" :key="p.jid" class="flex items-center justify-between p-2 rounded hover:bg-green-50 dark:hover:bg-zinc-700">
                           <div class="flex items-center gap-3 min-w-0">
-                            <div class="w-9 h-9 rounded-full bg-green-300 dark:bg-green-800 flex items-center justify-center text-green-700 dark:text-green-200 font-bold text-sm">
+                            <img 
+                              v-if="p.profilePictureUrl" 
+                              :src="p.profilePictureUrl" 
+                              :alt="p.display"
+                              class="w-9 h-9 rounded-full object-cover"
+                            />
+                            <div v-else class="w-9 h-9 rounded-full bg-green-300 dark:bg-green-800 flex items-center justify-center text-green-700 dark:text-green-200 font-bold text-sm">
                               {{ p.display.slice(0,2).toUpperCase() }}
                             </div>
                             <div class="min-w-0">
@@ -116,7 +122,13 @@
                       <div v-else class="mt-4">
                         <h5 class="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-2">Kontakt</h5>
                         <div class="flex items-center gap-3 mb-4">
-                          <div class="w-12 h-12 rounded-full bg-green-300 dark:bg-green-800 flex items-center justify-center text-green-700 dark:text-green-200 font-bold text-base">
+                          <img 
+                            v-if="participantProfilePictureUrl" 
+                            :src="participantProfilePictureUrl" 
+                            :alt="participantDisplay"
+                            class="w-12 h-12 rounded-full object-cover"
+                          />
+                          <div v-else class="w-12 h-12 rounded-full bg-green-300 dark:bg-green-800 flex items-center justify-center text-green-700 dark:text-green-200 font-bold text-base">
                             {{ participantDisplay.slice(0,2).toUpperCase() }}
                           </div>
                           <div>
@@ -149,6 +161,7 @@ import { ref, computed, watch, onMounted } from 'vue';
 import { Dialog, DialogPanel, DialogTitle, TransitionChild, TransitionRoot } from '@headlessui/vue';
 import { XMarkIcon } from '@heroicons/vue/24/outline';
 import apiClient from '@/services/api';
+import { API_CONFIG } from '@/config/api';
 
 const props = defineProps({
   isOpen: {
@@ -218,7 +231,7 @@ const phoneNumber = computed(() => {
 const profilePictureUrl = computed(() => {
   const c: any = baseChat.value;
   if (c?.contact_info?.profile_picture_url) {
-    return c.contact_info.profile_picture_url;
+    return proxyAvatarUrl(c.contact_info.profile_picture_url);
   }
   return null;
 });
@@ -246,7 +259,8 @@ const participantsList = computed(() => {
       const jid = String(p?.jid || '');
       const phone = jid.replace(/@.*$/, '');
       const display = resolveParticipantDisplay(jid);
-      return { jid, phone: phone.startsWith('+') ? phone : '+' + phone, isAdmin: !!(p?.isAdmin || p?.isSuperAdmin), display };
+      const profilePictureUrl = resolveParticipantProfilePicture(jid);
+      return { jid, phone: phone.startsWith('+') ? phone : '+' + phone, isAdmin: !!(p?.isAdmin || p?.isSuperAdmin), display, profilePictureUrl };
     });
   }
   const arr = Array.isArray(chat?.participants) ? chat.participants : [];
@@ -254,7 +268,8 @@ const participantsList = computed(() => {
     const jid = typeof raw === 'string' && raw.includes('@') ? raw : String(raw) + '@s.whatsapp.net';
     const phone = jid.replace(/@.*$/, '');
     const display = resolveParticipantDisplay(jid);
-    return { jid, phone: phone.startsWith('+') ? phone : '+' + phone, isAdmin: false, display };
+    const profilePictureUrl = resolveParticipantProfilePicture(jid);
+    return { jid, phone: phone.startsWith('+') ? phone : '+' + phone, isAdmin: false, display, profilePictureUrl };
   });
 });
 
@@ -278,6 +293,37 @@ function resolveParticipantDisplay(jid: string): string {
   return phone ? '+' + phone : jid;
 }
 
+// Proxy avatar URLs through backend to avoid CORS issues
+const proxyAvatarUrl = (url: string | null): string | null => {
+  if (!url) return null;
+  if (typeof url === 'string' && url.includes('ui-avatars.com')) return null;
+  try {
+    const u = new URL(String(url));
+    if (typeof window !== 'undefined' && u.origin === window.location.origin) return String(url);
+    return `${API_CONFIG.BASE_URL}/images/avatar?url=${encodeURIComponent(String(url))}`;
+  } catch {
+    return String(url);
+  }
+};
+
+function resolveParticipantProfilePicture(jid: string): string | null {
+  // First check contacts table
+  const normalizedJid = jid.includes('@') ? jid : jid + '@s.whatsapp.net';
+  const contact = contacts.value.find((c: any) => {
+    const contactPhone = c.phone.replace(/@.*$/, '');
+    const jidPhone = normalizedJid.replace(/@.*$/, '');
+    return contactPhone === jidPhone;
+  });
+  if (contact?.profile_picture_url) return proxyAvatarUrl(contact.profile_picture_url);
+  
+  // Then check chats
+  const chats: any[] = (props.allChats || []) as any[];
+  const found = chats.find((c: any) => !c.is_group && (c?.metadata?.whatsapp_id === normalizedJid || (Array.isArray(c?.participants) && c.participants.includes(normalizedJid))));
+  if (found?.contact_info?.profile_picture_url) return proxyAvatarUrl(found.contact_info.profile_picture_url);
+  
+  return null;
+}
+
 function resolveParticipantChat(jid: string): any | null {
   const chats: any[] = (props.allChats || []) as any[];
   const found = chats.find((c: any) => !c.is_group && (c?.metadata?.whatsapp_id === jid || (Array.isArray(c?.participants) && c.participants.includes(jid))));
@@ -293,6 +339,10 @@ const participantPhone = computed(() => {
 const participantBio = computed(() => {
   const c: any = participantChat.value;
   return c?.contact_info?.bio || c?.contact_info?.description || '';
+});
+const participantProfilePictureUrl = computed(() => {
+  const jid = selectedParticipant.value?.jid || '';
+  return jid ? resolveParticipantProfilePicture(jid) : null;
 });
 
 function viewParticipant(p: { jid: string }) {

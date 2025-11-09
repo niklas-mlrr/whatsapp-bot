@@ -37,9 +37,6 @@ class Chat extends Model
         'metadata',
         'created_by',
         'participants',
-        'contact_profile_picture_url',
-        'contact_description',
-        'contact_info_updated_at',
     ];
 
     /**
@@ -49,7 +46,6 @@ class Chat extends Model
      */
     protected $dates = [
         'last_message_at',
-        'contact_info_updated_at',
         'created_at',
         'updated_at',
     ];
@@ -254,23 +250,57 @@ class Chat extends Model
 
     /**
      * Get contact info (profile picture and description).
+     * For groups: returns group metadata
+     * For direct chats: returns contact info from contacts table
      */
     public function getContactInfoAttribute(): array
     {
         if ($this->is_group) {
+            // For groups, get from metadata
+            $metadata = is_array($this->metadata) ? $this->metadata : [];
             return [
-                'profile_picture_url' => $this->contact_profile_picture_url,
-                'description' => $this->contact_description,
+                'profile_picture_url' => $metadata['profile_picture_url'] ?? null,
+                'description' => $metadata['description'] ?? null,
                 'type' => 'group',
             ];
         }
 
-        // For direct chats, get the other participant's info
-        $otherUser = $this->otherUser;
-        if ($otherUser) {
+        // For direct chats, get contact info from contacts table
+        $user = User::getFirstUser();
+        if (!$user) {
             return [
-                'profile_picture_url' => $otherUser->profile_picture_url,
-                'bio' => $otherUser->bio,
+                'profile_picture_url' => null,
+                'description' => null,
+                'type' => 'unknown',
+            ];
+        }
+
+        // Get the phone number from participants or metadata
+        $phoneNumber = null;
+        if (!empty($this->participants) && is_array($this->participants)) {
+            $phoneNumber = $this->participants[0] ?? null;
+        }
+        if (!$phoneNumber && is_array($this->metadata)) {
+            $phoneNumber = $this->metadata['whatsapp_id'] ?? null;
+        }
+
+        if (!$phoneNumber) {
+            return [
+                'profile_picture_url' => null,
+                'description' => null,
+                'type' => 'unknown',
+            ];
+        }
+
+        // Find contact by phone number
+        $contact = \App\Models\Contact::where('user_id', $user->id)
+            ->where('phone', $phoneNumber)
+            ->first();
+
+        if ($contact) {
+            return [
+                'profile_picture_url' => $contact->profile_picture_url,
+                'description' => $contact->bio,
                 'type' => 'contact',
             ];
         }

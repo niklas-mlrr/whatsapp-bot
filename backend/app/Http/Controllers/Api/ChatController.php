@@ -60,10 +60,7 @@ class ChatController extends Controller
                     c.type,
                     c.unread_count,
                     c.participants,
-                    c.created_by,
-                    c.contact_profile_picture_url,
-                    c.contact_description,
-                    c.contact_info_updated_at
+                    c.created_by
                 FROM chats c
                 LEFT JOIN chat_user cu ON c.id = cu.chat_id AND cu.user_id = ?
                 WHERE (
@@ -113,10 +110,6 @@ class ChatController extends Controller
                     'created_by' => $chat->created_by,
                     'created_at' => $chat->created_at,
                     'updated_at' => $chat->updated_at,
-                    // Ensure contact info fields are present on the model instance
-                    'contact_profile_picture_url' => $chat->contact_profile_picture_url ?? null,
-                    'contact_description' => $chat->contact_description ?? null,
-                    'contact_info_updated_at' => $chat->contact_info_updated_at ?? null,
                 ]);
                 
                 // Format display name for phone numbers
@@ -1681,25 +1674,47 @@ class ChatController extends Controller
                     continue;
                 }
                 
-                // Look up contact name from chats table first - this is the primary source
-                $contactChat = Chat::where('is_group', false)
-                    ->where(function($query) use ($participant, $phoneNumber) {
-                        $query->whereJsonContains('participants', $participant)
-                              ->orWhereJsonContains('participants', $phoneNumber)
-                              ->orWhereJsonContains('participants', '+' . $phoneNumber);
-                    })
-                    ->first();
+                // Look up contact from contacts table first - this is the primary source
+                $appUser = User::getFirstUser();
+                $contact = null;
+                $avatarUrl = null;
+                
+                if ($appUser) {
+                    $contact = \App\Models\Contact::where('user_id', $appUser->id)
+                        ->where(function($query) use ($participant, $phoneNumber) {
+                            $query->where('phone', $participant)
+                                  ->orWhere('phone', $phoneNumber . '@s.whatsapp.net')
+                                  ->orWhere('phone', '+' . $phoneNumber);
+                        })
+                        ->first();
+                }
                 
                 $contactName = null;
-                if ($contactChat && $contactChat->name && $contactChat->name !== $participant) {
-                    // Check if the name is not just a phone number
-                    $isPhoneNumber = preg_match('/^[+\d\s\-_@.]+$/', $contactChat->name);
-                    if (!$isPhoneNumber) {
-                        $contactName = $contactChat->name;
+                if ($contact) {
+                    $contactName = $contact->name;
+                    $avatarUrl = $contact->profile_picture_url;
+                }
+                
+                // Fallback to chats table for name
+                if (!$contactName) {
+                    $contactChat = Chat::where('is_group', false)
+                        ->where(function($query) use ($participant, $phoneNumber) {
+                            $query->whereJsonContains('participants', $participant)
+                                  ->orWhereJsonContains('participants', $phoneNumber)
+                                  ->orWhereJsonContains('participants', '+' . $phoneNumber);
+                        })
+                        ->first();
+                    
+                    if ($contactChat && $contactChat->name && $contactChat->name !== $participant) {
+                        // Check if the name is not just a phone number
+                        $isPhoneNumber = preg_match('/^[+\d\s\-_@.]+$/', $contactChat->name);
+                        if (!$isPhoneNumber) {
+                            $contactName = $contactChat->name;
+                        }
                     }
                 }
                 
-                // Only fallback to user table if we have NO contact name from chats table
+                // Only fallback to user table if we have NO contact name
                 // AND the user has a real name (not "WhatsApp User")
                 if (!$contactName) {
                     $userRecord = User::where('phone', $phoneNumber)
@@ -1728,7 +1743,7 @@ class ChatController extends Controller
                     'id' => $phoneNumber,
                     'name' => $displayName,
                     'phone' => $participant,
-                    'avatar_url' => $contactChat->contact_profile_picture_url ?? null
+                    'avatar_url' => $avatarUrl
                 ];
             }
             

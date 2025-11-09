@@ -364,40 +364,9 @@ class WhatsAppMessageController extends Controller
             return;
         }
 
-        // Check if we need to update the contact info
-        $shouldUpdate = false;
-        $updates = [];
-
-        // Check if contact info was never updated or was updated more than 24 hours ago
-        if (!$lastUpdated || $lastUpdated->lt(now()->subDay())) {
-            $shouldUpdate = true;
-            \Log::debug('Contact info should be updated (never or >24h old)');
-        }
-
-        // If we have a profile picture URL and it's different from the current one
-        if (!empty($data['senderProfilePictureUrl']) && 
-            $chat->contact_profile_picture_url !== $data['senderProfilePictureUrl']) {
-            $updates['contact_profile_picture_url'] = $data['senderProfilePictureUrl'];
-            $shouldUpdate = true;
-            \Log::debug('Updating profile picture', ['url_length' => strlen($data['senderProfilePictureUrl'])]);
-        }
-
-        // If we have a bio and it's different from the current one
-        if (!empty($data['senderBio']) && 
-            $chat->contact_description !== $data['senderBio']) {
-            $updates['contact_description'] = $data['senderBio'];
-            $shouldUpdate = true;
-            \Log::debug('Updating bio', ['bio_length' => strlen($data['senderBio'])]);
-        }
-
-        // Update the contact info if needed
-        if ($shouldUpdate && !empty($updates)) {
-            // Only set contact_info_updated_at if the column exists
-            if (\Illuminate\Support\Facades\Schema::hasColumn('chats', 'contact_info_updated_at')) {
-                $updates['contact_info_updated_at'] = now();
-            }
-            $chat->update($updates);
-        }
+        // This method is now deprecated - contact info is handled in the store method
+        // by creating/updating contacts table entries
+        \Log::debug('Contact info update called (deprecated - now handled via contacts table)');
     }
 
     // POST /api/messages
@@ -453,7 +422,10 @@ class WhatsAppMessageController extends Controller
         // 1) Resolve or create user by phone - safely
         $user = $this->findOrCreateUserSafely($data['sender']);
         
-        // Update user profile picture and bio if provided
+        // Create or update contact entry with profile info
+        $this->createOrUpdateContact($user, $data);
+        
+        // Also update user profile for backward compatibility
         if (!empty($data['senderProfilePictureUrl']) || !empty($data['senderBio'])) {
             $updateData = [];
             if (!empty($data['senderProfilePictureUrl'])) {
@@ -529,17 +501,11 @@ class WhatsAppMessageController extends Controller
                     'is_group' => false,
                     'created_by' => $user->id,
                     'participants' => [$normalizedChatId, 'me'],
-                    'contact_profile_picture_url' => $data['senderProfilePictureUrl'] ?? null,
                     'metadata' => [
                         'whatsapp_id' => $normalizedChatId,
                         'created_by' => $user->id,
                     ],
                 ]);
-            } else {
-                // Update existing chat with profile picture if provided
-                if (!empty($data['senderProfilePictureUrl']) && empty($chat->contact_profile_picture_url)) {
-                    $chat->update(['contact_profile_picture_url' => $data['senderProfilePictureUrl']]);
-                }
             }
         }
 
@@ -1673,5 +1639,83 @@ class WhatsAppMessageController extends Controller
             'message' => 'Vote recorded',
             'data' => (new WhatsAppMessageResource($message))->toArray(request())
         ]);
+    }
+
+    /**
+     * Create or update contact entry with profile information.
+     */
+    private function createOrUpdateContact($user, array $data): void
+    {
+        try {
+            $appUser = User::getFirstUser();
+            if (!$appUser) {
+                \Log::warning('Cannot create/update contact: no app user found');
+                return;
+            }
+
+            // Extract phone number from sender
+            $phone = $data['sender'];
+            
+            // Check if contact already exists
+            $existingContact = \App\Models\Contact::where('user_id', $appUser->id)
+                ->where('phone', $phone)
+                ->first();
+
+            if ($existingContact) {
+                // Contact exists - only update profile picture and bio, keep existing name
+                $updates = [];
+                
+                if (!empty($data['senderProfilePictureUrl']) && $existingContact->profile_picture_url !== $data['senderProfilePictureUrl']) {
+                    $updates['profile_picture_url'] = $data['senderProfilePictureUrl'];
+                }
+                if (!empty($data['senderBio']) && $existingContact->bio !== $data['senderBio']) {
+                    $updates['bio'] = $data['senderBio'];
+                }
+
+                if (!empty($updates)) {
+                    $existingContact->update($updates);
+                    \Log::info('Updated existing contact profile info', [
+                        'contact_id' => $existingContact->id,
+                        'phone' => $phone,
+                        'name' => $existingContact->name,
+                        'updated_fields' => array_keys($updates),
+                    ]);
+                }
+            } else {
+                // Contact doesn't exist - create new one with generated name
+                // Count existing contacts to generate sequential name
+                $contactCount = \App\Models\Contact::where('user_id', $appUser->id)->count();
+                $generatedName = 'Unbekannter Benutzer ' . ($contactCount + 1);
+
+                $contactData = [
+                    'user_id' => $appUser->id,
+                    'phone' => $phone,
+                    'name' => $generatedName,
+                ];
+
+                // Add profile info if provided
+                if (!empty($data['senderProfilePictureUrl'])) {
+                    $contactData['profile_picture_url'] = $data['senderProfilePictureUrl'];
+                }
+                if (!empty($data['senderBio'])) {
+                    $contactData['bio'] = $data['senderBio'];
+                }
+
+                $contact = \App\Models\Contact::create($contactData);
+
+                \Log::info('Created new contact with profile info', [
+                    'contact_id' => $contact->id,
+                    'phone' => $phone,
+                    'name' => $generatedName,
+                    'has_picture' => !empty($data['senderProfilePictureUrl']),
+                    'has_bio' => !empty($data['senderBio']),
+                ]);
+            }
+        } catch (\Throwable $e) {
+            \Log::error('Failed to create/update contact', [
+                'error' => $e->getMessage(),
+                'sender' => $data['sender'] ?? null,
+            ]);
+        }
     }
 }

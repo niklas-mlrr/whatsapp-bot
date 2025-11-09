@@ -139,7 +139,6 @@ export const useChatWebSockets = () => {
     // Set up new connection handlers
     connection.bind('connected', () => {
       isConnected.value = true;
-      console.log('WebSocket connected');
       
       // Notify all connection listeners
       connectionListeners.forEach(callback => {
@@ -153,7 +152,6 @@ export const useChatWebSockets = () => {
     
     connection.bind('disconnected', () => {
       isConnected.value = false;
-      console.log('WebSocket disconnected');
     });
     
     connection.bind('error', (error: Error) => {
@@ -444,8 +442,6 @@ export const useChatWebSockets = () => {
         messageListeners.value = {};
         typingListeners.value = {};
         readReceiptListeners.value = {};
-        
-        console.log('Disconnected from WebSocket server');
       } catch (error) {
         console.error('Error during WebSocket disconnection:', error);
       }

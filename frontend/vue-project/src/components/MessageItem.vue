@@ -94,9 +94,7 @@
         </template>
         
         <template v-else-if="message.type === 'text' || !message.type">
-          <span class="whitespace-pre-wrap break-words">
-            {{ message.content }}
-          </span>
+          <span class="whitespace-pre-wrap break-words" v-html="message.content"></span>
         </template>
         
         <!-- Poll message -->
@@ -190,7 +188,7 @@
               </div>
             </div>
           </div>
-          <span v-if="message.content" class="block mt-2 whitespace-pre-line">{{ message.content }}</span>
+          <span v-if="message.content" class="block mt-2 whitespace-pre-line" v-html="message.content"></span>
         </template>
         
         <!-- Document message -->
@@ -220,7 +218,7 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
               </svg>
             </a>
-            <span v-if="message.content" class="block mt-2 whitespace-pre-line">{{ message.content }}</span>
+            <span v-if="message.content" class="block mt-2 whitespace-pre-line" v-html="message.content"></span>
           </div>
         </template>
         
@@ -232,10 +230,10 @@
                 @click="toggleAudioPlayback"
                 class="p-2 bg-gray-200 dark:bg-zinc-600 rounded-full mr-3 focus:outline-none hover:bg-gray-300 dark:hover:bg-zinc-500 transition-colors"
               >
-                <svg v-if="!isPlayingAudio" class="w-6 h-6 text-gray-700" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+                <svg v-if="!isPlayingAudio" class="w-6 h-6 text-gray-700 dark:text-gray-200" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
                   <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"></path>
                 </svg>
-                <svg v-else class="w-6 h-6 text-gray-700" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+                <svg v-else class="w-6 h-6 text-gray-700 dark:text-gray-200" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
                   <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"></path>
                 </svg>
               </button>
@@ -243,20 +241,25 @@
                 <div class="w-full bg-gray-200 rounded-full h-1.5 mb-1">
                   <div class="bg-blue-600 h-1.5 rounded-full" :style="{ width: audioProgress + '%' }"></div>
                 </div>
-                <div class="flex justify-between text-xs text-gray-500">
-                  <span>{{ formatAudioTime(currentAudioTime) }}</span>
-                  <span>{{ formatAudioTime(audioDuration) }}</span>
+                <div class="text-xs text-gray-500 text-center">
+                  <span>{{ formatAudioTime(currentAudioTime) }} / {{ formatAudioTime(audioDuration) }}</span>
                 </div>
               </div>
             </div>
             <audio 
               ref="audioPlayer" 
-              :src="mediaUrl" 
+              :src="mediaUrl"
+              preload="auto"
               @timeupdate="updateAudioProgress"
               @loadedmetadata="setAudioDuration"
+              @loadeddata="setAudioDuration"
+              @durationchange="setAudioDuration"
+              @canplay="setAudioDuration"
               @ended="onAudioEnded"
+              @play="isPlayingAudio = true"
+              @pause="isPlayingAudio = false"
             ></audio>
-            <span v-if="message.content" class="block mt-2 whitespace-pre-line">{{ message.content }}</span>
+            <span v-if="message.content" class="block mt-2 whitespace-pre-line" v-html="message.content"></span>
           </div>
         </template>
         
@@ -280,7 +283,7 @@
               </svg>
             </button>
           </div>
-          <span v-if="message.content" class="block mt-2 whitespace-pre-line">{{ message.content }}</span>
+          <span v-if="message.content" class="block mt-2 whitespace-pre-line" v-html="message.content"></span>
         </template>
         
         <!-- Location message -->
@@ -513,7 +516,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, defineComponent } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, defineComponent } from 'vue'
 import { API_CONFIG } from '@/config/api'
 import { useChatStore } from '@/stores/chat'
 import { useAuthStore } from '@/stores/auth'
@@ -1035,11 +1038,11 @@ function formatFileSize(bytes: number = 0) {
 }
 
 function formatAudioTime(seconds: number) {
-  if (isNaN(seconds)) return '0:00'
+  if (isNaN(seconds) || !isFinite(seconds)) return '00:00'
   
   const minutes = Math.floor(seconds / 60)
   const remainingSeconds = Math.floor(seconds % 60)
-  return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`
+  return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`
 }
 
 // Audio player methods
@@ -1065,14 +1068,55 @@ function updateAudioProgress() {
   const { currentTime, duration } = audioPlayer.value
   currentAudioTime.value = currentTime
   
-  if (duration > 0) {
-    audioProgress.value = (currentTime / duration) * 100
+  // Use element duration if valid, otherwise use stored duration
+  const validDuration = (duration && isFinite(duration)) ? duration : audioDuration.value
+  
+  if (validDuration > 0) {
+    audioProgress.value = (currentTime / validDuration) * 100
   }
 }
 
 function setAudioDuration() {
   if (!audioPlayer.value) return
-  audioDuration.value = audioPlayer.value.duration || 0
+  
+  // Try to get duration from audio element first
+  const elementDuration = audioPlayer.value.duration
+  
+  // If duration is valid (not NaN or Infinity), use it
+  if (elementDuration && isFinite(elementDuration) && elementDuration > 0) {
+    audioDuration.value = elementDuration
+    return
+  }
+  
+  // Fallback to media_duration field from backend
+  if (props.message.media_duration && typeof props.message.media_duration === 'number' && props.message.media_duration > 0) {
+    audioDuration.value = props.message.media_duration
+    return
+  }
+  
+  // Fallback to stored duration in metadata
+  const metadata = props.message.metadata
+  if (metadata) {
+    let duration = null
+    if (typeof metadata === 'string') {
+      try {
+        const parsed = JSON.parse(metadata)
+        duration = parsed.duration
+      } catch (e) {
+        // Invalid JSON
+      }
+    } else if (typeof metadata === 'object') {
+      duration = metadata.duration
+    }
+    
+    if (duration && typeof duration === 'number' && duration > 0) {
+      audioDuration.value = duration
+      return
+    }
+  }
+  
+  // If still no duration, the audio element will update it when metadata loads
+  // Keep audioDuration at 0 for now
 }
 
 function onAudioEnded() {
@@ -1382,13 +1426,71 @@ function handleClickOutside(event: MouseEvent) {
   }
 }
 
+// Function to initialize audio duration
+function initializeAudioDuration() {
+  const isAudio = props.message.type === 'audio' || props.message.mimetype?.startsWith('audio/')
+  if (isAudio) {
+    // First priority: Try to get duration from media_duration field (immediate display)
+    if (props.message.media_duration && typeof props.message.media_duration === 'number' && props.message.media_duration > 0) {
+      audioDuration.value = props.message.media_duration
+      return // Duration found, no need to continue
+    }
+    
+    // Second priority: Try to get duration from metadata (immediate display)
+    const metadata = props.message.metadata
+    if (metadata) {
+      let duration = null
+      if (typeof metadata === 'string') {
+        try {
+          const parsed = JSON.parse(metadata)
+          duration = parsed.duration
+        } catch (e) {
+          // Invalid JSON
+        }
+      } else if (typeof metadata === 'object') {
+        duration = metadata.duration
+      }
+      
+      if (duration && typeof duration === 'number' && duration > 0) {
+        audioDuration.value = duration
+        return // Duration found, no need to continue
+      }
+    }
+    
+    // Third priority: Try to get from audio element
+    setAudioDuration()
+    
+    // Force load the audio metadata
+    if (audioPlayer.value) {
+      audioPlayer.value.load()
+      
+      // Retry getting duration after a short delay if still not available
+      setTimeout(() => {
+        if (audioDuration.value === 0) {
+          setAudioDuration()
+        }
+      }, 100)
+      
+      // Final retry after 500ms
+      setTimeout(() => {
+        if (audioDuration.value === 0) {
+          setAudioDuration()
+        }
+      }, 500)
+    }
+  }
+}
+
+// Watch for message changes (when component is reused for different messages)
+watch(() => props.message.id, () => {
+  initializeAudioDuration()
+})
+
 // Lifecycle
 onMounted(() => {
   document.addEventListener('click', handleClickOutside)
-  // Initialize audio duration if available
-  if (audioPlayer.value && audioPlayer.value.readyState > 0) {
-    setAudioDuration()
-  }
+  // Initialize audio duration from metadata or audio element
+  initializeAudioDuration()
 })
 
 onUnmounted(() => {

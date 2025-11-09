@@ -78,8 +78,6 @@ class WhatsAppGroupController extends Controller
                         'participants' => $validated['participants'] ?? [],
                         'profile_picture_url' => $validated['profile_picture_url'] ?? null,
                     ],
-                    'contact_profile_picture_url' => $validated['profile_picture_url'] ?? null,
-                    'contact_info_updated_at' => !empty($validated['profile_picture_url']) ? now() : null,
                 ]
             );
 
@@ -109,13 +107,6 @@ class WhatsAppGroupController extends Controller
                 ];
                 if (!empty($participantJids)) {
                     $updates['participants'] = $participantJids;
-                }
-                // If profile picture changed, update direct field and bump timestamp
-                if (array_key_exists('profile_picture_url', $validated) && !empty($validated['profile_picture_url'])) {
-                    if ($group->contact_profile_picture_url !== $validated['profile_picture_url']) {
-                        $updates['contact_profile_picture_url'] = $validated['profile_picture_url'];
-                        $updates['contact_info_updated_at'] = now();
-                    }
                 }
 
                 $group->update($updates);

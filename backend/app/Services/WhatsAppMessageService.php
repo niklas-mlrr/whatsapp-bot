@@ -92,6 +92,9 @@ class WhatsAppMessageService
                 if ($message) {
                     $this->webSocketService->newMessage($message);
                     
+                    // Refresh chat to clear any dirty attributes from previous operations
+                    $chat->refresh();
+                    
                     // Update chat's last message reference
                     $chat->update([
                         'last_message_id' => $message->id,
@@ -326,6 +329,9 @@ class WhatsAppMessageService
             // Resolve reply_to_message_id if this is a reply
             $replyToMessageId = $this->resolveReplyToMessageId($data->quotedMessage);
 
+            // Use duration from WhatsApp if available, otherwise try to extract with ffprobe
+            $duration = $data->duration ?? $this->getAudioDuration(storage_path('app/public/' . $filename));
+
             return WhatsAppMessage::create([
                 'sender' => $data->sender,
                 'sender_id' => $data->sender_id,
@@ -344,7 +350,7 @@ class WhatsAppMessageService
                     'original_mimetype' => $data->mimetype,
                     'file_size' => $data->mediaSize ?? Storage::disk('public')->size($filename),
                     'media_path' => $filename,
-                    'duration' => $this->getAudioDuration(storage_path('app/public/' . $filename)),
+                    'duration' => $duration,
                     'filename' => $data->fileName,
                     'message_id' => $data->messageId,
                 ],
@@ -871,67 +877,34 @@ class WhatsAppMessageService
     }
 
     /**
-     * Update contact info (profile picture, bio) for direct chats and user.
-     * Applies a per-day throttle via Chat.contact_info_updated_at and also fills missing fields.
+     * Update contact info (profile picture, bio) for both direct chats and group messages.
+     * Creates or updates contact entries in the contacts table.
      */
     private function updateContactInfoIfNeeded(Chat $chat, User $user, WhatsAppMessageData $data): void
     {
         try {
-            // Only handle direct chats
-            if ($chat->is_group) {
-                return;
-            }
-
             $hasPicture = !empty($data->senderProfilePictureUrl);
             $hasBio = !empty($data->senderBio);
 
             if (!$hasPicture && !$hasBio) {
-                Log::channel('whatsapp')->debug('No contact info provided by receiver for this message');
+                Log::channel('whatsapp')->debug('No contact info provided by receiver for this message', [
+                    'chat_id' => $chat->id,
+                    'is_group' => $chat->is_group,
+                ]);
                 return;
-            }
-
-            $lastUpdated = $chat->contact_info_updated_at;
-            if (is_string($lastUpdated)) {
-                // Ensure we have a Carbon instance even if attribute was not cast
-                $lastUpdated = \Illuminate\Support\Carbon::parse($lastUpdated);
-            }
-            $updatedToday = $lastUpdated ? $lastUpdated->isSameDay(now()) : false;
-            $missingChatPicture = empty($chat->contact_profile_picture_url) && $hasPicture;
-            $missingChatBio = empty($chat->contact_description) && $hasBio;
-            $needsDailyRefresh = !$updatedToday;
-
-            // Decide whether to update chat fields
-            $chatUpdates = [];
-            if ($hasPicture && ($missingChatPicture || $needsDailyRefresh || $chat->contact_profile_picture_url !== $data->senderProfilePictureUrl)) {
-                $chatUpdates['contact_profile_picture_url'] = $data->senderProfilePictureUrl;
-            }
-            if ($hasBio && ($missingChatBio || $needsDailyRefresh || $chat->contact_description !== $data->senderBio)) {
-                $chatUpdates['contact_description'] = $data->senderBio;
             }
 
             Log::channel('whatsapp')->debug('Contact info update decision', [
                 'chat_id' => $chat->id,
+                'is_group' => $chat->is_group,
                 'has_picture_in_payload' => $hasPicture,
                 'has_bio_in_payload' => $hasBio,
-                'last_updated' => $lastUpdated,
-                'updated_today' => $updatedToday,
-                'needs_daily_refresh' => $needsDailyRefresh,
-                'will_update_chat' => !empty($chatUpdates),
             ]);
 
-            if (!empty($chatUpdates)) {
-                // Only set contact_info_updated_at if the column exists
-                if (\Illuminate\Support\Facades\Schema::hasColumn('chats', 'contact_info_updated_at')) {
-                    $chatUpdates['contact_info_updated_at'] = now();
-                }
-                $chat->update($chatUpdates);
-                Log::channel('whatsapp')->info('Updated chat contact info', [
-                    'chat_id' => $chat->id,
-                    'updated_fields' => array_keys($chatUpdates),
-                ]);
-            }
+            // Create or update the contact entry (works for both direct and group messages)
+            $this->createOrUpdateContact($user, $data);
 
-            // Always update user's own profile fields if provided
+            // Also update user's own profile fields if provided (for backward compatibility)
             $userUpdates = [];
             if ($hasPicture && $user->profile_picture_url !== $data->senderProfilePictureUrl) {
                 $userUpdates['profile_picture_url'] = $data->senderProfilePictureUrl;
@@ -946,9 +919,6 @@ class WhatsAppMessageService
                     'updated_fields' => array_keys($userUpdates),
                 ]);
             }
-
-            // Also update the contact entry if it exists
-            $this->updateContactIfExists($user, $data);
         } catch (\Throwable $e) {
             Log::channel('whatsapp')->warning('Failed updating contact info (non-fatal)', [
                 'error' => $e->getMessage(),
@@ -957,49 +927,87 @@ class WhatsAppMessageService
     }
 
     /**
-     * Update contact entry if it exists for this user.
+     * Create or update contact entry with profile information.
      * Contacts are independent from chats, so we sync profile data separately.
      */
-    private function updateContactIfExists(User $sender, WhatsAppMessageData $data): void
+    private function createOrUpdateContact(User $sender, WhatsAppMessageData $data): void
     {
         try {
             $appUser = User::getFirstUser();
             if (!$appUser) {
+                Log::channel('whatsapp')->warning('Cannot create/update contact: no app user found');
                 return;
             }
 
-            // Find contact by phone number
-            $contact = \App\Models\Contact::where('user_id', $appUser->id)
-                ->where('phone', $data->sender)
+            // Extract phone number from sender
+            $phone = $data->sender;
+            
+            // Check if contact already exists
+            $existingContact = \App\Models\Contact::where('user_id', $appUser->id)
+                ->where('phone', $phone)
                 ->first();
 
-            if (!$contact) {
-                Log::channel('whatsapp')->debug('No contact entry found for this sender', [
-                    'sender' => $data->sender,
-                ]);
-                return;
-            }
+            if ($existingContact) {
+                // Contact exists - only update profile picture and bio, keep existing name
+                $updates = [];
+                
+                if (!empty($data->senderProfilePictureUrl) && $existingContact->profile_picture_url !== $data->senderProfilePictureUrl) {
+                    $updates['profile_picture_url'] = $data->senderProfilePictureUrl;
+                }
+                if (!empty($data->senderBio) && $existingContact->bio !== $data->senderBio) {
+                    $updates['bio'] = $data->senderBio;
+                }
 
-            // Update contact with latest profile info
-            $contactUpdates = [];
-            if (!empty($data->senderProfilePictureUrl) && $contact->profile_picture_url !== $data->senderProfilePictureUrl) {
-                $contactUpdates['profile_picture_url'] = $data->senderProfilePictureUrl;
-            }
-            if (!empty($data->senderBio) && $contact->bio !== $data->senderBio) {
-                $contactUpdates['bio'] = $data->senderBio;
-            }
+                if (!empty($updates)) {
+                    $existingContact->update($updates);
+                    Log::channel('whatsapp')->info('Updated existing contact profile info', [
+                        'contact_id' => $existingContact->id,
+                        'phone' => $phone,
+                        'name' => $existingContact->name,
+                        'updated_fields' => array_keys($updates),
+                    ]);
+                    
+                    // Broadcast contact update via WebSocket
+                    $this->webSocketService->contactUpdated($existingContact);
+                }
+            } else {
+                // Contact doesn't exist - create new one with generated name
+                // Count existing contacts to generate sequential name
+                $contactCount = \App\Models\Contact::where('user_id', $appUser->id)->count();
+                $generatedName = 'Unbekannter Benutzer ' . ($contactCount + 1);
 
-            if (!empty($contactUpdates)) {
-                $contact->update($contactUpdates);
-                Log::channel('whatsapp')->info('Updated contact profile info from message', [
+                $contactData = [
+                    'user_id' => $appUser->id,
+                    'phone' => $phone,
+                    'name' => $generatedName,
+                ];
+
+                // Add profile info if provided
+                if (!empty($data->senderProfilePictureUrl)) {
+                    $contactData['profile_picture_url'] = $data->senderProfilePictureUrl;
+                }
+                if (!empty($data->senderBio)) {
+                    $contactData['bio'] = $data->senderBio;
+                }
+
+                $contact = \App\Models\Contact::create($contactData);
+
+                Log::channel('whatsapp')->info('Created new contact with profile info', [
                     'contact_id' => $contact->id,
-                    'contact_name' => $contact->name,
-                    'updated_fields' => array_keys($contactUpdates),
+                    'phone' => $phone,
+                    'name' => $generatedName,
+                    'has_picture' => !empty($data->senderProfilePictureUrl),
+                    'has_bio' => !empty($data->senderBio),
                 ]);
+                
+                // Broadcast new contact via WebSocket
+                $this->webSocketService->contactUpdated($contact);
             }
         } catch (\Throwable $e) {
-            Log::channel('whatsapp')->warning('Failed updating contact entry (non-fatal)', [
+            Log::channel('whatsapp')->error('Failed to create/update contact', [
                 'error' => $e->getMessage(),
+                'sender' => $data->sender ?? null,
+                'trace' => $e->getTraceAsString(),
             ]);
         }
     }

@@ -19,6 +19,7 @@ class WhatsAppMessageData
         public ?bool $isGroup = false,
         public ?string $fileName = null,
         public ?int $mediaSize = null,
+        public ?int $duration = null,
         public ?string $reactedMessageId = null,
         public ?string $emoji = null,
         public ?string $senderJid = null,
@@ -48,8 +49,11 @@ class WhatsAppMessageData
         // Get content (either from 'content' or 'body' field)
         $content = $validated['content'] ?? $validated['body'] ?? '';
         
-        // Get timestamp (either from 'sending_time' or 'timestamp' or current time)
-        $sendingTime = $validated['sending_time'] ?? $validated['timestamp'] ?? now()->toDateTimeString();
+        // Get timestamp (either from 'sending_time', 'timestamp', 'messageTimestamp' or current time)
+        $sendingTime = $validated['sending_time'] 
+            ?? $validated['timestamp'] 
+            ?? (isset($validated['messageTimestamp']) ? date('Y-m-d H:i:s', $validated['messageTimestamp']) : null)
+            ?? now()->toDateTimeString();
         
         // If we still don't have a sender or chat, throw an exception
         if (!$sender || !$chat) {
@@ -73,6 +77,7 @@ class WhatsAppMessageData
             isGroup: (bool)($validated['isGroup'] ?? false),
             fileName: $validated['fileName'] ?? null,
             mediaSize: $validated['mediaSize'] ?? null,
+            duration: $validated['duration'] ?? null,
             reactedMessageId: $validated['reactedMessageId'] ?? null,
             emoji: $validated['emoji'] ?? null,
             senderJid: $validated['senderJid'] ?? null,

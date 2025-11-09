@@ -38,7 +38,6 @@ apiClient.interceptors.response.use(
       originalRequest._retry = true;
       
       // For now, just log the user out since we don't have token refresh
-      console.log('Token expired or invalid, logging out');
       // Clear token and redirect to login
       localStorage.removeItem('token');
       window.location.href = '/login';

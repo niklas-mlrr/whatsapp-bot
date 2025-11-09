@@ -75,30 +75,15 @@ async function handleMessages(sock, m) {
                     continue;
                 }
                 
-                // Fetch sender profile picture and bio for direct chats
+                // Fetch sender profile picture and bio
+                // For direct chats: use remoteJid
+                // For group chats: use participant JID (will be extracted later)
                 let senderProfilePicture = null;
                 let senderBio = null;
-                if (!isGroup) {
-                    logger.debug({ remoteJid }, 'Attempting to fetch sender profile info for direct chat');
-                    // Already imported at top: fetchContactProfilePicture, fetchContactStatus
-                    try {
-                        senderProfilePicture = await fetchContactProfilePicture(sock, remoteJid);
-                        senderBio = await fetchContactStatus(sock, remoteJid);
-                        if (typeof senderBio === 'string') {
-                            // Trim to backend validation limit
-                            senderBio = senderBio.slice(0, 500);
-                        }
-                        logger.debug({ 
-                            remoteJid, 
-                            hasPicture: !!senderProfilePicture, 
-                            hasBio: !!senderBio,
-                            pictureUrl: senderProfilePicture ? senderProfilePicture.substring(0, 50) + '...' : null,
-                            bioLength: senderBio ? senderBio.length : 0
-                        }, 'Fetched sender profile info');
-                    } catch (error) {
-                        logger.debug({ remoteJid, error: error.message, stack: error.stack }, 'Could not fetch sender profile info');
-                    }
-                }
+                
+                // We'll fetch profile after senderJid is determined (for groups)
+                // For now, just note that we need to fetch it
+                const needsProfileFetch = true;
                 
                 // Extract actual message content if wrapped in messageContextInfo
                 let actualMessage = msg.message;
@@ -155,6 +140,40 @@ async function handleMessages(sock, m) {
                     }
                 }
 
+                // Fetch sender profile picture and bio now that we have the correct senderJid
+                // For direct chats: senderJid = remoteJid
+                // For group chats: senderJid = participant JID
+                if (needsProfileFetch && senderJid) {
+                    const profileJid = isGroup ? senderJid : remoteJid;
+                    logger.debug({ 
+                        profileJid, 
+                        isGroup, 
+                        remoteJid 
+                    }, 'Attempting to fetch sender profile info');
+                    
+                    try {
+                        senderProfilePicture = await fetchContactProfilePicture(sock, profileJid);
+                        senderBio = await fetchContactStatus(sock, profileJid);
+                        if (typeof senderBio === 'string') {
+                            // Trim to backend validation limit
+                            senderBio = senderBio.slice(0, 500);
+                        }
+                        logger.debug({ 
+                            profileJid,
+                            isGroup,
+                            hasPicture: !!senderProfilePicture, 
+                            hasBio: !!senderBio,
+                            pictureUrl: senderProfilePicture ? senderProfilePicture.substring(0, 50) + '...' : null,
+                            bioLength: senderBio ? senderBio.length : 0
+                        }, 'Fetched sender profile info');
+                    } catch (error) {
+                        logger.debug({ 
+                            profileJid, 
+                            isGroup,
+                            error: error.message 
+                        }, 'Could not fetch sender profile info');
+                    }
+                }
                 
                 actualMessage = unwrapMessage(actualMessage);
 
@@ -542,6 +561,12 @@ async function handleVideoMessage(sock, msg, remoteJid, senderJid = null, sender
             };
         }
 
+        // Convert Long integer to regular integer for mediaSize
+        let mediaSize = msg.message.videoMessage.fileLength;
+        if (mediaSize && typeof mediaSize === 'object' && 'low' in mediaSize) {
+            mediaSize = mediaSize.low + (mediaSize.high * 0x100000000);
+        }
+
         const messageData = {
             from: remoteJid,
             chat: remoteJid,
@@ -552,7 +577,7 @@ async function handleVideoMessage(sock, msg, remoteJid, senderJid = null, sender
             mimetype: mimetype,
             messageTimestamp: msg.messageTimestamp,
             messageId: msg.key.id,
-            mediaSize: msg.message.videoMessage.fileLength,
+            mediaSize: mediaSize || undefined,
             quotedMessage: quotedMessageData,
             senderProfilePictureUrl: senderProfilePicture || undefined,
             senderBio: senderBio || undefined
@@ -626,6 +651,12 @@ async function handleDocumentMessage(sock, msg, remoteJid, senderJid = null, sen
             };
         }
 
+        // Convert Long integer to regular integer for mediaSize
+        let mediaSize = msg.message.documentMessage.fileLength;
+        if (mediaSize && typeof mediaSize === 'object' && 'low' in mediaSize) {
+            mediaSize = mediaSize.low + (mediaSize.high * 0x100000000);
+        }
+
         const messageData = {
             from: remoteJid,
             chat: remoteJid,
@@ -637,7 +668,7 @@ async function handleDocumentMessage(sock, msg, remoteJid, senderJid = null, sen
             mimetype: mimetype,
             messageTimestamp: msg.messageTimestamp,
             messageId: msg.key.id,
-            mediaSize: msg.message.documentMessage.fileLength,
+            mediaSize: mediaSize || undefined,
             quotedMessage: quotedMessageData,
             senderProfilePictureUrl: senderProfilePicture || undefined,
             senderBio: senderBio || undefined
@@ -698,6 +729,23 @@ async function handleAudioMessage(sock, msg, remoteJid, senderJid = null, sender
         const mimetype = msg.message.audioMessage.mimetype || 'audio/ogg; codecs=opus';
         const contextInfo = msg.message.audioMessage.contextInfo;
         
+        // Extract audio duration (in seconds)
+        let audioDuration = msg.message.audioMessage.seconds;
+        logger.debug({ 
+            rawDuration: audioDuration,
+            durationType: typeof audioDuration
+        }, 'Extracting audio duration');
+        
+        // Handle Long integer conversion (if it's an object with low/high properties)
+        if (audioDuration && typeof audioDuration === 'object' && audioDuration.low !== undefined) {
+            audioDuration = audioDuration.low + (audioDuration.high * 0x100000000);
+        }
+        
+        logger.debug({ 
+            finalDuration: audioDuration,
+            remoteJid
+        }, 'Audio duration extracted');
+        
         // Extract quoted message info if present
         let quotedMessageData = null;
         if (contextInfo?.quotedMessage) {
@@ -709,6 +757,12 @@ async function handleAudioMessage(sock, msg, remoteJid, senderJid = null, sender
             };
         }
 
+        // Convert Long integer to regular integer for mediaSize
+        let mediaSize = msg.message.audioMessage.fileLength;
+        if (mediaSize && typeof mediaSize === 'object' && 'low' in mediaSize) {
+            mediaSize = mediaSize.low + (mediaSize.high * 0x100000000);
+        }
+        
         const messageData = {
             from: remoteJid,
             chat: remoteJid,
@@ -719,7 +773,8 @@ async function handleAudioMessage(sock, msg, remoteJid, senderJid = null, sender
             mimetype: mimetype,
             messageTimestamp: msg.messageTimestamp,
             messageId: msg.key.id,
-            mediaSize: msg.message.audioMessage.fileLength,
+            mediaSize: mediaSize || undefined,
+            duration: audioDuration || undefined,
             quotedMessage: quotedMessageData,
             senderProfilePictureUrl: senderProfilePicture || undefined,
             senderBio: senderBio || undefined
@@ -730,9 +785,11 @@ async function handleAudioMessage(sock, msg, remoteJid, senderJid = null, sender
                 ...messageData, 
                 media: messageData.media ? '[base64 data]' : null,
                 senderProfilePictureUrl: messageData.senderProfilePictureUrl ? '[URL present]' : null,
-                senderBio: messageData.senderBio ? '[Bio present]' : null
+                senderBio: messageData.senderBio ? '[Bio present]' : null,
+                duration: messageData.duration,
+                mediaSize: messageData.mediaSize
             }
-        }, 'Sending message data to backend');
+        }, 'Sending audio message data to backend');
         
         await sendToPHP(messageData);
     } catch (error) {

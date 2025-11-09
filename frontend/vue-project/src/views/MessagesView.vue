@@ -198,9 +198,9 @@
             {{ getChatDisplayName(selectedChat) }}
           </span>
         </div>
-        <!-- Add to contacts button (shown when chat name looks like a phone number) -->
+        <!-- Add to contacts button (shown when chat name looks like a phone number AND no contact exists) -->
         <button
-          v-if="isPhoneNumber(selectedChat.name)"
+          v-if="shouldShowAddToContactsButton"
           @click="addToContacts"
           class="flex items-center gap-2 px-3 md:px-4 py-1.5 md:py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors text-xs md:text-sm"
         >
@@ -734,6 +734,26 @@ const isPhoneNumber = (name: string): boolean => {
   return /^[+\d_\-\s]+$/.test(name) || name.includes('_')
 }
 
+// Check if the selected chat has a contact associated with it
+const selectedChatHasContact = computed((): boolean => {
+  if (!selectedChat.value || selectedChat.value.is_group) return false
+  
+  const phoneNumber = selectedChat.value.metadata?.whatsapp_id || selectedChat.value.participants?.[0] || ''
+  if (!phoneNumber) return false
+  
+  const normalizedPhone = phoneNumber.replace(/@.*$/, '')
+  return contacts.value.some((c: any) => {
+    const contactPhone = c.phone.replace(/@.*$/, '')
+    return contactPhone === normalizedPhone
+  })
+})
+
+// Show "Add to Contacts" button if chat name looks like a phone number AND no contact exists
+const shouldShowAddToContactsButton = computed((): boolean => {
+  if (!selectedChat.value) return false
+  return isPhoneNumber(selectedChat.value.name) && !selectedChatHasContact.value
+})
+
 // Add current chat to contacts
 const addToContacts = async () => {
   if (!selectedChat.value) return
@@ -1175,7 +1195,6 @@ async function sendMessageHandler() {
     // If replying to a message, include the reference
     if (messageReplyTo) {
       payload.reply_to_message_id = messageReplyTo.id;
-      console.log('[MessagesView] Sending message with reply_to_message_id:', messageReplyTo.id, 'Full payload:', payload)
     }
     
     // Clear input immediately to show responsiveness
@@ -1557,7 +1576,6 @@ const confirmDeleteChat = async (chat: any) => {
 }
 
 const handleReplyToMessage = (message: any) => {
-  console.log('[MessagesView] Setting reply to message:', message)
   replyToMessage.value = message
   // Focus the input field
   nextTick(() => {
@@ -1566,7 +1584,6 @@ const handleReplyToMessage = (message: any) => {
 }
 
 const clearReplyToMessage = () => {
-  console.log('[MessagesView] Clearing reply to message')
   replyToMessage.value = null
 }
 

@@ -240,7 +240,6 @@ const fetchContacts = async () => {
   try {
     const response = await apiClient.get('/contacts');
     contacts.value = response.data.data || [];
-    console.log('[MessageList] Fetched contacts:', contacts.value.length, contacts.value);
   } catch (error) {
     console.error('[MessageList] Error fetching contacts:', error);
     contacts.value = [];
@@ -314,7 +313,6 @@ const {
 const messagesWithResolvedNames = computed(() => {
   // This computed property depends on both messages and contacts
   // When contacts change, it will re-compute sender names
-  console.log('[messagesWithResolvedNames] Computing with', messages.value.length, 'messages and', contacts.value.length, 'contacts');
   return messages.value.map(msg => {
     if (!props.isGroupChat || isMine(msg)) {
       return msg;
@@ -322,7 +320,6 @@ const messagesWithResolvedNames = computed(() => {
     // Re-resolve sender name using current contacts
     const resolvedName = getSenderName(msg);
     if (resolvedName) {
-      console.log('[messagesWithResolvedNames] Resolved name for message:', resolvedName);
       return {
         ...msg,
         sender_name: resolvedName
@@ -476,9 +473,7 @@ const findMemberForMessage = (message: Message): ChatMember | undefined => {
 };
 
 const getSenderName = (message: Message): string => {
-  console.log('[getSenderName] Called for message:', message.id);
   if (!props.isGroupChat || isCurrentUser(message)) {
-    console.log('[getSenderName] Skipping - not group chat or is current user');
     return '';
   }
   
@@ -492,23 +487,16 @@ const getSenderName = (message: Message): string => {
   if (typeof anyMsg.senderJid === 'string') phoneCandidates.push(anyMsg.senderJid);
   if (typeof anyMsg.from === 'string') phoneCandidates.push(anyMsg.from);
   
-  // Debug logging
-  console.log('[getSenderName] Phone candidates:', phoneCandidates);
-  console.log('[getSenderName] Contacts count:', contacts.value.length);
-  
   // FIRST check contacts table (highest priority)
   if (phoneCandidates.length > 0 && contacts.value.length > 0) {
     for (const candidate of phoneCandidates) {
       const normalizedCandidate = normalizePhone(candidate);
-      console.log('[getSenderName] Checking candidate:', candidate, '-> normalized:', normalizedCandidate);
       if (normalizedCandidate) {
         const contact = contacts.value.find((c: any) => {
           const contactPhone = normalizePhone(c.phone);
-          console.log('[getSenderName] Comparing with contact:', c.phone, '-> normalized:', contactPhone, 'match:', contactPhone === normalizedCandidate);
           return contactPhone === normalizedCandidate;
         });
         if (contact?.name && String(contact.name).trim()) {
-          console.log('[getSenderName] Found contact match:', contact.name);
           return String(contact.name);
         }
       }
@@ -517,16 +505,13 @@ const getSenderName = (message: Message): string => {
   
   // THEN check members (but only if name is not a phone number)
   const sender = findMemberForMessage(message);
-  console.log('[getSenderName] Found member:', sender);
   if (sender?.name && String(sender.name).trim()) {
     // Check if the member name is actually a phone number
     const memberName = String(sender.name).trim();
     const isPhoneNumber = /^[+\d\s()-]+$/.test(memberName);
     if (!isPhoneNumber) {
-      console.log('[getSenderName] Returning member name:', sender.name);
       return memberName;
     }
-    console.log('[getSenderName] Member name is a phone number, skipping');
   }
   
   // Then try to pull name from a known direct chat contact
@@ -909,16 +894,6 @@ const startPolling = () => {
 // Process and normalize message data to ensure required fields exist
 const normalizeMessage = (msg: any): Message => {
   
-  // Debug: Log if this is a deleted message
-  if (msg.deleted_at) {
-    console.log('[DEBUG normalizeMessage] Deleted message:', { 
-      id: msg.id, 
-      type: msg.type, 
-      content: msg.content, 
-      deleted_at: msg.deleted_at 
-    });
-  }
-  
   // Safely interpret is_from_me from various backend types
   const parseIsFromMe = (val: unknown): boolean | undefined => {
     if (val === undefined || val === null) return undefined;
@@ -1189,8 +1164,6 @@ const handleDeleteMessage = async (messageId: string | number) => {
     
     // Send delete request to backend
     await apiClient.delete(`/messages/${messageId}`);
-    
-    console.log('Message deleted successfully');
   } catch (error) {
     console.error('Failed to delete message:', error);
     alert('Fehler beim Löschen der Nachricht');
@@ -1205,7 +1178,6 @@ const handleMessageUpdated = (updatedMessage: any) => {
       ...messages.value[messageIndex],
       ...updatedMessage
     };
-    console.log('Message updated:', updatedMessage);
   }
 }
 
@@ -1594,16 +1566,12 @@ const setupWebSocketListeners = () => {
     
     // Listen for read receipts
     const readReceiptUnsubscribe = listenForReadReceipts(props.chat.toString(), (event: any) => {
-      console.log('Read receipt event received:', event);
-      
       if (!event || !event.message_id) {
-        console.log('Invalid read receipt event:', event);
         return;
       }
       
       messages.value = messages.value.map(msg => {
         if (msg.id === event.message_id) {
-          console.log(`Updating message ${msg.id} status to ${event.status}`);
           
           // Update message status and read_at timestamp
           const updatedMsg = {
@@ -1748,7 +1716,6 @@ const setupWebSocketListeners = () => {
           poll_votes: event.poll_votes,
           metadata: event.metadata
         } as any;
-        console.log('Poll updated via WebSocket:', event);
       }
     });
     
@@ -1786,20 +1753,8 @@ const fetchMessages = async (params: { chatId: string; limit: number; before?: s
   try {
     const response = await apiClient.get('/messages', { params });
     
-    // Debug: Log raw API response
-    console.log('[DEBUG] Raw API messages:', response.data.data?.slice(0, 3));
-    
     // Ensure messages are properly typed and have required fields
     const messages = (response.data.data || []).map((msg: any) => {
-      // Debug: Log deleted messages
-      if (msg.deleted_at) {
-        console.log('[DEBUG] Deleted message from API:', { 
-          id: msg.id, 
-          type: msg.type, 
-          content: msg.content, 
-          deleted_at: msg.deleted_at 
-        });
-      }
       
       // Use the message as-is from the API, only add fallbacks for truly missing fields
       const base: any = {
