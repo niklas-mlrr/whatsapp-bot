@@ -107,6 +107,9 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
               </svg>
               <span class="font-semibold text-gray-900 dark:text-gray-100">Umfrage</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400 ml-2">
+                {{ getPollSelectionType() === 'multiple' ? 'Mehrfachauswahl' : 'Einfachauswahl' }}
+              </span>
             </div>
             
             <h3 class="font-medium text-gray-900 dark:text-gray-100 mb-3">
@@ -118,15 +121,47 @@
                 v-for="(option, index) in getPollOptions()" 
                 :key="index"
                 @click="handlePollVote(index)"
-                class="flex items-center justify-between p-2 bg-white dark:bg-zinc-700 rounded border border-gray-200 dark:border-zinc-600 hover:bg-gray-50 dark:hover:bg-zinc-600 transition-colors cursor-pointer group"
+                class="flex items-center justify-between p-3 bg-white dark:bg-zinc-700 rounded-lg border border-gray-200 dark:border-zinc-600 hover:bg-gray-50 dark:hover:bg-zinc-600 transition-colors cursor-pointer group"
+                :class="{ 'bg-green-50 dark:bg-green-900/20 border-green-300 dark:border-green-600': hasUserVotedForOption(index) }"
               >
                 <div class="flex items-center flex-1">
-                  <div class="w-4 h-4 border-2 border-gray-300 dark:border-zinc-500 rounded-full mr-3 flex-shrink-0 group-hover:border-green-500 dark:group-hover:border-green-400 transition-colors"></div>
-                  <span class="text-gray-900 dark:text-gray-100 flex-1">{{ option }}</span>
+                  <div class="mr-3 flex-shrink-0">
+                    <!-- Radio button for single selection, checkbox for multiple -->
+                    <div v-if="getPollSelectionType() === 'single'" 
+                         class="w-5 h-5 border-2 border-gray-300 dark:border-zinc-500 rounded-full flex items-center justify-center transition-all duration-200"
+                         :class="{ 
+                           'bg-green-500 border-green-500 shadow-sm': hasUserVotedForOption(index), 
+                           'group-hover:border-green-500 dark:group-hover:border-green-400 group-hover:shadow-sm': !hasUserVotedForOption(index) 
+                         }">
+                      <svg v-if="hasUserVotedForOption(index)" class="w-2.5 h-2.5 text-white animate-fade-in" fill="currentColor" viewBox="0 0 20 20">
+                        <circle cx="10" cy="10" r="6"/>
+                      </svg>
+                    </div>
+                    <div v-else 
+                         class="w-5 h-5 border-2 border-gray-300 dark:border-zinc-500 rounded-md flex items-center justify-center transition-all duration-200"
+                         :class="{ 
+                           'bg-green-500 border-green-500 shadow-sm': hasUserVotedForOption(index), 
+                           'group-hover:border-green-500 dark:group-hover:border-green-400 group-hover:shadow-sm': !hasUserVotedForOption(index) 
+                         }">
+                      <svg v-if="hasUserVotedForOption(index)" class="w-3 h-3 text-white animate-fade-in" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path>
+                      </svg>
+                    </div>
+                  </div>
+                  <span class="text-gray-900 dark:text-gray-100 flex-1 select-none" 
+                        :class="{ 
+                          'font-medium text-green-700 dark:text-green-300': hasUserVotedForOption(index),
+                          'group-hover:text-gray-700 dark:group-hover:text-gray-200': !hasUserVotedForOption(index)
+                        }">
+                    {{ option }}
+                  </span>
                 </div>
-                <span v-if="getPollVoteCount(index) > 0" class="text-sm font-medium text-green-600 dark:text-green-400 ml-2">
-                  {{ getPollVoteCount(index) }}
-                </span>
+                <div class="flex items-center gap-2">
+                  <span v-if="getPollVoteCount(index) > 0" 
+                        class="text-sm font-medium px-2 py-1 bg-green-100 dark:bg-green-800 text-green-700 dark:text-green-300 rounded-full">
+                    {{ getPollVoteCount(index) }}
+                  </span>
+                </div>
               </div>
             </div>
             
@@ -542,6 +577,7 @@ const emit = defineEmits<{
   'reply-to-message': [message: any]
   'edit-message': [message: any]
   'delete-message': [messageId: string | number]
+  'message-updated': [payload: { id: string | number; metadata: any }]
 }>()
 
 // Refs
@@ -1083,47 +1119,79 @@ function openMediaViewer(event: Event) {
 function getPollQuestion(): string {
   if (props.message.type !== 'poll') return ''
   
+  // First try to get from metadata
   const metadata = props.message.metadata
-  if (!metadata) return ''
-  
-  let pollData
-  if (typeof metadata === 'string') {
-    try {
-      const parsed = JSON.parse(metadata)
-      pollData = parsed?.poll_data
-    } catch {
-      return ''
+  if (metadata) {
+    let pollData
+    if (typeof metadata === 'string') {
+      try {
+        const parsed = JSON.parse(metadata)
+        pollData = parsed?.poll_data
+      } catch {
+        // Fall through to content
+      }
+    } else {
+      pollData = metadata.poll_data
     }
-  } else {
-    pollData = metadata.poll_data
+    
+    if (pollData?.name) {
+      return pollData.name
+    }
   }
   
-  return pollData?.name || ''
+  // Fallback: extract poll name from content
+  // Content format: "📊 **Poll Name**\n\n1. Option 1\n2. Option 2"
+  const content = props.message.content || ''
+  const match = content.match(/📊\s*\*\*(.*?)\*\*/);
+  if (match && match[1]) {
+    return match[1];
+  }
+  
+  // If no match, return first line or default
+  const lines = content.split('\n');
+  return lines[0] || 'Umfrage';
 }
 
 function getPollOptions(): string[] {
   if (props.message.type !== 'poll') return []
   
+  // First try to get from metadata
   const metadata = props.message.metadata
-  if (!metadata) return []
-  
-  let pollData
-  if (typeof metadata === 'string') {
-    try {
-      const parsed = JSON.parse(metadata)
-      pollData = parsed?.poll_data
-    } catch {
-      return []
+  if (metadata) {
+    let pollData
+    if (typeof metadata === 'string') {
+      try {
+        const parsed = JSON.parse(metadata)
+        pollData = parsed?.poll_data
+      } catch {
+        // Fall through to content
+      }
+    } else {
+      pollData = metadata.poll_data
     }
-  } else {
-    pollData = metadata.poll_data
+    
+    if (pollData?.options && Array.isArray(pollData.options)) {
+      return pollData.options.map((option: any) => 
+        option.optionName || option.name || option || ''
+      ).filter((option: string) => option.trim())
+    }
   }
   
-  if (!pollData?.options || !Array.isArray(pollData.options)) return []
+  // Fallback: extract options from content
+  // Content format: "📊 **Poll Name**\n\n1. Option 1\n2. Option 2"
+  const content = props.message.content || ''
+  const lines = content.split('\n')
   
-  return pollData.options.map((option: any) => 
-    option.optionName || option.name || option || ''
-  ).filter((option: string) => option.trim())
+  // Find lines that start with a number followed by a dot
+  const options: string[] = []
+  for (const line of lines) {
+    const match = line.match(/^\d+\.\s*(.+)$/)
+    if (match) {
+      options.push(match[1].trim())
+    }
+  }
+  
+  return options
 }
 
 function getPollVoteCounts(): Record<number, number> {
@@ -1154,29 +1222,22 @@ function getPollVoteCounts(): Record<number, number> {
     return result
   }
   
-  // Handle object format (Laravel might convert numeric keys to array)
-  if (typeof voteCounts === 'object' && voteCounts !== null) {
+  if (voteCounts && typeof voteCounts === 'object') {
+    // Convert string keys to numbers if needed
     const result: Record<number, number> = {}
-    Object.keys(voteCounts).forEach(key => {
-      const index = parseInt(key, 10)
-      if (!isNaN(index)) {
-        result[index] = voteCounts[key] || 0
-      }
+    Object.entries(voteCounts).forEach(([key, value]) => {
+      result[parseInt(key)] = Number(value) || 0
     })
     return result
   }
   
   // If vote counts don't exist or are empty, initialize them to 0 for each option
-  if (!voteCounts || Object.keys(voteCounts).length === 0) {
-    const options = getPollOptions()
-    const result: Record<number, number> = {}
-    for (let i = 0; i < options.length; i++) {
-      result[i] = 0
-    }
-    return result
+  const options = getPollOptions()
+  const result: Record<number, number> = {}
+  for (let i = 0; i < options.length; i++) {
+    result[i] = 0
   }
-  
-  return {}
+  return result
 }
 
 function getPollVoteCount(index: number): number {
@@ -1189,7 +1250,94 @@ function getTotalVotes(): number {
   return Object.values(voteCounts).reduce((sum, count) => sum + count, 0)
 }
 
+function hasUserVotedForOption(optionIndex: number): boolean {
+  if (props.message.type !== 'poll') return false
+  
+  const currentUserId = getCurrentUserId()
+  if (!currentUserId) return false
+  
+  // Check if current user has voted for this option in the poll votes
+  const pollVotes = (props.message as any).poll_votes || []
+  
+  // Debug logging
+  console.log('Vote detection debug:', {
+    currentUserId,
+    currentUserIdType: typeof currentUserId,
+    pollVotes,
+    optionIndex
+  })
+  
+  return pollVotes.some((vote: any) => {
+    const voteUserId = vote.user_id || vote.userId
+    const voteOptionIndex = vote.option_index || vote.optionIndex
+    
+    // Debug each vote
+    console.log('Checking vote:', {
+      vote,
+      voteUserId,
+      voteUserIdType: typeof voteUserId,
+      voteOptionIndex,
+      optionIndex,
+      userIdMatch: String(voteUserId) === String(currentUserId),
+      optionMatch: Number(voteOptionIndex) === Number(optionIndex)
+    })
+    
+    return String(voteUserId) === String(currentUserId) && Number(voteOptionIndex) === Number(optionIndex)
+  })
+}
+
+function getPollSelectionType(): string {
+  if (props.message.type !== 'poll') return 'single'
+  
+  // Debug: Log the entire message structure
+  console.log('Full poll message:', {
+    id: props.message.id,
+    type: props.message.type,
+    metadata: props.message.metadata,
+    metadataType: typeof props.message.metadata,
+    metadataKeys: props.message.metadata ? Object.keys(props.message.metadata) : []
+  })
+  
+  // First try to get from metadata
+  const metadata = props.message.metadata
+  if (metadata) {
+    let pollData
+    if (typeof metadata === 'string') {
+      try {
+        const parsed = JSON.parse(metadata)
+        pollData = parsed?.poll_data
+      } catch {
+        // Fall through to default
+      }
+    } else {
+      pollData = metadata.poll_data
+    }
+    
+    // Debug logging
+    console.log('Poll selection type check:', {
+      messageId: props.message.id,
+      pollData,
+      selectableOptionsCount: pollData?.selectableOptionsCount,
+      type: typeof pollData?.selectableOptionsCount
+    })
+    
+    // Interpret selectableOptionsCount from WhatsApp semantics:
+    // 1 = single choice; 0 = multiple (unlimited); >=2 = multiple (limit)
+    if (pollData && 'selectableOptionsCount' in pollData) {
+      const count = Number(pollData.selectableOptionsCount)
+      const result = count === 1 ? 'single' : 'multiple'
+      console.log('Poll selection type result:', { count, result })
+      return result
+    }
+  }
+  
+  // Default to single selection
+  return 'single'
+}
+
 async function handlePollVote(optionIndex: number) {
+  console.log('Vote clicked for option:', optionIndex)
+  
   try {
     const response = await fetch(`${API_CONFIG.BASE_URL}/messages/${props.message.id}/vote`, {
       method: 'POST',
@@ -1201,19 +1349,26 @@ async function handlePollVote(optionIndex: number) {
         option_index: optionIndex
       })
     })
+
+    console.log('Vote API response status:', response.status)
     
     if (!response.ok) {
-      const error = await response.json()
-      alert(error.error || 'Failed to vote')
-      return
+      const errorData = await response.json()
+      console.error('Vote API error:', errorData)
+      throw new Error(errorData.error || 'Failed to vote')
     }
+
+    const result = await response.json()
+    console.log('Vote API success:', result)
     
-    // Refresh the message to get updated vote counts
-    const updatedMessage = await response.json()
-    console.log('Vote successful:', updatedMessage)
+    // The API returns the full message in result.data
+    if (result.data) {
+      // Emit event to parent to update message with the full data from server
+      emit('message-updated', result.data)
+    }
   } catch (error) {
-    console.error('Error voting on poll:', error)
-    alert('Failed to vote on poll')
+    console.error('Error voting in poll:', error)
+    // You could show a toast notification here
   }
 }
 
@@ -1494,6 +1649,22 @@ defineOptions({
 /* Emoji picker styles */
 .reaction-picker {
   animation: fadeInUp 0.15s ease-out;
+}
+
+/* Radio button animation */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.2s ease-out;
 }
 
 @keyframes fadeInUp {

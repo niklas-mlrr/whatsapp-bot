@@ -95,7 +95,7 @@
             </div>
             <div v-for="chat in pendingChats" :key="chat.id" class="px-4 py-3 border-b border-gray-100 dark:border-zinc-700 bg-yellow-50 dark:bg-yellow-900/10">
               <div class="flex items-center justify-between mb-2">
-                <span class="font-medium text-gray-800 dark:text-gray-200">{{ chat.name }}</span>
+                <span class="font-medium text-gray-800 dark:text-gray-200">{{ getChatDisplayName(chat) }}</span>
               </div>
               <p v-if="chat.last_message_preview" class="text-sm text-gray-700 dark:text-gray-300 mb-2 italic">{{ chat.last_message_preview }}</p>
               <b class="text-sm text-gray-600 dark:text-gray-400 mb-3">Möchtest du diesen Chat zulassen?</b>
@@ -133,7 +133,7 @@
                   />
                   <span v-else>{{ chat.name.slice(0,2).toUpperCase() }}</span>
                 </div>
-                <span class="flex-1 truncate">{{ chat.name }}</span>
+                <span class="flex-1 truncate">{{ getChatDisplayName(chat) }}</span>
                 <!-- Unread message indicator -->
                 <span 
                   v-if="chat.unread_count && chat.unread_count > 0 && (!selectedChat || selectedChat.id !== chat.id)"
@@ -191,11 +191,11 @@
             referrerpolicy="no-referrer"
             @error="handleAvatarError(selectedChat)"
           />
-          <span v-else>{{ selectedChat.name.slice(0,2).toUpperCase() }}</span>
+          <span v-else>{{ getChatDisplayName(selectedChat).slice(0,2).toUpperCase() }}</span>
         </div>
         <div class="flex flex-col flex-1 cursor-pointer" @click="openContactInfo">
           <span class="font-semibold text-lg text-gray-900 dark:text-gray-100 hover:text-green-600 dark:hover:text-green-400 transition-colors">
-            {{ selectedChat.name }}
+            {{ getChatDisplayName(selectedChat) }}
           </span>
         </div>
         <!-- Add to contacts button (shown when chat name looks like a phone number) -->
@@ -215,7 +215,7 @@
       <div class="flex-1 overflow-y-auto">
         <MessageList 
           v-if="selectedChat"
-          :key="selectedChat.id"
+          :key="`${selectedChat.id}-${contactsVersion}`"
           ref="messageListRef" 
           :chat="selectedChat.id"
           :current-user="currentUserForChat"
@@ -373,6 +373,7 @@
       :is-open="showContactsModal"
       :prefilled-phone="prefilledContactPhone"
       :chat-id-to-update="chatIdToUpdate"
+      :contact-to-edit="contactToEdit"
       @close="handleContactsModalClose"
       @chat-selected="handleChatSelected"
     />
@@ -385,6 +386,7 @@
       :all-chats="chats"
       @close="showContactInfoModal = false"
       @start-chat="handleStartChatFromModal"
+      @open-contacts="handleOpenContactsFromModal"
     />
 
     <!-- New Chat Modal -->
@@ -463,10 +465,9 @@
                     type="button"
                     @click="removePollOption(index)"
                     class="px-3 py-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
-                    title="Option entfernen"
                   >
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
                     </svg>
                   </button>
                 </div>
@@ -476,13 +477,40 @@
                 v-if="pollOptions.length < 12"
                 type="button"
                 @click="addPollOption"
-                class="mt-2 px-3 py-2 text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 rounded-lg transition-colors text-sm flex items-center gap-1"
+                class="mt-2 text-sm text-green-600 dark:text-green-400 hover:text-green-700 dark:hover:text-green-300 transition-colors"
               >
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-                </svg>
-                Option hinzufügen
+                + Option hinzufügen
               </button>
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Auswahltyp</label>
+              <div class="space-y-3">
+                <label class="flex items-center p-3 border border-gray-200 dark:border-zinc-600 rounded-lg cursor-pointer hover:bg-gray-50 dark:hover:bg-zinc-700 transition-colors">
+                  <input
+                    v-model="allowMultipleSelection"
+                    type="radio"
+                    :value="false"
+                    class="w-4 h-4 text-green-600 bg-gray-100 border-gray-300 focus:ring-green-500 dark:focus:ring-green-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                  />
+                  <div class="ml-3">
+                    <span class="block text-sm font-medium text-gray-900 dark:text-gray-100">Einfachauswahl</span>
+                    <span class="block text-xs text-gray-500 dark:text-gray-400">Nutzer können nur eine Option wählen</span>
+                  </div>
+                </label>
+                <label class="flex items-center p-3 border border-gray-200 dark:border-zinc-600 rounded-lg cursor-pointer hover:bg-gray-50 dark:hover:bg-zinc-700 transition-colors">
+                  <input
+                    v-model="allowMultipleSelection"
+                    type="radio"
+                    :value="true"
+                    class="w-4 h-4 text-green-600 bg-gray-100 border-gray-300 focus:ring-green-500 dark:focus:ring-green-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                  />
+                  <div class="ml-3">
+                    <span class="block text-sm font-medium text-gray-900 dark:text-gray-100">Mehrfachauswahl</span>
+                    <span class="block text-xs text-gray-500 dark:text-gray-400">Nutzer können mehrere Optionen wählen</span>
+                  </div>
+                </label>
+              </div>
             </div>
 
             <div class="flex gap-2 pt-4">
@@ -536,6 +564,8 @@ const currentUser = ref({
 })
 
 const chats = ref<any[]>([])
+const contacts = ref<any[]>([])
+const contactsVersion = ref(0)
 const loadingChats = ref(false)
 const errorChats = ref<string | null>(null)
 const selectedChat = ref<any | null>(null)
@@ -562,6 +592,40 @@ const handleAvatarError = (c: any) => {
   if (c && c.id != null) {
     avatarLoadFailed.value[String(c.id)] = true
   }
+}
+
+// Fetch contacts
+const fetchContacts = async () => {
+  try {
+    const response = await apiClient.get('/contacts')
+    contacts.value = response.data.data || []
+    contactsVersion.value++ // Increment to trigger MessageList refresh
+  } catch (error) {
+    console.error('Error fetching contacts:', error)
+    contacts.value = []
+  }
+}
+
+// Get display name for a chat (checks contacts first)
+const getChatDisplayName = (chat: any): string => {
+  if (!chat) return 'Unknown'
+  
+  // For groups, always use the chat name
+  if (chat.is_group) return chat.name || 'Group'
+  
+  // For direct chats, check if there's a matching contact
+  const phoneNumber = chat.metadata?.whatsapp_id || chat.participants?.[0] || chat.original_name || ''
+  if (phoneNumber) {
+    const normalizedPhone = phoneNumber.replace(/@.*$/, '')
+    const contact = contacts.value.find((c: any) => {
+      const contactPhone = c.phone.replace(/@.*$/, '')
+      return contactPhone === normalizedPhone
+    })
+    if (contact?.name) return contact.name
+  }
+  
+  // Fallback to chat name
+  return chat.name || 'Unknown'
 }
 
 const selectedChatAvatarUrl = computed(() => selectedChat.value?.contact_info?.profile_picture_url || null)
@@ -646,6 +710,7 @@ const showContactsModal = ref(false)
 const showContactInfoModal = ref(false)
 const prefilledContactPhone = ref<string | undefined>(undefined)
 const chatIdToUpdate = ref<string | undefined>(undefined)
+const contactToEdit = ref<any | null>(null)
 const showNewChatModal = ref(false)
 const newChatPhone = ref('')
 const isCreatingChat = ref(false)
@@ -659,6 +724,7 @@ const showPollModal = ref(false)
 const pollQuestion = ref('')
 const pollOptions = ref(['', ''])
 const isCreatingPoll = ref(false)
+const allowMultipleSelection = ref(false)
 
 // WebSocket for typing indicators and new chat notifications
 const { notifyTyping, connect: connectWebSocket } = useWebSocket()
@@ -669,18 +735,16 @@ const isPhoneNumber = (name: string): boolean => {
 }
 
 // Add current chat to contacts
-const addToContacts = () => {
+const addToContacts = async () => {
   if (!selectedChat.value) return
   
   // Extract phone number from the chat
-  // Try to get it from participants, metadata, or original_name
   let phoneNumber = selectedChat.value.participants?.[0] 
                     || selectedChat.value.metadata?.whatsapp_id 
                     || selectedChat.value.original_name
                     || selectedChat.value.name
   
   // Clean up the phone number for display (remove @ suffix and normalize)
-  // Extract just the number part and format it nicely
   phoneNumber = phoneNumber.replace(/@.*$/, '') // Remove everything after @
   
   // Add + prefix if it's just digits (for better UX)
@@ -688,36 +752,40 @@ const addToContacts = () => {
     phoneNumber = '+' + phoneNumber
   }
   
-  // Set the prefilled phone, chat ID to update, and open the contacts modal
-  prefilledContactPhone.value = phoneNumber
-  chatIdToUpdate.value = String(selectedChat.value.id)
+  // Check if contact already exists
+  try {
+    const response = await apiClient.post('/contacts/find-by-phone', { phone: phoneNumber })
+    if (response.data.data) {
+      // Contact exists - open edit mode
+      contactToEdit.value = {
+        id: response.data.data.id,
+        name: response.data.data.name,
+        phone: phoneNumber
+      }
+      prefilledContactPhone.value = undefined
+    } else {
+      // Contact doesn't exist - open add mode
+      contactToEdit.value = null
+      prefilledContactPhone.value = phoneNumber
+    }
+  } catch (error) {
+    // If error, assume contact doesn't exist
+    contactToEdit.value = null
+    prefilledContactPhone.value = phoneNumber
+  }
+  
   showContactsModal.value = true
 }
 
-// Handle contacts modal close - refresh chat list to show updated names
+// Handle contacts modal close
 const handleContactsModalClose = async () => {
   showContactsModal.value = false
   prefilledContactPhone.value = undefined // Reset prefilled phone
   chatIdToUpdate.value = undefined // Reset chat ID to update
+  contactToEdit.value = null // Reset contact to edit
   
-  // Refresh the chat list to show updated contact names
-  try {
-    const response = await fetchChats()
-    if (response && response.data && response.data.data) {
-      chats.value = response.data.data
-      syncSelectedChat(chats.value)
-      
-      // Update selected chat if it was renamed (only update if name changed to avoid remounting)
-      if (selectedChat.value) {
-        const updatedChat = chats.value.find(c => c.id === selectedChat.value?.id)
-        if (updatedChat && updatedChat.name !== selectedChat.value.name) {
-          selectedChat.value = updatedChat
-        }
-      }
-    }
-  } catch (error) {
-    console.error('Error refreshing chats:', error)
-  }
+  // Refresh contacts to update display names in chat list
+  await fetchContacts()
 }
 
 // Handle chat selection from contacts modal
@@ -772,6 +840,38 @@ const handleStartChatFromModal = async (participantJid: string) => {
     console.error('Error starting chat from modal:', error)
     alert(error?.response?.data?.message || 'Fehler beim Öffnen des Chats')
   }
+}
+
+// Open contacts modal from ContactInfoModal with prefilled phone
+const handleOpenContactsFromModal = async (phone: string) => {
+  if (!phone) return
+  
+  // Close the contact info modal
+  showContactInfoModal.value = false
+  
+  // Check if contact already exists using the new contacts API
+  try {
+    const response = await apiClient.post('/contacts/find-by-phone', { phone })
+    if (response.data.data) {
+      // Contact exists - open edit mode
+      contactToEdit.value = {
+        id: response.data.data.id,
+        name: response.data.data.name,
+        phone: phone
+      }
+      prefilledContactPhone.value = undefined
+    } else {
+      // Contact doesn't exist - open add mode
+      contactToEdit.value = null
+      prefilledContactPhone.value = phone
+    }
+  } catch (error) {
+    // If error, assume contact doesn't exist
+    contactToEdit.value = null
+    prefilledContactPhone.value = phone
+  }
+  
+  showContactsModal.value = true
 }
 
 // Watch for changes to input field to send typing notifications
@@ -1239,6 +1339,7 @@ function selectCreatePoll() {
   // Reset poll form
   pollQuestion.value = ''
   pollOptions.value = ['', '']
+  allowMultipleSelection.value = false
 }
 
 function addPollOption() {
@@ -1257,6 +1358,7 @@ function closePollModal() {
   showPollModal.value = false
   pollQuestion.value = ''
   pollOptions.value = ['', '']
+  allowMultipleSelection.value = false
   isCreatingPoll.value = false
 }
 
@@ -1282,7 +1384,7 @@ async function createPoll() {
       })),
       pollType: 'POLL',
       pollContentType: 'TEXT',
-      selectableOptionsCount: 0
+      selectableOptionsCount: allowMultipleSelection.value ? 0 : 1
     }
 
     // Create a readable content representation for the message
@@ -1586,12 +1688,16 @@ onMounted(async () => {
   loadingChats.value = true
   errorChats.value = null
   try {
-    const response = await fetchChats()
+    // Fetch both chats and contacts
+    const [chatsResponse] = await Promise.all([
+      fetchChats(),
+      fetchContacts()
+    ])
     
-    if (response && response.data && response.data.data) {
-      chats.value = response.data.data
+    if (chatsResponse && chatsResponse.data && chatsResponse.data.data) {
+      chats.value = chatsResponse.data.data
     } else {
-      console.error('Invalid response format:', response)
+      console.error('Invalid response format:', chatsResponse)
       errorChats.value = 'Ungültiges Antwortformat vom Server'
     }
   } catch (e: any) {

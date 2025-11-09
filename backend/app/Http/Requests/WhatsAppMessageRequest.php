@@ -63,7 +63,7 @@ class WhatsAppMessageRequest extends FormRequest
             // Poll data
             'pollData' => ['nullable', 'array'],
             'pollData.name' => ['nullable', 'string', 'max:255'],
-            'pollData.options' => ['nullable', 'array', 'min:2', 'max:12'],
+            'pollData.options' => ['nullable', 'array', 'min:1', 'max:12'],
             'pollData.options.*.optionName' => ['nullable', 'string', 'max:100'],
             'pollData.options.*.name' => ['nullable', 'string', 'max:100'],
             'pollData.pollType' => ['nullable', 'string', 'in:POLL'],
@@ -71,6 +71,9 @@ class WhatsAppMessageRequest extends FormRequest
             'pollData.selectableOptionsCount' => ['nullable', 'integer', 'min:0'],
             // Poll update data
             'pollMessageId' => ['nullable', 'string'],
+            'selectedOptionIndex' => ['nullable', 'integer'],
+            'selectedOptions' => ['nullable', 'array'],
+            'selectedOptions.*' => ['integer'],
         ];
 
         // Add required validation for either 'from' or 'sender'
@@ -82,6 +85,19 @@ class WhatsAppMessageRequest extends FormRequest
         ]);
 
         return $rules;
+    }
+    
+    /**
+     * Handle a failed validation attempt.
+     */
+    protected function failedValidation(\Illuminate\Contracts\Validation\Validator $validator)
+    {
+        \Log::channel('whatsapp')->error('Validation failed for webhook request', [
+            'errors' => $validator->errors()->all(),
+            'input' => $this->all(),
+        ]);
+        
+        throw new \Illuminate\Validation\ValidationException($validator);
     }
 
     /**

@@ -31,24 +31,107 @@ class WebSocketService
     public function messageStatusUpdated(WhatsAppMessage $message): void
     {
         try {
-            Broadcast::event('chat.' . $message->chat_id, 'message-status-updated', [
+            // For read receipts, we need to identify who read the message
+            // In a single-user setup, this would be the app user
+            // For multi-user, we'd need to track which user is associated with the WhatsApp number
+            $readerUserId = null;
+            
+            // Get the chat to find participants - use chatRelation() method
+            $chat = $message->chatRelation;
+            if ($chat) {
+                // For direct messages, the reader is the other participant (not the sender)
+                if (!$chat->is_group) {
+                    // Find the user who is not the sender
+                    $participants = $chat->users;
+                    $reader = $participants->firstWhere('id', '!=', $message->sender_id);
+                    if ($reader) {
+                        $readerUserId = $reader->id;
+                    }
+                } else {
+                    // For group messages, we'd need to track who read it
+                    // For now, we'll send null for group messages as the read tracking is more complex
+                    $readerUserId = null;
+                }
+            }
+            
+            $broadcastData = [
                 'message_id' => $message->id,
                 'status' => $message->status,
                 'read_at' => $message->read_at?->toIso8601String(),
                 'is_read' => (bool) $message->read_at,
+                'user_id' => $readerUserId, // Add user_id for frontend compatibility
                 'event' => 'message-status-updated',
-            ]);
+            ];
             
-            Log::info('Message status update broadcast sent', [
+            Log::channel('whatsapp')->info('Broadcasting message status update', [
+                'channel' => 'chat.' . $message->chat_id,
+                'event' => 'message-status-updated',
                 'message_id' => $message->id,
                 'chat_id' => $message->chat_id,
                 'status' => $message->status,
                 'read_at' => $message->read_at?->toIso8601String(),
+                'reader_user_id' => $readerUserId,
+                'broadcast_data' => $broadcastData,
+            ]);
+            
+            Broadcast::event('chat.' . $message->chat_id, 'message-status-updated', $broadcastData);
+            
+            Log::channel('whatsapp')->info('Message status update broadcast completed', [
+                'message_id' => $message->id,
+                'chat_id' => $message->chat_id,
+                'status' => $message->status,
             ]);
         } catch (\Exception $e) {
-            Log::error('Failed to send message status update', [
+            Log::channel('whatsapp')->error('Failed to send message status update', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'message_id' => $message->id,
+                'chat_id' => $message->chat_id ?? null,
+            ]);
+        }
+    }
+
+    public function messageUpdated(WhatsAppMessage $message): void
+    {
+        try {
+            // For poll messages, use the specific poll update event
+            if ($message->type === 'poll') {
+                Broadcast::event('chat.' . $message->chat_id, 'message.poll_updated', [
+                    'message_id' => $message->id,
+                    'chat_id' => $message->chat_id,
+                    'poll_votes' => $message->pollVotes->map(function ($vote) {
+                        return [
+                            'user_id' => $vote->user_id,
+                            'option_index' => $vote->option_index,
+                            'voted_at' => $vote->voted_at?->toIso8601String(),
+                        ];
+                    }),
+                    'metadata' => $message->metadata,
+                ]);
+                
+                Log::info('Poll update broadcast sent', [
+                    'message_id' => $message->id,
+                    'chat_id' => $message->chat_id,
+                    'event' => 'message.poll_updated',
+                ]);
+            } else {
+                // For other message types, use the general message update event
+                Broadcast::event('chat.' . $message->chat_id, 'message-updated', [
+                    'message' => new \App\Http\Resources\WhatsAppMessageResource($message),
+                    'event' => 'message-updated',
+                ]);
+                
+                Log::info('Message update broadcast sent', [
+                    'message_id' => $message->id,
+                    'chat_id' => $message->chat_id,
+                    'event' => 'message-updated',
+                ]);
+            }
+        } catch (\Exception $e) {
+            Log::error('Failed to send message update', [
                 'error' => $e->getMessage(),
                 'message_id' => $message->id,
+                'chat_id' => $message->chat_id,
             ]);
         }
     }

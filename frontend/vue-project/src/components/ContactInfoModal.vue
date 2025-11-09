@@ -85,7 +85,15 @@
                     <div v-if="isGroupView" class="mt-6">
                       <div class="flex items-center justify-between mb-2">
                         <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">Teilnehmer</h4>
-                        <button v-if="viewingParticipant" @click="clearParticipantView" class="text-xs px-2 py-1 rounded bg-gray-100 dark:bg-zinc-700 text-gray-700 dark:text-gray-200">Zurück zur Gruppe</button>
+                        <div class="flex items-center gap-2">
+                          <button v-if="viewingParticipant" @click="openAddContactModal" class="text-xs px-3 py-1.5 rounded bg-green-500 hover:bg-green-600 text-white font-medium flex items-center gap-1">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                            </svg>
+                            Kontakt hinzufügen / bearbeiten
+                          </button>
+                          <button v-if="viewingParticipant" @click="clearParticipantView" class="text-xs px-2 py-1 rounded bg-gray-100 dark:bg-zinc-700 text-gray-700 dark:text-gray-200">Zurück zur Gruppe</button>
+                        </div>
                       </div>
                       <div v-if="!viewingParticipant" class="space-y-2 max-h-72 overflow-y-auto pr-1">
                         <div v-for="p in participantsList" :key="p.jid" class="flex items-center justify-between p-2 rounded hover:bg-green-50 dark:hover:bg-zinc-700">
@@ -137,9 +145,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, onMounted } from 'vue';
 import { Dialog, DialogPanel, DialogTitle, TransitionChild, TransitionRoot } from '@headlessui/vue';
 import { XMarkIcon } from '@heroicons/vue/24/outline';
+import apiClient from '@/services/api';
 
 const props = defineProps({
   isOpen: {
@@ -157,9 +166,11 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['close','start-chat']);
+const emit = defineEmits(['close','start-chat','open-contacts']);
 
 const closeModal = () => {
+  // Reset to first level when closing
+  clearParticipantView();
   emit('close');
 };
 
@@ -225,6 +236,7 @@ const description = computed(() => {
 const viewingParticipant = ref(false);
 const selectedParticipant = ref<{ jid: string; isAdmin?: boolean } | null>(null);
 const participantChat = ref<any | null>(null);
+const contacts = ref<any[]>([]);
 
 const participantsList = computed(() => {
   const chat: any = props.chat;
@@ -247,10 +259,22 @@ const participantsList = computed(() => {
 });
 
 function resolveParticipantDisplay(jid: string): string {
+  // First check contacts table
+  const normalizedJid = jid.includes('@') ? jid : jid + '@s.whatsapp.net';
+  const contact = contacts.value.find((c: any) => {
+    const contactPhone = c.phone.replace(/@.*$/, '');
+    const jidPhone = normalizedJid.replace(/@.*$/, '');
+    return contactPhone === jidPhone;
+  });
+  if (contact?.name) return contact.name;
+  
+  // Then check chats
   const chats: any[] = (props.allChats || []) as any[];
-  const found = chats.find((c: any) => !c.is_group && (c?.metadata?.whatsapp_id === jid || (Array.isArray(c?.participants) && c.participants.includes(jid))));
+  const found = chats.find((c: any) => !c.is_group && (c?.metadata?.whatsapp_id === normalizedJid || (Array.isArray(c?.participants) && c.participants.includes(normalizedJid))));
   if (found?.name) return found.name;
-  const phone = jid.replace(/@.*$/, '');
+  
+  // Fallback to phone number
+  const phone = normalizedJid.replace(/@.*$/, '');
   return phone ? '+' + phone : jid;
 }
 
@@ -287,4 +311,34 @@ function clearParticipantView() {
   selectedParticipant.value = null;
   participantChat.value = null;
 }
+
+function openAddContactModal() {
+  const phone = participantPhone.value;
+  emit('open-contacts', phone);
+}
+
+// Fetch contacts on mount and when modal opens
+const fetchContacts = async () => {
+  try {
+    const response = await apiClient.get('/contacts');
+    contacts.value = response.data.data || [];
+  } catch (error) {
+    console.error('Error fetching contacts:', error);
+    contacts.value = [];
+  }
+};
+
+onMounted(() => {
+  fetchContacts();
+});
+
+// Watch for modal opening to reset to first level and refresh contacts
+watch(() => props.isOpen, (isOpen) => {
+  if (isOpen) {
+    // Reset to first level when modal opens
+    clearParticipantView();
+    // Refresh contacts to get latest names
+    fetchContacts();
+  }
+});
 </script>

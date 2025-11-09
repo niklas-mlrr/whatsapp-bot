@@ -90,7 +90,7 @@ class WhatsAppMessageController extends Controller
         $validated = $request->validate([
             'chat' => 'nullable|string|max:255',
             'sender' => 'nullable|string|max:255',
-            'type' => 'nullable|string|in:text,image,video,audio,document,location,contact,unknown',
+            'type' => 'nullable|string|in:text,image,video,audio,document,location,contact,unknown,poll',
             'direction' => 'nullable|string|in:incoming,outgoing',
             'status' => 'nullable|string|in:pending,sent,delivered,read,failed',
             'search' => 'nullable|string|max:255',
@@ -107,11 +107,11 @@ class WhatsAppMessageController extends Controller
 
         // Apply filters
         if ($request->filled('chat')) {
-            $query->where('chat', $validated['chat']);
+            $query->where('metadata->chat', $validated['chat']);
         }
         
         if ($request->filled('sender')) {
-            $query->where('sender', $validated['sender']);
+            $query->where('metadata->sender', $validated['sender']);
         }
         
         if ($request->filled('type')) {
@@ -148,19 +148,22 @@ class WhatsAppMessageController extends Controller
         // Sorting
         $sortBy = $validated['sort_by'] ?? 'sending_time';
         $sortOrder = $validated['sort_order'] ?? 'desc';
-        $query->orderBy($sortBy, $sortOrder);
+        
+        // Map sending_time to created_at since sending_time is an accessor, not a column
+        $databaseColumn = $sortBy === 'sending_time' ? 'created_at' : $sortBy;
+        $query->orderBy($databaseColumn, $sortOrder);
 
         // Pagination
         $perPage = $validated['per_page'] ?? 20;
         $messages = $query->paginate($perPage);
 
-        return WhatsAppMessageResource::collection($messages);
+        return WhatsAppMessageResource::collection($messages)->response();
     }
 
     // GET /api/messages/{id}
     public function show($id): JsonResponse
     {
-        $message = WhatsAppMessage::findOrFail($id);
+        $message = WhatsAppMessage::with(['pollVotes'])->findOrFail($id);
         return (new WhatsAppMessageResource($message))->response();
     }
 
@@ -438,6 +441,11 @@ class WhatsAppMessageController extends Controller
         if ($data['type'] === 'reaction') {
             return $this->handleReaction($data);
         }
+        
+        // Handle poll update messages (votes) separately
+        if ($data['type'] === 'poll_update') {
+            return $this->handlePollUpdate($data);
+        }
         if (empty($data['sending_time'])) {
             $data['sending_time'] = now();
         }
@@ -629,6 +637,12 @@ class WhatsAppMessageController extends Controller
         }
         
         if ($data['type'] === 'poll' && !empty($data['pollData'])) {
+            \Log::info('Storing poll data', [
+                'pollData' => $data['pollData'],
+                'selectableOptionsCount' => $data['pollData']['selectableOptionsCount'] ?? 'NOT SET',
+                'hasSelectableOptionsCount' => isset($data['pollData']['selectableOptionsCount'])
+            ]);
+            
             $metadata['poll_data'] = $data['pollData'];
             
             // Initialize vote counts for each option
@@ -868,18 +882,19 @@ class WhatsAppMessageController extends Controller
                 ->groupBy('chat');
                 
             // Main query to get chat metadata
-            $query = WhatsAppMessage::select([
-                'chat',
-                'sender',
-                'sending_time as last_message_time',
-                'content as last_message_content',
-                'type as last_message_type',
-                'status as last_message_status',
-                'read_at as last_message_read_at',
-                \DB::raw('(SELECT COUNT(*) FROM messages AS unread_messages WHERE unread_messages.chat = messages.chat AND unread_messages.read_at IS NULL) as unread_count'),
-            ])
-            ->whereIn('id', $latestMessages)
-            ->orderBy('sending_time', 'desc');
+            $query = WhatsAppMessage::with(['senderUser', 'chat', 'pollVotes'])
+                ->select([
+                    'chat',
+                    'sender',
+                    'sending_time as last_message_time',
+                    'content as last_message_content',
+                    'type as last_message_type',
+                    'status as last_message_status',
+                    'read_at as last_message_read_at',
+                    \DB::raw('(SELECT COUNT(*) FROM messages AS unread_messages WHERE unread_messages.chat = messages.chat AND unread_messages.read_at IS NULL) as unread_count'),
+                ])
+                ->whereIn('id', $latestMessages)
+                ->orderBy('sending_time', 'desc');
             
             // Apply search filter
             if ($request->filled('search')) {
@@ -1062,6 +1077,174 @@ class WhatsAppMessageController extends Controller
             return response()->json([
                 'status' => 'error',
                 'message' => 'Failed to process reaction',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+    
+    /**
+     * Handle incoming poll update messages (votes)
+     * 
+     * @param array $data
+     * @return JsonResponse
+     */
+    private function handlePollUpdate(array $data): JsonResponse
+    {
+        try {
+            \Log::info('Processing poll update (vote)', [
+                'pollMessageId' => $data['pollMessageId'] ?? null,
+                'sender' => $data['sender'] ?? null,
+                'senderTimestampMs' => $data['senderTimestampMs'] ?? null,
+                'selectedOptionIndex' => $data['selectedOptionIndex'] ?? null,
+                'selectedOptions' => $data['selectedOptions'] ?? [],
+            ]);
+            
+            // Find the poll message by WhatsApp message ID stored in metadata
+            $pollMessage = WhatsAppMessage::where('metadata->message_id', $data['pollMessageId'])
+                ->orWhere('id', $data['pollMessageId'])
+                ->first();
+            
+            if (!$pollMessage) {
+                \Log::warning('Poll message not found for vote', [
+                    'pollMessageId' => $data['pollMessageId']
+                ]);
+                
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Poll message not found'
+                ], 404);
+            }
+            
+            // Verify this is actually a poll message
+            if ($pollMessage->type !== 'poll') {
+                \Log::warning('Message is not a poll', [
+                    'message_id' => $pollMessage->id,
+                    'message_type' => $pollMessage->type
+                ]);
+                
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Message is not a poll'
+                ], 400);
+            }
+            
+            // Get or create user safely
+            $senderPhone = $data['senderJid'] ?? $data['sender'];
+            $user = $this->findOrCreateUserSafely($senderPhone);
+            
+            // Extract poll data from metadata
+            $pollData = $pollMessage->metadata['poll_data'] ?? [];
+            $options = $pollData['options'] ?? [];
+            
+            if (empty($options)) {
+                \Log::warning('Poll has no options', [
+                    'message_id' => $pollMessage->id
+                ]);
+                
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Poll has no options'
+                ], 400);
+            }
+            
+            // Get current vote counts from metadata
+            $metadata = $pollMessage->metadata;
+            $voteCounts = $metadata['poll_vote_counts'] ?? [];
+            
+            // Initialize vote counts if not present
+            foreach ($options as $index => $option) {
+                if (!isset($voteCounts[strval($index)])) {
+                    $voteCounts[strval($index)] = 0;
+                }
+            }
+            
+            // Process the vote
+            $votedOptions = [];
+            
+            if (isset($data['selectedOptionIndex']) && $data['selectedOptionIndex'] !== null) {
+                // Single vote
+                $optionIndex = $data['selectedOptionIndex'];
+                if ($optionIndex >= 0 && $optionIndex < count($options)) {
+                    $votedOptions[] = $optionIndex;
+                    $voteCounts[strval($optionIndex)]++;
+                } else {
+                    \Log::warning('Invalid option index for poll vote', [
+                        'option_index' => $optionIndex,
+                        'options_count' => count($options)
+                    ]);
+                }
+            } elseif (!empty($data['selectedOptions']) && is_array($data['selectedOptions'])) {
+                // Multiple votes
+                foreach ($data['selectedOptions'] as $optionIndex) {
+                    if ($optionIndex >= 0 && $optionIndex < count($options)) {
+                        $votedOptions[] = $optionIndex;
+                        $voteCounts[strval($optionIndex)]++;
+                    } else {
+                        \Log::warning('Invalid option index in multiple poll votes', [
+                            'option_index' => $optionIndex,
+                            'options_count' => count($options)
+                        ]);
+                    }
+                }
+            }
+            
+            // Update the poll message with new vote counts
+            $metadata['poll_vote_counts'] = $voteCounts;
+            $pollMessage->update(['metadata' => $metadata]);
+            
+            // Record the vote in the poll_votes table for tracking
+            foreach ($votedOptions as $optionIndex) {
+                \App\Models\PollVote::updateOrCreate([
+                    'message_id' => $pollMessage->id,
+                    'user_id' => $user->id,
+                    'option_index' => $optionIndex,
+                ], [
+                    'voted_at' => now(),
+                ]);
+            }
+            
+            \Log::info('Poll vote(s) recorded successfully', [
+                'poll_message_id' => $pollMessage->id,
+                'voter_user_id' => $user->id,
+                'poll_name' => $pollData['name'] ?? 'Unknown Poll',
+                'voted_options' => $votedOptions,
+                'updated_vote_counts' => $voteCounts
+            ]);
+            
+            // Reload the message with poll votes relationship
+            $pollMessage->load('pollVotes');
+            
+            // Broadcast the vote update via WebSocket service
+            try {
+                $websocketService = app(\App\Services\WebSocketService::class);
+                $websocketService->messageUpdated($pollMessage);
+            } catch (\Exception $e) {
+                \Log::error('Failed to broadcast poll vote update via WebSocket', [
+                    'error' => $e->getMessage(),
+                ]);
+            }
+            
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Poll vote(s) processed',
+                'data' => [
+                    'poll_message_id' => $pollMessage->id,
+                    'voter_id' => $user->id,
+                    'voted_options' => $votedOptions,
+                    'updated_vote_counts' => $voteCounts,
+                ]
+            ]);
+            
+        } catch (\Exception $e) {
+            \Log::error('Error processing poll update', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'data' => $data
+            ]);
+            
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to process poll vote',
                 'error' => $e->getMessage()
             ], 500);
         }
@@ -1417,28 +1600,78 @@ class WhatsAppMessageController extends Controller
         $metadata['poll_vote_counts'] = $voteCounts;
         $message->update(['metadata' => $metadata]);
         
-        // Broadcast the vote update
+        // Reload the message with poll votes relationship
+        $message->load('pollVotes');
+        
+        // Broadcast the vote update via WebSocket service
         try {
-            broadcast(new \App\Events\MessageReaction(
-                $message,
-                $user,
-                'poll_vote',
-                true
-            ))->toOthers();
+            $websocketService = app(\App\Services\WebSocketService::class);
+            $websocketService->messageUpdated($message);
         } catch (\Exception $e) {
-            \Log::error('Failed to broadcast poll vote update', [
+            \Log::error('Failed to broadcast poll vote update via WebSocket', [
                 'error' => $e->getMessage(),
             ]);
+        }
+        
+        // Send the vote to WhatsApp via receiver
+        try {
+            $chatJid = $message->chat->metadata['whatsapp_id'] ?? $message->chat;
+            $pollMessageId = $message->metadata['message_id'] ?? null;
+            
+            if ($chatJid && $pollMessageId) {
+                $receiverUrl = config('app.receiver_url', env('RECEIVER_URL', 'http://127.0.0.1:3000'));
+                $receiverUrl = rtrim($receiverUrl, '/');
+                
+                $http = \Illuminate\Support\Facades\Http::timeout(10)
+                    ->withHeaders([
+                        'Content-Type' => 'application/json',
+                        'Accept' => 'application/json',
+                        'X-API-Key' => config('app.receiver_api_key', ''),
+                    ]);
+                
+                $isHttps = str_starts_with(strtolower($receiverUrl), 'https://');
+                $allowInsecure = (bool) env('RECEIVER_TLS_INSECURE', false);
+                if ($isHttps && $allowInsecure) {
+                    $http = $http->withoutVerifying();
+                }
+                
+                $response = $http->post("{$receiverUrl}/send-poll-vote", [
+                    'chatJid' => $chatJid,
+                    'pollMessageId' => $pollMessageId,
+                    'selectedOptions' => [$optionIndex], // Array of selected option indices
+                ]);
+                
+                if ($response->successful()) {
+                    \Log::info('Poll vote sent to WhatsApp successfully', [
+                        'message_id' => $message->id,
+                        'option_index' => $optionIndex,
+                    ]);
+                } else {
+                    \Log::warning('Failed to send poll vote to WhatsApp', [
+                        'message_id' => $message->id,
+                        'status' => $response->status(),
+                        'response' => $response->body(),
+                    ]);
+                }
+            } else {
+                \Log::warning('Cannot send poll vote to WhatsApp: missing chat JID or poll message ID', [
+                    'message_id' => $message->id,
+                    'has_chat_jid' => !empty($chatJid),
+                    'has_poll_message_id' => !empty($pollMessageId),
+                ]);
+            }
+        } catch (\Exception $e) {
+            \Log::error('Error sending poll vote to WhatsApp', [
+                'error' => $e->getMessage(),
+                'message_id' => $message->id,
+            ]);
+            // Don't fail the request if WhatsApp sending fails
         }
         
         return response()->json([
             'status' => 'success',
             'message' => 'Vote recorded',
-            'data' => [
-                'option_index' => $optionIndex,
-                'vote_counts' => $voteCounts,
-                'total_votes' => array_sum($voteCounts),
-            ]
+            'data' => (new WhatsAppMessageResource($message))->toArray(request())
         ]);
     }
 }

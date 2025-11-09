@@ -62,6 +62,13 @@ type MessageDeletedEvent = {
   deleted_at: string;
 };
 
+type PollUpdateEvent = {
+  message_id: string;
+  chat_id: string;
+  poll_votes: any[];
+  metadata: any;
+};
+
 // Extended Window interface for Pusher and Echo
 declare global {
   interface Window {
@@ -83,9 +90,13 @@ const readReceiptCallbacks: Map<string, Set<(event: ReadReceiptEvent) => void>> 
 const reactionCallbacks: Map<string, Set<(event: ReactionEvent) => void>> = new Map();
 const messageEditedCallbacks: Map<string, Set<(event: MessageEditedEvent) => void>> = new Map();
 const messageDeletedCallbacks: Map<string, Set<(event: MessageDeletedEvent) => void>> = new Map();
+const pollUpdateCallbacks: Map<string, Set<(event: PollUpdateEvent) => void>> = new Map();
 
 // Cache for private channels per chat to avoid re-subscribing
 const privateChannels: Map<string, any> = new Map();
+
+// Track which event listeners have been set up for each channel
+const channelListenersSetup: Map<string, Set<string>> = new Map();
 
 // Type for our WebSocket service return value
 export interface WebSocketService {
@@ -99,6 +110,7 @@ export interface WebSocketService {
   listenForReactionUpdates(chatId: string, callback: (event: ReactionEvent) => void): () => void;
   listenForMessageEdited(chatId: string, callback: (event: MessageEditedEvent) => void): () => void;
   listenForMessageDeleted(chatId: string, callback: (event: MessageDeletedEvent) => void): () => void;
+  listenForPollUpdates(chatId: string, callback: (event: PollUpdateEvent) => void): () => void;
   notifyTyping(chatId: string, isTyping: boolean): Promise<void>;
   markAsRead(chatId: string, messageIds: string[]): Promise<void>;
   getSocketId(): string | null;
@@ -226,18 +238,31 @@ export function useWebSocket() {
     const callbacks = messageCallbacks.get(chatId)!;
     callbacks.add(callback);
 
-    // Set up the channel if not already done
-    if (!privateChannels.has(chatId)) {
-      const channel = echo?.private(`chat.${chatId}`);
+    // Get or create the channel
+    let channel = privateChannels.get(chatId);
+    if (!channel) {
+      channel = echo?.private(`chat.${chatId}`);
       if (channel) {
         privateChannels.set(chatId, channel);
+      }
+    }
 
+    // Set up listeners only if not already done for this channel
+    if (channel) {
+      if (!channelListenersSetup.has(chatId)) {
+        channelListenersSetup.set(chatId, new Set());
+      }
+      
+      const listenersSetup = channelListenersSetup.get(chatId)!;
+      
+      if (!listenersSetup.has('new-messages')) {
         channel.listen('.message.sent', (data: any) => {
           const callbacks = messageCallbacks.get(chatId);
           if (callbacks) {
             callbacks.forEach(cb => cb(data.message));
           }
         });
+        listenersSetup.add('new-messages');
       }
     }
 
@@ -312,27 +337,59 @@ export function useWebSocket() {
     const callbacks = readReceiptCallbacks.get(chatId)!;
     callbacks.add(callback);
 
-    // Set up the channel if not already done
-    if (!privateChannels.has(chatId)) {
-      const channel = echo?.private(`chat.${chatId}`);
+    // Get or create the channel
+    let channel = privateChannels.get(chatId);
+    if (!channel) {
+      channel = echo?.private(`chat.${chatId}`);
       if (channel) {
         privateChannels.set(chatId, channel);
+        console.log('[WebSocket] Created new private channel for chat:', chatId);
+      }
+    }
 
+    // Set up listeners only if not already done for this channel
+    if (channel) {
+      if (!channelListenersSetup.has(chatId)) {
+        channelListenersSetup.set(chatId, new Set());
+      }
+      
+      const listenersSetup = channelListenersSetup.get(chatId)!;
+      
+      if (!listenersSetup.has('read-receipts')) {
         // Listen for message status updates (includes read receipts)
         channel.listen('.message-status-updated', (data: any) => {
+          console.log('[WebSocket] Received .message-status-updated event:', {
+            chatId,
+            data,
+            timestamp: new Date().toISOString()
+          });
           const callbacks = readReceiptCallbacks.get(chatId);
           if (callbacks) {
+            console.log(`[WebSocket] Calling ${callbacks.size} read receipt callbacks`);
             callbacks.forEach(cb => cb(data));
+          } else {
+            console.warn('[WebSocket] No callbacks registered for read receipts in chat:', chatId);
           }
         });
         
         // Also listen for legacy .message.read events for backward compatibility
         channel.listen('.message.read', (data: any) => {
+          console.log('[WebSocket] Received .message.read event:', {
+            chatId,
+            data,
+            timestamp: new Date().toISOString()
+          });
           const callbacks = readReceiptCallbacks.get(chatId);
           if (callbacks) {
+            console.log(`[WebSocket] Calling ${callbacks.size} read receipt callbacks`);
             callbacks.forEach(cb => cb(data));
           }
         });
+        
+        listenersSetup.add('read-receipts');
+        console.log('[WebSocket] Set up read receipt listeners for chat:', chatId);
+      } else {
+        console.log('[WebSocket] Read receipt listeners already set up for chat:', chatId);
       }
     }
 
@@ -392,6 +449,11 @@ export function useWebSocket() {
     } catch (error) {
       console.error('Error marking messages as read:', error);
     }
+  };
+
+  // Get socket ID
+  const getSocketId = (): string | null => {
+    return socketId.value;
   };
 
   // Listen for reaction updates in a chat
@@ -508,9 +570,7 @@ export function useWebSocket() {
     if (!messageDeletedCallbacks.has(chatId)) {
       messageDeletedCallbacks.set(chatId, new Set());
     }
-
-    const callbacks = messageDeletedCallbacks.get(chatId)!;
-    callbacks.add(callback);
+    messageDeletedCallbacks.get(chatId)!.add(callback);
 
     // Get or create the channel
     let channel = privateChannels.get(chatId);
@@ -543,12 +603,47 @@ export function useWebSocket() {
     };
   };
 
-  // Get current socket ID
-  const getSocketId = (): string | null => {
-    return socketId.value;
+  // Listen for poll update events
+  const listenForPollUpdates = (
+    chatId: string,
+    callback: (event: PollUpdateEvent) => void
+  ): (() => void) => {
+    if (!pollUpdateCallbacks.has(chatId)) {
+      pollUpdateCallbacks.set(chatId, new Set());
+    }
+    pollUpdateCallbacks.get(chatId)!.add(callback);
+
+    // Get or create the channel
+    let channel = privateChannels.get(chatId);
+    if (!channel) {
+      channel = echo?.private(`chat.${chatId}`);
+      if (channel) {
+        privateChannels.set(chatId, channel);
+      }
+    }
+
+    // Add the listener
+    if (channel) {
+      channel.listen('.message.poll_updated', (data: any) => {
+        const callbacks = pollUpdateCallbacks.get(chatId);
+        if (callbacks) {
+          callbacks.forEach(cb => cb(data));
+        }
+      });
+    }
+
+    // Return cleanup function
+    return () => {
+      const callbacks = pollUpdateCallbacks.get(chatId);
+      if (callbacks) {
+        callbacks.delete(callback);
+        if (callbacks.size === 0) {
+          pollUpdateCallbacks.delete(chatId);
+        }
+      }
+    };
   };
 
-  // Clean up on component unmount
   onUnmounted(() => {
     disconnect();
   });
@@ -564,6 +659,7 @@ export function useWebSocket() {
     listenForReactionUpdates,
     listenForMessageEdited,
     listenForMessageDeleted,
+    listenForPollUpdates,
     notifyTyping,
     markAsRead,
     getSocketId

@@ -241,12 +241,29 @@ class MessageStatusController extends Controller
             $whatsappMessageId = $request->input('whatsapp_message_id');
             $status = $request->input('status');
 
+            // Add debug logging
+            Log::channel('whatsapp')->debug('Processing message status update', [
+                'whatsapp_message_id' => $whatsappMessageId,
+                'status' => $status,
+                'timestamp' => now()->toISOString(),
+            ]);
+
             // Find message by WhatsApp message ID in metadata
             $message = WhatsAppMessage::where('metadata->message_id', $whatsappMessageId)->first();
 
             if (!$message) {
                 // This is normal for edit/protocol messages which generate new IDs
                 // Return 404 silently without logging to avoid spam
+                Log::channel('whatsapp')->warning('Message not found for status update', [
+                    'whatsapp_message_id' => $whatsappMessageId,
+                    'status' => $status,
+                    'searched_in_metadata' => true,
+                    'total_messages_in_db' => WhatsAppMessage::count(),
+                    'recent_message_ids' => WhatsAppMessage::orderBy('id', 'desc')
+                        ->limit(5)
+                        ->pluck('metadata->message_id', 'id')
+                        ->toArray(),
+                ]);
                 return response()->json([
                     'status' => 'error',
                     'message' => 'Message not found',
@@ -255,9 +272,16 @@ class MessageStatusController extends Controller
 
             $updateData = ['status' => $status];
 
-            // Set read_at timestamp if status is 'read' and not already set
-            if ($status === 'read' && !$message->read_at) {
+            // Set read_at timestamp if status is 'read'
+            // IMPORTANT: Always update read_at when status is read to handle instant reads properly
+            if ($status === 'read') {
                 $updateData['read_at'] = now();
+                Log::channel('whatsapp')->info('Marking message as read', [
+                    'message_id' => $message->id,
+                    'whatsapp_message_id' => $whatsappMessageId,
+                    'previous_read_at' => $message->read_at?->toIso8601String(),
+                    'new_read_at' => now()->toIso8601String(),
+                ]);
             }
 
             // Add error message if provided and status is failed

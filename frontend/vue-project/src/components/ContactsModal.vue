@@ -66,9 +66,19 @@
               <button
                 @click="editContact(contact)"
                 class="p-2 text-blue-600 dark:text-gray-400 hover:bg-blue-50 dark:hover:bg-zinc-700 rounded-lg transition-colors"
+                title="Kontakt bearbeiten"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+              </button>
+              <button
+                @click="confirmDeleteContact(contact)"
+                class="p-2 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+                title="Kontakt löschen"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                 </svg>
               </button>
               <button
@@ -127,14 +137,14 @@
             />
           </div>
 
-          <!-- Info notice for editing contacts -->
-          <div v-if="editingContact" class="bg-blue-50 dark:bg-zinc-800 border border-blue-200 dark:border-zinc-700 rounded-lg p-3">
+          <!-- Info notice for contacts -->
+          <div class="bg-blue-50 dark:bg-zinc-800 border border-blue-200 dark:border-zinc-700 rounded-lg p-3">
             <div class="flex items-start gap-2">
               <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
               <p class="text-sm text-blue-800 dark:text-gray-300">
-                Die Übernahme der Umbenennung in der Chat-Liste kann ein wenig dauern.
+                {{ editingContact ? 'Kontakte sind unabhängig von Chats. Änderungen betreffen nur den Kontakt.' : 'Sie können Kontakte hinzufügen, auch wenn noch kein Chat existiert.' }}
               </p>
             </div>
           </div>
@@ -169,12 +179,17 @@ interface Contact {
   id: string
   name: string
   phone: string
+  profile_picture_url?: string
+  bio?: string
+  has_chat?: boolean
+  chat_id?: number
 }
 
 interface Props {
   isOpen: boolean
   prefilledPhone?: string
   chatIdToUpdate?: string
+  contactToEdit?: Contact | null
 }
 
 const props = defineProps<Props>()
@@ -232,27 +247,16 @@ const filteredContacts = computed(() => {
 const fetchContacts = async () => {
   loading.value = true
   try {
-    const response = await apiClient.get('/chats')
-    // Filter chats that have custom names (contacts)
-    // Include chats that don't look like auto-generated names (not just phone numbers)
-    contacts.value = response.data.data
-      .filter((chat: any) => {
-        if (!chat.name || chat.is_group) return false
-        
-        // Include if name doesn't look like a phone number (has letters or is a custom name)
-        // OR if it's the user's own number
-        const isPhoneNumberFormat = /^[+\d\s\-_@.]+$/.test(chat.name)
-        const phoneNumber = chat.participants?.[0]?.replace(/[^0-9]/g, '') || ''
-        const isOwnNumber = phoneNumber === '4915908115183'
-        
-        // Include if it's NOT a phone number format (custom name) OR if it's the user's own number
-        return !isPhoneNumberFormat || isOwnNumber
-      })
-      .map((chat: any) => ({
-        id: chat.id,
-        name: chat.name,
-        phone: chat.participants?.[0] || ''
-      }))
+    const response = await apiClient.get('/contacts')
+    contacts.value = response.data.data.map((contact: any) => ({
+      id: contact.id,
+      name: contact.name,
+      phone: formatPhoneForDisplay(contact.phone),
+      profile_picture_url: contact.profile_picture_url,
+      bio: contact.bio,
+      has_chat: contact.has_chat,
+      chat_id: contact.chat_id
+    }))
     
     console.log('Fetched contacts:', contacts.value)
   } catch (error) {
@@ -260,6 +264,12 @@ const fetchContacts = async () => {
   } finally {
     loading.value = false
   }
+}
+
+const formatPhoneForDisplay = (phone: string): string => {
+  // Remove @ suffix and format for display
+  const cleaned = phone.replace(/@.*$/, '')
+  return cleaned && /^\d+$/.test(cleaned) ? '+' + cleaned : cleaned
 }
 
 const editContact = (contact: Contact) => {
@@ -284,34 +294,20 @@ const saveContact = async () => {
   try {
     if (editingContact.value) {
       // Update existing contact
-      await apiClient.put(`/chats/${editingContact.value.id}`, {
-        name: contactForm.value.name
-      })
-    } else if (props.chatIdToUpdate) {
-      // Update existing chat (from "Zu Kontakten hinzufügen")
-      await apiClient.put(`/chats/${props.chatIdToUpdate}`, {
+      await apiClient.put(`/contacts/${editingContact.value.id}`, {
         name: contactForm.value.name
       })
     } else {
-      // Normalize phone number to WhatsApp JID format
-      let phoneNumber = contactForm.value.phone.trim()
-      
-      // Extract just the phone number part (before @)
-      const numberPart = phoneNumber.replace(/@.*$/, '').replace(/^\+/, '').replace(/[\s\-\(\)]/g, '')
-      
-      // Always normalize to the full WhatsApp JID format
-      phoneNumber = `${numberPart}@s.whatsapp.net`
-      
-      // Create new contact (create or update chat)
-      await apiClient.post('/chats', {
+      // Create new contact
+      await apiClient.post('/contacts', {
         name: contactForm.value.name,
-        participants: [phoneNumber],
-        is_group: false
+        phone: contactForm.value.phone
       })
     }
     
     await fetchContacts()
     closeContactForm()
+    emit('close')
   } catch (error) {
     console.error('Error saving contact:', error)
     alert('Fehler beim Speichern des Kontakts')
@@ -320,17 +316,68 @@ const saveContact = async () => {
   }
 }
 
-const openChat = (contact: Contact) => {
-  emit('chat-selected', contact.id)
-  emit('close')
+const openChat = async (contact: Contact) => {
+  try {
+    // If contact already has a chat, open it
+    if (contact.has_chat && contact.chat_id) {
+      emit('chat-selected', String(contact.chat_id))
+      emit('close')
+      return
+    }
+    
+    // Otherwise, create a new chat for this contact
+    const phoneNumber = contact.phone.replace(/^\+/, '').replace(/[\s\-\(\)]/g, '')
+    const jid = `${phoneNumber}@s.whatsapp.net`
+    
+    await apiClient.post('/chats', {
+      name: contact.name,
+      participants: [jid],
+      is_group: false
+    })
+    
+    // Refresh contacts to get the updated chat_id
+    await fetchContacts()
+    
+    // Find the updated contact and open its chat
+    const updatedContact = contacts.value.find(c => c.id === contact.id)
+    if (updatedContact?.chat_id) {
+      emit('chat-selected', String(updatedContact.chat_id))
+    }
+    
+    emit('close')
+  } catch (error) {
+    console.error('Error opening chat:', error)
+    alert('Fehler beim Öffnen des Chats')
+  }
+}
+
+const confirmDeleteContact = async (contact: Contact) => {
+  if (!confirm(`Möchten Sie den Kontakt "${contact.name}" wirklich löschen? Der zugehörige Chat bleibt erhalten.`)) {
+    return
+  }
+  
+  try {
+    // Delete the contact (chat remains untouched)
+    await apiClient.delete(`/contacts/${contact.id}`)
+    
+    // Refresh contacts list
+    await fetchContacts()
+  } catch (error) {
+    console.error('Error deleting contact:', error)
+    alert('Fehler beim Löschen des Kontakts')
+  }
 }
 
 watch(() => props.isOpen, (isOpen) => {
   if (isOpen) {
     fetchContacts()
     
-    // If a phone number is pre-filled, open the add contact form
-    if (props.prefilledPhone) {
+    // If a contact to edit is provided, open the edit form
+    if (props.contactToEdit) {
+      editContact(props.contactToEdit)
+    }
+    // Otherwise, if a phone number is pre-filled, open the add contact form
+    else if (props.prefilledPhone) {
       showAddContact.value = true
       contactForm.value = {
         name: '',

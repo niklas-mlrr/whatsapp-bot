@@ -2,6 +2,7 @@ import { downloadMediaMessage, proto } from '@whiskeysockets/baileys';
 import { logger } from './logger.js';
 import { sendToPHP, sendGroupMetadata } from './apiClient.js';
 import config from './config.js';
+import { pollMessagesStore, pollUpdatesStore } from '../index.js';
 import { fetchContactProfilePicture, fetchContactStatus, recordLidToPhone, convertLidToPhoneJid, addEditMessageId, addProtocolMessageId, shouldSendGroupMetadata } from './whatsappClient.js';
 import * as apiClient from './apiClient.js';
 
@@ -177,11 +178,25 @@ async function handleMessages(sock, m) {
                         
                         // Send to backend using global deduplication
                         // Already imported at top: sendGroupMetadata
-                        const participants = groupMetadata.participants?.map(p => ({
-                            jid: convertLidToPhoneJid(sock, p.id),
-                            isAdmin: p.admin === 'admin',
-                            isSuperAdmin: p.admin === 'superadmin'
-                        })).filter(pp => typeof pp.jid === 'string' && pp.jid.endsWith('@s.whatsapp.net')) || [];
+                        // Process participants - prioritize 'jid' field over 'id' field
+                        const participants = (groupMetadata.participants || []).map(p => {
+                            let phoneJid = null;
+                            
+                            if (p.jid && typeof p.jid === 'string' && p.jid.endsWith('@s.whatsapp.net')) {
+                                phoneJid = p.jid;
+                            } else if (p.id) {
+                                const converted = convertLidToPhoneJid(sock, p.id);
+                                if (converted && converted.endsWith('@s.whatsapp.net')) {
+                                    phoneJid = converted;
+                                }
+                            }
+
+                            return phoneJid ? {
+                                jid: phoneJid,
+                                isAdmin: p.admin === 'admin',
+                                isSuperAdmin: p.admin === 'superadmin'
+                            } : null;
+                        }).filter(p => p !== null);
                         
                         if (shouldSendGroupMetadata(groupMetadata.id, groupMetadata)) {
                             await sendGroupMetadata({
@@ -959,19 +974,32 @@ async function handlePollMessage(msg, remoteJid, senderJid = null, senderProfile
             pollName: pollData.name,
             optionsCount: pollData.options?.length || 0,
             pollType: pollData.pollType,
-            contentType: pollData.pollContentType
+            contentType: pollData.pollContentType,
+            rawSelectableOptionsCount: pollData.selectableOptionsCount,
+            hasSelectableOptionsCount: 'selectableOptionsCount' in pollData
         }, 'Processing poll message');
         
         // Extract poll information
         const pollInfo = {
-            name: pollData.name || 'Poll',
-            options: pollData.options?.map(option => ({
-                optionName: option.optionName || ''
-            })) || [],
-            selectableOptionsCount: pollData.selectableOptionsCount || 0,
-            pollContentType: pollData.pollContentType || 'TEXT',
-            pollType: pollData.pollType || 'POLL'
+            name: String(pollData.name || 'Poll'),
+            options: pollData.options?.map((option, index) => ({
+                optionName: String(option.optionName || `Option ${index + 1}`).trim()
+            })).filter(option => option.optionName !== '') || [],
+            selectableOptionsCount: pollData.selectableOptionsCount !== undefined ? parseInt(pollData.selectableOptionsCount) : 0,
+            pollContentType: 'TEXT', // Always TEXT for WhatsApp polls
+            pollType: 'POLL' // Always POLL for WhatsApp polls
         };
+        
+        logger.info({
+            pollInfoCreated: {
+                selectableOptionsCount: pollInfo.selectableOptionsCount,
+                type: typeof pollInfo.selectableOptionsCount
+            }
+        }, 'Poll info structure created');
+        
+        // Store the poll message for vote aggregation
+        pollMessagesStore.set(messageId, msg);
+        logger.debug({ messageId }, 'Stored poll message for vote aggregation');
         
         // Create a readable content representation
         const content = `📊 **${pollInfo.name}**\n\n` + 
@@ -997,6 +1025,19 @@ async function handlePollMessage(msg, remoteJid, senderJid = null, senderProfile
                 senderBio: messageData.senderBio ? '[Bio present]' : null
             }
         }, 'Sending poll message data to backend');
+        
+        // Additional debug for poll data structure
+        logger.debug({
+            pollDataStructure: {
+                hasName: !!pollInfo.name,
+                nameLength: pollInfo.name?.length || 0,
+                optionsCount: pollInfo.options?.length || 0,
+                options: pollInfo.options?.map((o, i) => ({ index: i, hasName: !!o.optionName, nameLength: o.optionName?.length || 0 })),
+                selectableOptionsCount: pollInfo.selectableOptionsCount,
+                pollContentType: pollInfo.pollContentType,
+                pollType: pollInfo.pollType
+            }
+        }, 'Poll data structure validation');
         
         await sendToPHP(messageData);
         
@@ -1038,6 +1079,41 @@ async function handlePollUpdateMessage(msg, remoteJid) {
             return;
         }
         
+        // Extract vote information
+        // The poll update contains the selected option in various ways depending on the poll type
+        let selectedOptionIndex = null;
+        let selectedOptions = [];
+        
+        if (pollUpdate.pollUpdateSentByMe && pollUpdate.pollUpdateSentByMe.votedOption) {
+            // For single-choice polls
+            selectedOptionIndex = pollUpdate.pollUpdateSentByMe.votedOption;
+        } else if (pollUpdate.pollUpdateSentByMe && pollUpdate.pollUpdateSentByMe.votedOptions) {
+            // For multiple-choice polls
+            selectedOptions = pollUpdate.pollUpdateSentByMe.votedOptions;
+        } else if (pollUpdate.votedOption !== undefined) {
+            // Alternative location for single choice
+            selectedOptionIndex = pollUpdate.votedOption;
+        } else if (pollUpdate.votedOptions) {
+            // Alternative location for multiple choice
+            selectedOptions = pollUpdate.votedOptions;
+        }
+        
+        logger.debug({
+            remoteJid,
+            messageId,
+            pollMessageId,
+            selectedOptionIndex,
+            selectedOptions,
+            hasVote: selectedOptionIndex !== null || selectedOptions.length > 0
+        }, 'Extracted vote information from poll update');
+        
+        // Store the poll update for vote aggregation
+        if (!pollUpdatesStore.has(pollMessageId)) {
+            pollUpdatesStore.set(pollMessageId, []);
+        }
+        pollUpdatesStore.get(pollMessageId).push(msg);
+        logger.debug({ pollMessageId, updateCount: pollUpdatesStore.get(pollMessageId).length }, 'Stored poll update for vote aggregation');
+        
         // Send the poll update to the backend
         // The backend will need to handle updating vote counts
         const messageData = {
@@ -1046,7 +1122,9 @@ async function handlePollUpdateMessage(msg, remoteJid) {
             type: 'poll_update',
             messageId: messageId,
             pollMessageId: pollMessageId,
-            senderTimestampMs: pollUpdate.senderTimestampMs
+            senderTimestampMs: pollUpdate.senderTimestampMs,
+            selectedOptionIndex: selectedOptionIndex,
+            selectedOptions: selectedOptions
         };
         
         await sendToPHP(messageData);

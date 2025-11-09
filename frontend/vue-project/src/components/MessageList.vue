@@ -85,6 +85,7 @@
             @reply-to-message="handleReplyToMessage"
             @edit-message="handleEditMessage"
             @delete-message="handleDeleteMessage"
+            @message-updated="handleMessageUpdated"
           />
         </template>
       </template>
@@ -163,6 +164,7 @@ interface Message {
   chat?: string | { id: string; name: string };
   created_at: string;
   updated_at: string;
+  read_at?: string; // Timestamp when message was read
   read_by?: string[];
   temp_id?: string;
   status?: 'sending' | 'sent' | 'delivered' | 'read' | 'failed' | string;
@@ -232,15 +234,36 @@ const emit = defineEmits(['load-more', 'message-read', 'typing', 'reply-to-messa
 
 // Pinia chat store for resolving contact names/avatars for group senders
 const chatStore = useChatStore();
+
+// Fetch contacts for resolving sender names in group chats
+const fetchContacts = async () => {
+  try {
+    const response = await apiClient.get('/contacts');
+    contacts.value = response.data.data || [];
+    console.log('[MessageList] Fetched contacts:', contacts.value.length, contacts.value);
+  } catch (error) {
+    console.error('[MessageList] Error fetching contacts:', error);
+    contacts.value = [];
+  }
+};
+
 onMounted(() => {
   // Ensure chats are loaded once; ignore errors (UI has separate fetch paths)
   if (!Array.isArray((chatStore as any).chats) || (chatStore as any).chats.length === 0) {
     try { (chatStore as any).fetchChats?.(); } catch {}
   }
+  // Fetch contacts for group message sender name resolution
+  fetchContacts();
+});
+
+// Watch for chat changes and refresh contacts
+watch(() => props.chat, () => {
+  fetchContacts();
 });
 
 // State
 const messages = ref<Message[]>([]);
+const contacts = ref<any[]>([]);
 const loading = ref(true);
 const isLoadingMore = ref(false);
 const hasMoreMessages = ref(true);
@@ -282,25 +305,48 @@ const {
   listenForReactionUpdates,
   listenForMessageEdited,
   listenForMessageDeleted,
+  listenForPollUpdates,
   notifyTyping,
   markAsRead
 } = useWebSocket();
 
+// Computed - this will be reactive to contacts changes
+const messagesWithResolvedNames = computed(() => {
+  // This computed property depends on both messages and contacts
+  // When contacts change, it will re-compute sender names
+  console.log('[messagesWithResolvedNames] Computing with', messages.value.length, 'messages and', contacts.value.length, 'contacts');
+  return messages.value.map(msg => {
+    if (!props.isGroupChat || isMine(msg)) {
+      return msg;
+    }
+    // Re-resolve sender name using current contacts
+    const resolvedName = getSenderName(msg);
+    if (resolvedName) {
+      console.log('[messagesWithResolvedNames] Resolved name for message:', resolvedName);
+      return {
+        ...msg,
+        sender_name: resolvedName
+      };
+    }
+    return msg;
+  });
+});
+
 // Computed
 const sortedMessages = computed(() => {
   try {
-    if (!messages.value) {
+    if (!messagesWithResolvedNames.value) {
       return [];
     }
     
-    if (!Array.isArray(messages.value)) {
-      console.error('messages.value is not an array:', messages.value);
+    if (!Array.isArray(messagesWithResolvedNames.value)) {
+      console.error('messagesWithResolvedNames.value is not an array:', messagesWithResolvedNames.value);
       error.value = new Error('Invalid messages format');
       return [];
     }
     
     // Ensure all messages have required fields
-    const validMessages = messages.value.filter(msg => {
+    const validMessages = messagesWithResolvedNames.value.filter(msg => {
       try {
         if (!msg) {
           return false;
@@ -430,10 +476,13 @@ const findMemberForMessage = (message: Message): ChatMember | undefined => {
 };
 
 const getSenderName = (message: Message): string => {
-  if (!props.isGroupChat || isCurrentUser(message)) return '';
-  const sender = findMemberForMessage(message);
-  if (sender?.name && String(sender.name).trim()) return String(sender.name);
-  // Try to pull name from a known direct chat contact
+  console.log('[getSenderName] Called for message:', message.id);
+  if (!props.isGroupChat || isCurrentUser(message)) {
+    console.log('[getSenderName] Skipping - not group chat or is current user');
+    return '';
+  }
+  
+  // Collect phone candidates from message FIRST
   const anyMsg = message as any;
   const meta = (anyMsg.metadata && typeof anyMsg.metadata === 'object') ? anyMsg.metadata : {};
   const phoneCandidates: string[] = [];
@@ -442,6 +491,45 @@ const getSenderName = (message: Message): string => {
   if (typeof meta.remoteJid === 'string') phoneCandidates.push(meta.remoteJid);
   if (typeof anyMsg.senderJid === 'string') phoneCandidates.push(anyMsg.senderJid);
   if (typeof anyMsg.from === 'string') phoneCandidates.push(anyMsg.from);
+  
+  // Debug logging
+  console.log('[getSenderName] Phone candidates:', phoneCandidates);
+  console.log('[getSenderName] Contacts count:', contacts.value.length);
+  
+  // FIRST check contacts table (highest priority)
+  if (phoneCandidates.length > 0 && contacts.value.length > 0) {
+    for (const candidate of phoneCandidates) {
+      const normalizedCandidate = normalizePhone(candidate);
+      console.log('[getSenderName] Checking candidate:', candidate, '-> normalized:', normalizedCandidate);
+      if (normalizedCandidate) {
+        const contact = contacts.value.find((c: any) => {
+          const contactPhone = normalizePhone(c.phone);
+          console.log('[getSenderName] Comparing with contact:', c.phone, '-> normalized:', contactPhone, 'match:', contactPhone === normalizedCandidate);
+          return contactPhone === normalizedCandidate;
+        });
+        if (contact?.name && String(contact.name).trim()) {
+          console.log('[getSenderName] Found contact match:', contact.name);
+          return String(contact.name);
+        }
+      }
+    }
+  }
+  
+  // THEN check members (but only if name is not a phone number)
+  const sender = findMemberForMessage(message);
+  console.log('[getSenderName] Found member:', sender);
+  if (sender?.name && String(sender.name).trim()) {
+    // Check if the member name is actually a phone number
+    const memberName = String(sender.name).trim();
+    const isPhoneNumber = /^[+\d\s()-]+$/.test(memberName);
+    if (!isPhoneNumber) {
+      console.log('[getSenderName] Returning member name:', sender.name);
+      return memberName;
+    }
+    console.log('[getSenderName] Member name is a phone number, skipping');
+  }
+  
+  // Then try to pull name from a known direct chat contact
   const contactChat = findDirectChatByAnyPhone(phoneCandidates);
   if (contactChat?.name && String(contactChat.name).trim()) return String(contactChat.name);
   return '';
@@ -541,9 +629,9 @@ const formatDayLabel = (dateString: string): string => {
   const today = new Date();
   const yesterday = new Date();
   yesterday.setDate(today.getDate() - 1);
-  if (isSameDay(d, today)) return 'Today';
-  if (isSameDay(d, yesterday)) return 'Yesterday';
-  return d.toLocaleDateString([], { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' });
+  if (isSameDay(d, today)) return 'Heute';
+  if (isSameDay(d, yesterday)) return 'Gestern';
+  return d.toLocaleDateString('de-DE', { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' });
 };
 
 // Backfill reaction_users labels for all messages without it
@@ -1106,11 +1194,20 @@ const handleDeleteMessage = async (messageId: string | number) => {
   } catch (error) {
     console.error('Failed to delete message:', error);
     alert('Fehler beim Löschen der Nachricht');
-    
-    // Revert the message if deletion failed
-    // You might want to refetch the message here
   }
 };
+
+const handleMessageUpdated = (updatedMessage: any) => {
+  const messageIndex = messages.value.findIndex(m => m.id === updatedMessage.id);
+  if (messageIndex !== -1) {
+    // Update the entire message with new data (including poll_votes, metadata, etc.)
+    messages.value[messageIndex] = {
+      ...messages.value[messageIndex],
+      ...updatedMessage
+    };
+    console.log('Message updated:', updatedMessage);
+  }
+}
 
 // Image preview handlers
 const handleOpenImagePreview = (payload: { src: string; caption?: string }) => {
@@ -1497,17 +1594,30 @@ const setupWebSocketListeners = () => {
     
     // Listen for read receipts
     const readReceiptUnsubscribe = listenForReadReceipts(props.chat.toString(), (event: any) => {
+      console.log('Read receipt event received:', event);
+      
       if (!event || !event.message_id) {
+        console.log('Invalid read receipt event:', event);
         return;
       }
       
       messages.value = messages.value.map(msg => {
         if (msg.id === event.message_id) {
-          return {
+          console.log(`Updating message ${msg.id} status to ${event.status}`);
+          
+          // Update message status and read_at timestamp
+          const updatedMsg = {
             ...msg,
-            status: 'read' as const,
-            read_by: [...(msg.read_by || []), event.user_id].filter((v, i, a) => a.indexOf(v) === i)
+            status: event.status || 'read',
+            read_at: event.read_at || msg.read_at
           };
+          
+          // Update read_by array if user_id is provided
+          if (event.user_id && msg.read_by) {
+            updatedMsg.read_by = [...msg.read_by, event.user_id].filter((v, i, a) => a.indexOf(v) === i);
+          }
+          
+          return updatedMsg;
         }
         return msg;
       });
@@ -1624,6 +1734,24 @@ const setupWebSocketListeners = () => {
       }
     });
     
+    // Listen for poll update events
+    const pollUnsubscribe = listenForPollUpdates(props.chat.toString(), (event: any) => {
+      if (!event || !event.message_id) {
+        return;
+      }
+      
+      // Find and update the poll message with new vote data
+      const messageIndex = messages.value.findIndex(m => String(m.id) === String(event.message_id));
+      if (messageIndex !== -1) {
+        messages.value[messageIndex] = {
+          ...messages.value[messageIndex],
+          poll_votes: event.poll_votes,
+          metadata: event.metadata
+        } as any;
+        console.log('Poll updated via WebSocket:', event);
+      }
+    });
+    
     // Store unsubscribe functions
     const unsubscribeFunctions = {
       newMessage: newMessageUnsubscribe,
@@ -1631,7 +1759,8 @@ const setupWebSocketListeners = () => {
       readReceipt: readReceiptUnsubscribe,
       reaction: reactionUnsubscribe,
       edited: editedUnsubscribe,
-      deleted: deletedUnsubscribe
+      deleted: deletedUnsubscribe,
+      poll: pollUnsubscribe
     };
     
     // Clean up WebSocket listeners on unmount

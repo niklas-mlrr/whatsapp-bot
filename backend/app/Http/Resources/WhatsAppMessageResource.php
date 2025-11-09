@@ -118,6 +118,17 @@ class WhatsAppMessageResource extends JsonResource
             'reactions' => $this->reactions ?? [],
             'metadata' => $this->metadata ?? [],
             
+            // Poll votes (for tracking user votes)
+            'poll_votes' => $this->when($this->type === 'poll', function () {
+                return $this->pollVotes->map(function ($vote) {
+                    return [
+                        'user_id' => $vote->user_id,
+                        'option_index' => $vote->option_index,
+                        'voted_at' => $vote->voted_at?->toIso8601String(),
+                    ];
+                });
+            }),
+            
             // Reply/Quote information
             'reply_to_message_id' => $this->reply_to_message_id,
             'quoted_message' => $this->quoted_message,

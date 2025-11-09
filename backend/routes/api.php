@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use App\Http\Controllers\Api\WhatsAppGroupController;
 use App\Http\Controllers\Api\ImageProxyController;
+use App\Http\Controllers\Api\ContactController;
 
 /*
 |--------------------------------------------------------------------------
@@ -370,6 +371,10 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     Route::post('/presence/online', [PresenceController::class, 'setOnline']);
     Route::post('/presence/away', [PresenceController::class, 'setAway']);
     Route::post('/presence/typing/{chat}', [PresenceController::class, 'setTyping']);
+
+    // Contacts management
+    Route::apiResource('contacts', ContactController::class);
+    Route::post('/contacts/find-by-phone', [ContactController::class, 'findByPhone']);
 });
 
 // Debug endpoint for chats

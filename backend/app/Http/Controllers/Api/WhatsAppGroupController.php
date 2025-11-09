@@ -14,14 +14,15 @@ use Illuminate\Support\Facades\Hash;
 class WhatsAppGroupController extends Controller
 {
     /**
-     * Normalize a WhatsApp JID: accept only real phone JIDs for participants list.
-     * Returns the JID if it's a phone JID (..@s.whatsapp.net). Returns null otherwise.
+     * Normalize a WhatsApp JID: accept phone JIDs and LID (Linked Device IDs) for participants list.
+     * Returns the JID if it's a phone JID (..@s.whatsapp.net) or LID (..@lid). Returns null otherwise.
      */
     private function normalizeJid(?string $jid): ?string
     {
         if (!$jid) return $jid;
         $jid = strtolower(trim($jid));
-        if (preg_match('/^\+?\d{5,}@s\.whatsapp\.net$/', $jid)) {
+        // Accept phone JIDs (@s.whatsapp.net) and LIDs (@lid) for communities
+        if (preg_match('/^\+?\d{5,}@s\.whatsapp\.net$/', $jid) || preg_match('/^\d{5,}@lid$/', $jid)) {
             return $jid;
         }
         return null;

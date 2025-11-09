@@ -272,6 +272,12 @@ const sendToPHP = async (payload) => {
  */
 const updateMessageStatus = async (whatsappMessageId, status) => {
     try {
+        logger.info({ 
+            whatsappMessageId, 
+            status,
+            timestamp: new Date().toISOString()
+        }, 'Sending message status update to backend');
+        
         // Extract base URL without the webhook path
         const baseUrl = config.backend.apiUrl.replace(/\/api\/whatsapp-webhook\/?$/, '');
         
@@ -290,11 +296,34 @@ const updateMessageStatus = async (whatsappMessageId, status) => {
         
         if (response.status >= 400) {
             // 404 is expected for edit/protocol messages which generate new IDs
-            // Don't log these at all to avoid spam
+            // Log these at warning level for debugging
+            if (response.status === 404) {
+                logger.warning({ 
+                    whatsappMessageId, 
+                    status,
+                    responseStatus: response.status,
+                    responseData: response.data,
+                    timestamp: new Date().toISOString()
+                }, 'Message not found for status update (expected for edit/protocol messages)');
+            } else {
+                logger.error({ 
+                    whatsappMessageId, 
+                    status,
+                    responseStatus: response.status,
+                    responseData: response.data,
+                    timestamp: new Date().toISOString()
+                }, 'Backend returned error for status update');
+            }
             return null;
         }
         
-        logger.debug({ whatsappMessageId, status }, 'Message status updated successfully');
+        logger.info({ 
+            whatsappMessageId, 
+            status,
+            responseStatus: response.status,
+            responseData: response.data,
+            timestamp: new Date().toISOString()
+        }, 'Message status updated successfully');
         return response.data;
     } catch (error) {
         logger.error({ 
@@ -302,6 +331,9 @@ const updateMessageStatus = async (whatsappMessageId, status) => {
             stack: error.stack,
             whatsappMessageId,
             status,
+            responseStatus: error.response?.status,
+            responseData: error.response?.data,
+            timestamp: new Date().toISOString()
         }, 'Error updating message status');
         // Don't throw - status updates are not critical
         return null;

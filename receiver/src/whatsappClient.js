@@ -185,6 +185,7 @@ async function fetchContactStatus(sock, jid) {
     }
 }
 
+
 /**
  * Convert LID to phone number JID using socket's contact store
  * @param {object} sock - The socket instance
@@ -462,11 +463,26 @@ async function connectToWhatsApp() {
                     for (const g of Object.values(all || {})) {
                         try {
                             const groupProfilePicture = await fetchContactProfilePicture(sock, g.id);
-                            const participants = (g.participants || []).map(p => ({
-                                jid: convertLidToPhoneJid(sock, p.id),
-                                isAdmin: p.admin === 'admin',
-                                isSuperAdmin: p.admin === 'superadmin'
-                            })).filter(pp => typeof pp.jid === 'string' && pp.jid.endsWith('@s.whatsapp.net'));
+                            
+                            // Process participants - prioritize 'jid' field over 'id' field
+                            const participants = (g.participants || []).map(p => {
+                                let phoneJid = null;
+                                
+                                if (p.jid && typeof p.jid === 'string' && p.jid.endsWith('@s.whatsapp.net')) {
+                                    phoneJid = p.jid;
+                                } else if (p.id) {
+                                    const converted = convertLidToPhoneJid(sock, p.id);
+                                    if (converted && converted.endsWith('@s.whatsapp.net')) {
+                                        phoneJid = converted;
+                                    }
+                                }
+
+                                return phoneJid ? {
+                                    jid: phoneJid,
+                                    isAdmin: p.admin === 'admin',
+                                    isSuperAdmin: p.admin === 'superadmin'
+                                } : null;
+                            }).filter(p => p !== null);
 
                             if (shouldSendGroupMetadata(g.id, g)) {
                                 logger.info({
@@ -546,28 +562,204 @@ async function connectToWhatsApp() {
                         fullGroupStructure: JSON.stringify(group, null, 2)
                     }, 'Group metadata update received');
 
+                    // Skip community parent groups (isCommunity: true) - only process regular groups and announcement groups
+                    if (group.isCommunity === true) {
+                        logger.info({
+                            groupId: group.id,
+                            groupName: group.subject,
+                            isCommunity: true
+                        }, 'Skipping community parent group - not a chat group');
+                        continue;
+                    }
+
                     // Fetch group profile picture
                     const groupProfilePicture = await fetchContactProfilePicture(sock, group.id);
 
                     if (shouldSendGroupMetadata(group.id, group)) {
+                        // Process participants with enhanced logging
+                        let rawParticipants = group.participants || [];
+                        logger.info({
+                            groupId: group.id,
+                            rawParticipantCount: rawParticipants.length,
+                            sampleParticipant: rawParticipants[0] ? JSON.stringify(rawParticipants[0]) : 'none',
+                            isCommunityAnnounce: group.isCommunityAnnounce || false,
+                            linkedParent: group.linkedParent || null
+                        }, 'Processing participants for community group');
+
+                        // For community announcement groups, try to fetch parent community participants
+                        // to see if they have phone numbers
+                        if (group.isCommunityAnnounce && group.linkedParent) {
+                            try {
+                                logger.info({ 
+                                    announcementGroupId: group.id,
+                                    parentGroupId: group.linkedParent 
+                                }, 'Fetching parent community group metadata to check for participant phone numbers');
+                                
+                                const parentMetadata = await sock.groupMetadata(group.linkedParent);
+                                logger.info({
+                                    parentGroupId: group.linkedParent,
+                                    parentParticipantCount: parentMetadata.participants?.length || 0,
+                                    allParentParticipants: JSON.stringify(parentMetadata.participants, null, 2)
+                                }, 'Fetched parent community group metadata');
+                                
+                                // Build a map of LID -> phone JID from parent group
+                                const lidToPhoneFromParent = new Map();
+                                for (const pp of parentMetadata.participants || []) {
+                                    if (pp.id && pp.jid && pp.jid.endsWith('@s.whatsapp.net')) {
+                                        lidToPhoneFromParent.set(pp.id, pp.jid);
+                                        // Also record in global cache
+                                        recordLidToPhone(pp.id, pp.jid);
+                                        logger.info({ lid: pp.id, phoneJid: pp.jid }, 'Found phone JID in parent community group');
+                                    }
+                                }
+                                
+                                // Enrich announcement group participants with parent group data
+                                rawParticipants = rawParticipants.map(p => {
+                                    if (!p.jid || p.jid === '') {
+                                        const phoneFromParent = lidToPhoneFromParent.get(p.id);
+                                        if (phoneFromParent) {
+                                            logger.info({ 
+                                                lid: p.id, 
+                                                phoneJid: phoneFromParent 
+                                            }, 'Enriched participant with phone JID from parent community group');
+                                            return { ...p, jid: phoneFromParent };
+                                        }
+                                    }
+                                    return p;
+                                });
+                            } catch (err) {
+                                logger.warn({ 
+                                    error: err.message,
+                                    parentGroupId: group.linkedParent 
+                                }, 'Could not fetch parent community group metadata');
+                            }
+                        }
+
+                        // Try to query contacts store for any additional LID mappings
+                        logger.info({
+                            groupId: group.id,
+                            contactStoreSize: Object.keys(sock?.contacts || {}).length,
+                            sampleContacts: Object.entries(sock?.contacts || {}).slice(0, 3).map(([jid, info]) => ({
+                                jid,
+                                lid: (typeof info?.lid === 'object') ? (info.lid?.jid || info.lid?.toString?.()) : info?.lid,
+                                name: info?.name || info?.notify
+                            }))
+                        }, 'Checking contact store for LID mappings');
+                        
+                        // Scan contact store for any LIDs that match our unresolved participants
+                        const contactLidMap = new Map();
+                        try {
+                            const contacts = sock?.contacts || {};
+                            for (const [contactJid, contactInfo] of Object.entries(contacts)) {
+                                const lidStr = (typeof contactInfo?.lid === 'object') 
+                                    ? (contactInfo.lid?.jid || contactInfo.lid?.toString?.()) 
+                                    : contactInfo?.lid;
+                                if (lidStr && contactJid.endsWith('@s.whatsapp.net')) {
+                                    contactLidMap.set(lidStr, contactJid);
+                                }
+                            }
+                            logger.info({
+                                groupId: group.id,
+                                contactLidMapSize: contactLidMap.size,
+                                allLids: Array.from(contactLidMap.keys())
+                            }, 'Built LID map from contact store');
+                        } catch (err) {
+                            logger.warn({ error: err.message }, 'Failed to build contact LID map');
+                        }
+                        
+                        // Enrich participants with contact store data
+                        rawParticipants = rawParticipants.map(p => {
+                            if ((!p.jid || p.jid === '') && p.id) {
+                                const phoneFromContacts = contactLidMap.get(p.id);
+                                if (phoneFromContacts) {
+                                    logger.info({ 
+                                        lid: p.id, 
+                                        phoneJid: phoneFromContacts 
+                                    }, 'Enriched participant with phone JID from contact store');
+                                    recordLidToPhone(p.id, phoneFromContacts);
+                                    return { ...p, jid: phoneFromContacts };
+                                }
+                            }
+                            return p;
+                        });
+
+                        // Process participants
+                        const participants = [];
+                        const unresolvedLids = [];
+                        
+                        for (const p of rawParticipants) {
+                            // For community groups, participants have both 'id' (@lid) and 'jid' (phone number)
+                            // Prioritize 'jid' field if available, otherwise try to convert 'id'
+                            let phoneJid = null;
+                            
+                            if (p.jid && typeof p.jid === 'string' && p.jid.endsWith('@s.whatsapp.net')) {
+                                // Direct phone JID available
+                                phoneJid = p.jid;
+                                logger.debug({ lid: p.id, phoneJid: p.jid }, 'Using direct phone JID from participant.jid');
+                            } else if (p.id) {
+                                // Try to convert LID to phone JID via cached mapping
+                                const converted = convertLidToPhoneJid(sock, p.id);
+                                if (converted && converted.endsWith('@s.whatsapp.net')) {
+                                    phoneJid = converted;
+                                    logger.debug({ lid: p.id, phoneJid: converted }, 'Converted LID to phone JID via cache');
+                                } else {
+                                    // Cannot resolve this LID yet - WhatsApp doesn't provide phone numbers for all community participants
+                                    // We'll learn their phone numbers when they send messages
+                                    unresolvedLids.push(p.id);
+                                    logger.debug({ 
+                                        participantId: p.id, 
+                                        participantJid: p.jid
+                                    }, 'Cannot resolve LID to phone JID yet - will update when participant sends a message');
+                                }
+                            }
+
+                            if (phoneJid) {
+                                participants.push({
+                                    jid: phoneJid,
+                                    isAdmin: p.admin === 'admin',
+                                    isSuperAdmin: p.admin === 'superadmin'
+                                });
+                            }
+                        }
+                        
+                        if (unresolvedLids.length > 0) {
+                            logger.warn({
+                                groupId: group.id,
+                                unresolvedCount: unresolvedLids.length,
+                                unresolvedLids: unresolvedLids,
+                                note: 'WhatsApp API limitation: These LIDs may be system accounts or participants whose phone numbers are hidden. Real participants will be added when they send messages.'
+                            }, 'Some community participants could not be resolved');
+                            
+                            // Log detailed info about each unresolved participant
+                            for (const lid of unresolvedLids) {
+                                const participant = rawParticipants.find(p => p.id === lid);
+                                logger.warn({
+                                    lid,
+                                    fullParticipantData: JSON.stringify(participant),
+                                    isAdmin: participant?.admin || 'none',
+                                    hasJid: !!(participant?.jid),
+                                    jidValue: participant?.jid || 'empty'
+                                }, 'Unresolved participant details');
+                            }
+                        }
+
                         logger.info({
                             groupId: group.id,
                             groupName: group.subject,
-                            participantCount: group.participants?.length || 0,
+                            rawParticipantCount: rawParticipants.length,
+                            resolvedParticipantCount: participants.length,
+                            skippedCount: rawParticipants.length - participants.length,
                             source: 'groups.upsert',
                             isCommunity: group.isCommunity || false,
+                            isCommunityAnnounce: group.isCommunityAnnounce || false,
                             groupType: group.type || 'unknown',
-                            parentGroup: group.parentGroup || null
+                            parentGroup: group.linkedParent || null
                         }, 'Sending group metadata to backend');
                         
                         await apiClient.sendGroupMetadata({
                             groupId: group.id,
                             groupName: group.subject || 'Group',
-                            participants: group.participants?.map(p => ({
-                                jid: convertLidToPhoneJid(sock, p.id),
-                                isAdmin: p.admin === 'admin',
-                                isSuperAdmin: p.admin === 'superadmin'
-                            })) || [],
+                            participants,
                             groupDescription: group.desc || '',
                             groupProfilePictureUrl: groupProfilePicture,
                             createdAt: group.creation ? new Date(group.creation * 1000).toISOString() : null
@@ -602,14 +794,38 @@ async function connectToWhatsApp() {
                             participantCount: groupMetadata.participants?.length || 0
                         }, 'Fetched updated group metadata from groups.update');
 
+                        // Skip community parent groups (isCommunity: true) - only process regular groups and announcement groups
+                        if (groupMetadata.isCommunity === true) {
+                            logger.info({
+                                groupId: groupMetadata.id,
+                                groupName: groupMetadata.subject,
+                                isCommunity: true
+                            }, 'Skipping community parent group update - not a chat group');
+                            continue;
+                        }
+
                         // Fetch group profile picture
                         const groupProfilePicture = await fetchContactProfilePicture(sock, groupMetadata.id);
 
-                        const participants = groupMetadata.participants?.map(p => ({
-                            jid: convertLidToPhoneJid(sock, p.id),
-                            isAdmin: p.admin === 'admin',
-                            isSuperAdmin: p.admin === 'superadmin'
-                        })).filter(pp => typeof pp.jid === 'string' && pp.jid.endsWith('@s.whatsapp.net')) || [];
+                        // Process participants - prioritize 'jid' field over 'id' field
+                        const participants = (groupMetadata.participants || []).map(p => {
+                            let phoneJid = null;
+                            
+                            if (p.jid && typeof p.jid === 'string' && p.jid.endsWith('@s.whatsapp.net')) {
+                                phoneJid = p.jid;
+                            } else if (p.id) {
+                                const converted = convertLidToPhoneJid(sock, p.id);
+                                if (converted && converted.endsWith('@s.whatsapp.net')) {
+                                    phoneJid = converted;
+                                }
+                            }
+
+                            return phoneJid ? {
+                                jid: phoneJid,
+                                isAdmin: p.admin === 'admin',
+                                isSuperAdmin: p.admin === 'superadmin'
+                            } : null;
+                        }).filter(p => p !== null);
 
                         if (shouldSendGroupMetadata(groupMetadata.id, groupMetadata)) {
                             await apiClient.sendGroupMetadata({
@@ -640,12 +856,25 @@ async function connectToWhatsApp() {
 
         // Listen for message status updates (delivery and read receipts)
         sock.ev.on('messages.update', async (updates) => {
+            logger.info({ 
+                updateCount: updates.length,
+                timestamp: new Date().toISOString()
+            }, '=== Message status updates batch received from WhatsApp ===');
+            
             for (const update of updates) {
                 try {
                     const { key, update: statusUpdate } = update;
                     
                     // Log the update for debugging
-                    logger.debug({ key, statusUpdate }, 'Message status update received');
+                    logger.info({ 
+                        key, 
+                        statusUpdate, 
+                        messageId: key.id,
+                        remoteJid: key.remoteJid,
+                        fromMe: key.fromMe,
+                        participant: key.participant,
+                        timestamp: new Date().toISOString()
+                    }, 'Message status update received from WhatsApp');
                     
                     // Check if this is a status update (delivered/read)
                     if (statusUpdate?.status) {
@@ -687,13 +916,38 @@ async function connectToWhatsApp() {
                                 status = 'sent';
                         }
                         
-                        logger.debug({ messageId, numericStatus, status }, 'Message status changed');
+                        logger.info({ 
+                            messageId, 
+                            numericStatus, 
+                            status,
+                            remoteJid: key.remoteJid,
+                            fromMe: key.fromMe,
+                            participant: key.participant,
+                            timestamp: new Date().toISOString()
+                        }, 'Message status changed - sending to backend');
                         
                         // Send status update to backend
-                        await apiClient.updateMessageStatus(messageId, status);
+                        const result = await apiClient.updateMessageStatus(messageId, status);
+                        
+                        logger.info({
+                            messageId,
+                            status,
+                            result: result ? 'success' : 'failed',
+                            timestamp: new Date().toISOString()
+                        }, 'Message status update completed');
+                    } else {
+                        logger.debug({ 
+                            update,
+                            messageId: key.id,
+                            reason: 'No status field in update'
+                        }, 'Skipping message update without status');
                     }
                 } catch (error) {
-                    logger.error({ error, update }, 'Error processing message status update');
+                    logger.error({ 
+                        error, 
+                        update,
+                        timestamp: new Date().toISOString()
+                    }, 'Error processing message status update');
                 }
             }
         });
@@ -716,14 +970,38 @@ async function connectToWhatsApp() {
                         participantCount: groupMetadata.participants?.length || 0
                     }, 'Fetched updated group metadata');
 
+                    // Skip community parent groups (isCommunity: true) - only process regular groups and announcement groups
+                    if (groupMetadata.isCommunity === true) {
+                        logger.info({
+                            groupId: groupMetadata.id,
+                            groupName: groupMetadata.subject,
+                            isCommunity: true
+                        }, 'Skipping community parent group participant update - not a chat group');
+                        return;
+                    }
+
                     // Fetch group profile picture
                     const groupProfilePicture = await fetchContactProfilePicture(sock, groupMetadata.id);
 
-                    const participants = groupMetadata.participants?.map(p => ({
-                        jid: convertLidToPhoneJid(sock, p.id),
-                        isAdmin: p.admin === 'admin',
-                        isSuperAdmin: p.admin === 'superadmin'
-                    })).filter(pp => typeof pp.jid === 'string' && pp.jid.endsWith('@s.whatsapp.net')) || [];
+                    // Process participants - prioritize 'jid' field over 'id' field
+                    const participants = (groupMetadata.participants || []).map(p => {
+                        let phoneJid = null;
+                        
+                        if (p.jid && typeof p.jid === 'string' && p.jid.endsWith('@s.whatsapp.net')) {
+                            phoneJid = p.jid;
+                        } else if (p.id) {
+                            const converted = convertLidToPhoneJid(sock, p.id);
+                            if (converted && converted.endsWith('@s.whatsapp.net')) {
+                                phoneJid = converted;
+                            }
+                        }
+
+                        return phoneJid ? {
+                            jid: phoneJid,
+                            isAdmin: p.admin === 'admin',
+                            isSuperAdmin: p.admin === 'superadmin'
+                        } : null;
+                    }).filter(p => p !== null);
 
                     if (shouldSendGroupMetadata(groupMetadata.id, groupMetadata)) {
                         await apiClient.sendGroupMetadata({
@@ -743,11 +1021,25 @@ async function connectToWhatsApp() {
                         try {
                             // New mapping may have arrived via contacts events
                             const refreshed = await sock.groupMetadata(groupId);
-                            const participants2 = refreshed.participants?.map(p => ({
-                                jid: convertLidToPhoneJid(sock, p.id),
-                                isAdmin: p.admin === 'admin',
-                                isSuperAdmin: p.admin === 'superadmin'
-                            })).filter(pp => typeof pp.jid === 'string' && pp.jid.endsWith('@s.whatsapp.net')) || [];
+                            // Process participants - prioritize 'jid' field over 'id' field
+                            const participants2 = (refreshed.participants || []).map(p => {
+                                let phoneJid = null;
+                                
+                                if (p.jid && typeof p.jid === 'string' && p.jid.endsWith('@s.whatsapp.net')) {
+                                    phoneJid = p.jid;
+                                } else if (p.id) {
+                                    const converted = convertLidToPhoneJid(sock, p.id);
+                                    if (converted && converted.endsWith('@s.whatsapp.net')) {
+                                        phoneJid = converted;
+                                    }
+                                }
+
+                                return phoneJid ? {
+                                    jid: phoneJid,
+                                    isAdmin: p.admin === 'admin',
+                                    isSuperAdmin: p.admin === 'superadmin'
+                                } : null;
+                            }).filter(p => p !== null);
                             
                             // Bypass deduplication for retry since we want to update with new participant mappings
                             if (shouldSendGroupMetadata(refreshed.id, refreshed)) {

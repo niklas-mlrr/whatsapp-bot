@@ -946,8 +946,59 @@ class WhatsAppMessageService
                     'updated_fields' => array_keys($userUpdates),
                 ]);
             }
+
+            // Also update the contact entry if it exists
+            $this->updateContactIfExists($user, $data);
         } catch (\Throwable $e) {
             Log::channel('whatsapp')->warning('Failed updating contact info (non-fatal)', [
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Update contact entry if it exists for this user.
+     * Contacts are independent from chats, so we sync profile data separately.
+     */
+    private function updateContactIfExists(User $sender, WhatsAppMessageData $data): void
+    {
+        try {
+            $appUser = User::getFirstUser();
+            if (!$appUser) {
+                return;
+            }
+
+            // Find contact by phone number
+            $contact = \App\Models\Contact::where('user_id', $appUser->id)
+                ->where('phone', $data->sender)
+                ->first();
+
+            if (!$contact) {
+                Log::channel('whatsapp')->debug('No contact entry found for this sender', [
+                    'sender' => $data->sender,
+                ]);
+                return;
+            }
+
+            // Update contact with latest profile info
+            $contactUpdates = [];
+            if (!empty($data->senderProfilePictureUrl) && $contact->profile_picture_url !== $data->senderProfilePictureUrl) {
+                $contactUpdates['profile_picture_url'] = $data->senderProfilePictureUrl;
+            }
+            if (!empty($data->senderBio) && $contact->bio !== $data->senderBio) {
+                $contactUpdates['bio'] = $data->senderBio;
+            }
+
+            if (!empty($contactUpdates)) {
+                $contact->update($contactUpdates);
+                Log::channel('whatsapp')->info('Updated contact profile info from message', [
+                    'contact_id' => $contact->id,
+                    'contact_name' => $contact->name,
+                    'updated_fields' => array_keys($contactUpdates),
+                ]);
+            }
+        } catch (\Throwable $e) {
+            Log::channel('whatsapp')->warning('Failed updating contact entry (non-fatal)', [
                 'error' => $e->getMessage(),
             ]);
         }
@@ -1298,16 +1349,162 @@ class WhatsAppMessageService
         }
         
         // Note: WhatsApp poll updates are encrypted, so we can't decode which option was selected
-        // We rely on the frontend API endpoint to handle voting instead
-        // This handler just logs that a vote occurred
+        // We need to fetch the poll votes from WhatsApp to get the updated vote counts
         
         Log::channel('whatsapp')->debug('Poll vote received via WhatsApp', [
             'poll_id' => $pollMessage->id,
             'voter' => $data->sender,
         ]);
         
+        // Fetch updated poll votes from WhatsApp via receiver
+        // The receiver uses Baileys' getAggregateVotesInPollMessage to decrypt and aggregate votes
+        try {
+            $chatJid = $pollMessage->chat->metadata['whatsapp_id'] ?? $pollMessage->chat;
+            $pollMessageId = $pollMessage->metadata['message_id'] ?? null;
+            
+            if ($chatJid && $pollMessageId) {
+                $receiverUrl = config('app.receiver_url', env('RECEIVER_URL', 'http://127.0.0.1:3000'));
+                $receiverUrl = rtrim($receiverUrl, '/');
+                
+                $http = \Illuminate\Support\Facades\Http::timeout(10)
+                    ->withHeaders([
+                        'Content-Type' => 'application/json',
+                        'Accept' => 'application/json',
+                        'X-API-Key' => config('app.receiver_api_key', ''),
+                    ]);
+                
+                $isHttps = str_starts_with(strtolower($receiverUrl), 'https://');
+                $allowInsecure = (bool) env('RECEIVER_TLS_INSECURE', false);
+                if ($isHttps && $allowInsecure) {
+                    $http = $http->withoutVerifying();
+                }
+                
+                $response = $http->post("{$receiverUrl}/get-poll-votes", [
+                    'chatJid' => $chatJid,
+                    'pollMessageId' => $pollMessageId,
+                ]);
+                
+                if ($response->successful()) {
+                    $votes = $response->json()['votes'] ?? [];
+                    
+                    Log::channel('whatsapp')->info('Fetched poll votes from WhatsApp', [
+                        'poll_id' => $pollMessage->id,
+                        'vote_count' => count($votes),
+                    ]);
+                    
+                    // Update vote counts based on fetched votes
+                    $this->updatePollVoteCounts($pollMessage, $votes);
+                } else {
+                    Log::channel('whatsapp')->warning('Failed to fetch poll votes from WhatsApp', [
+                        'poll_id' => $pollMessage->id,
+                        'status' => $response->status(),
+                        'body' => $response->body(),
+                    ]);
+                }
+            }
+        } catch (\Exception $e) {
+            Log::channel('whatsapp')->error('Error fetching poll votes from WhatsApp', [
+                'error' => $e->getMessage(),
+                'poll_id' => $pollMessage->id,
+            ]);
+        }
+        
+        // Broadcast the poll update via WebSocket to refresh vote counts
+        try {
+            $this->webSocketService->messageUpdated($pollMessage);
+        } catch (\Exception $e) {
+            Log::channel('whatsapp')->error('Failed to broadcast poll update via WebSocket', [
+                'error' => $e->getMessage(),
+                'poll_id' => $pollMessage->id,
+            ]);
+        }
+        
         // Return null to indicate no new message should be created
         return null;
+    }
+    
+    /**
+     * Update poll vote counts based on fetched votes from WhatsApp
+     */
+    private function updatePollVoteCounts(WhatsAppMessage $pollMessage, array $votes): void
+    {
+        try {
+            $pollData = $pollMessage->metadata['poll_data'] ?? [];
+            $options = $pollData['options'] ?? [];
+            
+            if (empty($options)) {
+                Log::channel('whatsapp')->warning('Poll has no options', [
+                    'poll_id' => $pollMessage->id,
+                ]);
+                return;
+            }
+            
+            // Initialize vote counts
+            $voteCounts = [];
+            foreach ($options as $index => $option) {
+                $voteCounts[strval($index)] = 0;
+            }
+            
+            // Count votes from the fetched data
+            // The votes array contains objects with selectedOptions
+            foreach ($votes as $vote) {
+                $selectedOptions = $vote['selectedOptions'] ?? [];
+                foreach ($selectedOptions as $optionIndex) {
+                    if (isset($voteCounts[strval($optionIndex)])) {
+                        $voteCounts[strval($optionIndex)]++;
+                    }
+                }
+            }
+            
+            // Update the poll message metadata
+            $metadata = $pollMessage->metadata;
+            $metadata['poll_vote_counts'] = $voteCounts;
+            $pollMessage->update(['metadata' => $metadata]);
+            
+            // Update individual vote records in database
+            // Clear existing votes for this poll
+            \App\Models\PollVote::where('message_id', $pollMessage->id)->delete();
+            
+            // Create new vote records
+            foreach ($votes as $vote) {
+                $voterJid = $vote['voterJid'] ?? null;
+                if (!$voterJid) continue;
+                
+                // Find or create user for voter
+                $voter = \App\Models\User::where('phone', $voterJid)->first();
+                if (!$voter) {
+                    $voter = \App\Models\User::create([
+                        'phone' => $voterJid,
+                        'name' => $voterJid,
+                    ]);
+                }
+                
+                $selectedOptions = $vote['selectedOptions'] ?? [];
+                foreach ($selectedOptions as $optionIndex) {
+                    \App\Models\PollVote::create([
+                        'message_id' => $pollMessage->id,
+                        'user_id' => $voter->id,
+                        'option_index' => $optionIndex,
+                        'voted_at' => now(),
+                    ]);
+                }
+            }
+            
+            // Reload poll votes relationship
+            $pollMessage->load('pollVotes');
+            
+            Log::channel('whatsapp')->info('Updated poll vote counts', [
+                'poll_id' => $pollMessage->id,
+                'vote_counts' => $voteCounts,
+                'total_voters' => count($votes),
+            ]);
+            
+        } catch (\Exception $e) {
+            Log::channel('whatsapp')->error('Error updating poll vote counts', [
+                'error' => $e->getMessage(),
+                'poll_id' => $pollMessage->id,
+            ]);
+        }
     }
     
     /**

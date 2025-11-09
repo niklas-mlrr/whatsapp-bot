@@ -9,6 +9,7 @@ export interface Message {
   status: 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
   created_at: string;
   updated_at: string;
+  read_at?: string; // Timestamp when message was read
   read_by?: string[];
   isSending?: boolean;
   temp_id?: string;

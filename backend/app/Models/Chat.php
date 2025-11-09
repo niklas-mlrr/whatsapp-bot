@@ -90,7 +90,6 @@ class Chat extends Model
         'last_message',
         'avatar_url',
         'display_name',
-        'is_online',
         'contact_info',
     ];
 
