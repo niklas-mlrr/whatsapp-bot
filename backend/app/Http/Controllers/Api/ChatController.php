@@ -1739,134 +1739,174 @@ class ChatController extends Controller
     {
         try {
             $user = $request->user() ?: User::getFirstUser();
-            
+
             // Get the chat
             $chat = Chat::findOrFail($chatId);
-            
+
             if (!$chat->is_group) {
                 return response()->json([
                     'error' => 'This endpoint is only for group chats'
                 ], 400);
             }
-            
-            $participants = $chat->participants ?? [];
+
+            // Prefer rich participants metadata (includes community @lid participants)
+            $metadataParticipants = is_array($chat->metadata) ? ($chat->metadata['participants'] ?? null) : null;
+            $participants = (is_array($metadataParticipants) && count($metadataParticipants) > 0)
+                ? $metadataParticipants
+                : ($chat->participants ?? []);
+
             $members = [];
-            
+
             foreach ($participants as $participant) {
-                if (!is_string($participant)) {
+                $participantJid = null;
+                $isAdmin = false;
+
+                if (is_string($participant)) {
+                    $participantJid = $participant;
+                } elseif (is_array($participant)) {
+                    $participantJid = $participant['jid'] ?? null;
+                    $isAdmin = (bool)($participant['isAdmin'] ?? false) || (bool)($participant['isSuperAdmin'] ?? false);
+                }
+
+                if (!is_string($participantJid) || trim($participantJid) === '') {
+                    continue;
+                }
+
+                $participantLower = strtolower($participantJid);
+                if (str_contains($participantLower, 'promise') || str_contains($participantLower, '[object')) {
                     continue;
                 }
 
                 // Skip 'me' participant
-                if ($participant === 'me') {
+                if ($participantJid === 'me') {
                     $members[] = [
-                        'id' => $user->id,
+                        'id' => $user?->id,
                         'name' => 'You',
                         'phone' => 'me',
-                        'avatar_url' => null
+                        'avatar_url' => null,
+                        'is_admin' => false,
                     ];
                     continue;
                 }
 
-                $participantLower = strtolower($participant);
-                if (str_contains($participantLower, 'promise') || str_contains($participantLower, '[object')) {
+                $isLid = str_ends_with($participantLower, '@lid');
+                $isPhoneJid = str_ends_with($participantLower, '@s.whatsapp.net');
+
+                if (!$isLid && !$isPhoneJid) {
                     continue;
                 }
-                
+
+                $resolvedJid = $isPhoneJid ? $participantJid : null;
+                if ($isLid) {
+                    try {
+                        $mapping = DB::table('chat_user')
+                            ->where('whatsapp_id', $participantJid)
+                            ->first();
+                        if ($mapping && isset($mapping->user_id)) {
+                            $mappedUser = User::find($mapping->user_id);
+                            if ($mappedUser && is_string($mappedUser->phone) && trim($mappedUser->phone) !== '') {
+                                $mappedPhone = trim($mappedUser->phone);
+                                $resolvedJid = str_contains($mappedPhone, '@') ? $mappedPhone : ($mappedPhone . '@s.whatsapp.net');
+                            }
+                        }
+                    } catch (\Throwable $e) {
+                        // Non-fatal: if mapping lookup fails we keep phone hidden
+                        $resolvedJid = null;
+                    }
+                }
+
+                $lookupJid = $resolvedJid ?: $participantJid;
+
                 // Normalize phone number - handle different formats
-                $phoneNumber = preg_replace('/@.*$/', '', $participant);
+                $phoneNumber = preg_replace('/@.*$/', '', $lookupJid);
                 $phoneNumber = preg_replace('/[^\d]/', '', $phoneNumber);
-                
-                // Skip obviously fake or invalid phone numbers
-                if (strlen($phoneNumber) < 7 || strlen($phoneNumber) > 15) {
-                    continue;
-                }
-                
+
                 // Look up contact from contacts table first - this is the primary source
                 $appUser = User::getFirstUser();
                 $contact = null;
                 $avatarUrl = null;
-                
+
                 if ($appUser) {
                     $contact = \App\Models\Contact::where('user_id', $appUser->id)
-                        ->where(function($query) use ($participant, $phoneNumber) {
-                            $query->where('phone', $participant)
+                        ->where(function($query) use ($lookupJid, $phoneNumber) {
+                            $query->where('phone', $lookupJid)
                                   ->orWhere('phone', $phoneNumber . '@s.whatsapp.net')
                                   ->orWhere('phone', '+' . $phoneNumber);
                         })
                         ->first();
                 }
-                
+
                 $contactName = null;
                 if ($contact) {
                     $contactName = $contact->name;
                     $avatarUrl = $contact->profile_picture_url;
                 }
-                
+
                 // Fallback to chats table for name
                 if (!$contactName) {
                     $contactChat = Chat::where('is_group', false)
-                        ->where(function($query) use ($participant, $phoneNumber) {
-                            $query->whereJsonContains('participants', $participant)
+                        ->where(function($query) use ($lookupJid, $phoneNumber) {
+                            $query->whereJsonContains('participants', $lookupJid)
                                   ->orWhereJsonContains('participants', $phoneNumber)
                                   ->orWhereJsonContains('participants', '+' . $phoneNumber);
                         })
                         ->first();
-                    
-                    if ($contactChat && $contactChat->name && $contactChat->name !== $participant) {
+
+                    if ($contactChat && $contactChat->name && $contactChat->name !== $participantJid) {
                         // Check if the name is not just a phone number
-                        $isPhoneNumber = preg_match('/^[+\d\s\-_@.]+$/', $contactChat->name);
-                        if (!$isPhoneNumber) {
+                        $isPhoneNumberOnly = preg_match('/^[+\d\s\-_@.]+$/', $contactChat->name);
+                        if (!$isPhoneNumberOnly) {
                             $contactName = $contactChat->name;
                         }
                     }
                 }
-                
+
                 // Only fallback to user table if we have NO contact name
                 // AND the user has a real name (not "WhatsApp User")
                 if (!$contactName) {
                     $userRecord = User::where('phone', $phoneNumber)
-                        ->orWhere('phone', $participant)
+                        ->orWhere('phone', $lookupJid)
                         ->orWhere('phone', '+' . $phoneNumber)
                         ->first();
-                    
+
                     // Only use user name if it's not the default "WhatsApp User"
                     if ($userRecord && $userRecord->name && $userRecord->name !== 'WhatsApp User') {
                         $contactName = $userRecord->name;
                     }
                 }
-                
+
                 // Format display name
                 $displayName = $contactName;
                 if (!$displayName) {
-                    // Only format as phone number if it looks like a real phone number
-                    if (strlen($phoneNumber) >= 10 && strlen($phoneNumber) <= 15) {
-                        $displayName = $this->formatPhoneNumberForDisplay($participant);
+                    if ($resolvedJid && strlen($phoneNumber) >= 7) {
+                        $displayName = $this->formatPhoneNumberForDisplay($resolvedJid);
                     } else {
                         $displayName = 'Unknown User';
                     }
                 }
-                
+
                 $members[] = [
-                    'id' => $phoneNumber,
+                    'id' => $participantJid,
                     'name' => $displayName,
-                    'phone' => $participant,
-                    'avatar_url' => $avatarUrl
+                    'phone' => $resolvedJid,
+                    'resolved_jid' => $resolvedJid,
+                    'avatar_url' => $avatarUrl,
+                    'is_admin' => $isAdmin,
                 ];
             }
-            
+
             return response()->json([
                 'success' => true,
                 'data' => $members
             ]);
-            
+
         } catch (\Exception $e) {
             \Log::error('Error fetching group chat members: ' . $e->getMessage(), [
                 'chat_id' => $chatId,
                 'user_id' => $request->user()->id ?? 'unknown',
                 'trace' => $e->getTraceAsString()
             ]);
-            
+
             return response()->json([
                 'error' => 'Failed to fetch group chat members',
                 'message' => $e->getMessage()

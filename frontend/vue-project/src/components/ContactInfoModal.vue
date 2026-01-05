@@ -251,7 +251,7 @@ const selectedParticipant = ref<{ jid: string; isAdmin?: boolean } | null>(null)
 const participantChat = ref<any | null>(null);
 const contacts = ref<any[]>([]);
 
-const participantsList = ref<Array<{ jid: string; phone: string; isAdmin: boolean; display: string; profilePictureUrl: string | null }>>([]);
+const participantsList = ref<Array<{ jid: string; phone: string | null; isAdmin: boolean; display: string; profilePictureUrl: string | null }>>([]);
 
 const isValidParticipantJid = (jid: string): boolean => {
   if (!jid) return false;
@@ -261,6 +261,39 @@ const isValidParticipantJid = (jid: string): boolean => {
 
 const rebuildParticipantsList = async () => {
   const chat: any = props.chat;
+  const chatId = chat?.id != null ? String(chat.id) : '';
+
+  if (isGroupView.value && chatId) {
+    try {
+      const resp = await apiClient.get(`/chats/${chatId}/members`);
+      const rows = Array.isArray(resp?.data?.data) ? resp.data.data : [];
+      const mapped = rows
+        .filter((m: any) => m && String(m.phone) !== 'me')
+        .map((m: any) => {
+          const jid = typeof m.id === 'string' ? m.id : String(m.id ?? '');
+          const rawPhone = (typeof m.phone === 'string' && m.phone.length > 0) ? m.phone : null;
+          const phoneDigits = rawPhone ? rawPhone.replace(/@.*$/, '') : '';
+          const formattedPhone = rawPhone ? (phoneDigits.startsWith('+') ? phoneDigits : '+' + phoneDigits) : 'Hidden number';
+          const display = (typeof m.name === 'string' && m.name.trim()) ? m.name : resolveParticipantDisplay(jid);
+          const profilePictureUrl = (typeof m.avatar_url === 'string' && m.avatar_url) ? proxyAvatarUrl(m.avatar_url) : resolveParticipantProfilePicture(rawPhone || jid);
+          return { jid, phone: rawPhone, isAdmin: !!m.is_admin, display, profilePictureUrl, formattedPhone };
+        });
+
+      if (mapped.length > 0) {
+        participantsList.value = mapped.map((p: any) => ({
+          jid: p.jid,
+          phone: p.formattedPhone,
+          isAdmin: p.isAdmin,
+          display: p.display,
+          profilePictureUrl: p.profilePictureUrl,
+        }));
+        return;
+      }
+    } catch (error) {
+      console.error('Error fetching group members for modal:', error);
+    }
+  }
+
   const fromMetadata = Array.isArray(chat?.metadata?.participants) ? chat.metadata.participants : [];
 
   if (fromMetadata.length > 0) {
@@ -365,7 +398,10 @@ function resolveParticipantChat(jid: string): any | null {
 const participantDisplay = computed(() => resolveParticipantDisplay(selectedParticipant.value?.jid || ''));
 const participantPhone = computed(() => {
   const jid = selectedParticipant.value?.jid || '';
-  return jid ? '+' + jid.replace(/@.*$/, '') : '';
+  if (!jid) return '';
+  if (jid.endsWith('@lid')) return 'Hidden number';
+  const digits = jid.replace(/@.*$/, '');
+  return digits ? '+' + digits : '';
 });
 const participantBio = computed(() => {
   const c: any = participantChat.value;

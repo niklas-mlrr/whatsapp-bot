@@ -233,6 +233,9 @@ Route::middleware(['throttle:120,1'])->group(function () {
     
     // Create or update group when user is added to a group (called by receiver)
     Route::post('/whatsapp-groups/create', [\App\Http\Controllers\Api\WhatsAppGroupController::class, 'createOrUpdate']);
+
+    // Sync contacts from receiver (called by receiver)
+    Route::post('/whatsapp-contacts/sync', [\App\Http\Controllers\Api\WhatsAppContactSyncController::class, 'sync']);
 });
 
 // Protected routes (require authentication + rate limiting)

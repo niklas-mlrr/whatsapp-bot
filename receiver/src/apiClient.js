@@ -150,6 +150,38 @@ const sendToBackend = async (data, options = {}) => {
 };
 
 /**
+ * Sync contacts from receiver to backend.
+ * @param {Array<{phone: string, name?: string|null, profile_picture_url?: string|null, bio?: string|null}>} contacts
+ * @returns {Promise<Object|null>}
+ */
+const syncContacts = async (contacts) => {
+    try {
+        const baseUrl = config.backend.apiUrl.replace(/\/api\/whatsapp[-/]webhook\/?$/, '');
+        const response = await axios.post(`${baseUrl}/api/whatsapp-contacts/sync`, {
+            contacts: Array.isArray(contacts) ? contacts : [],
+        }, {
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Webhook-Secret': process.env.WEBHOOK_SECRET || config.backend.webhookSecret || '',
+            },
+            timeout: config.backend.timeoutMs,
+            validateStatus: (status) => status >= 200 && status < 500,
+        });
+
+        if (response.status >= 400) {
+            logger.warn({ status: response.status, data: response.data }, 'Contacts sync endpoint returned error');
+            return null;
+        }
+
+        logger.info({ count: Array.isArray(contacts) ? contacts.length : 0 }, 'Contacts synced successfully');
+        return response.data;
+    } catch (error) {
+        logger.error({ error: error.message, stack: error.stack }, 'Error syncing contacts to backend');
+        return null;
+    }
+};
+
+/**
  * Sends a message to the backend API.
  * @param {Object} message - The message to send.
  * @returns {Promise<Object>} The response from the backend.
@@ -500,5 +532,6 @@ export {
     notifyMessageEdited,
     notifyMessageDeleted,
     sendGroupMetadata,
+    syncContacts,
     apiClient,
 };

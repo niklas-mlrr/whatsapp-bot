@@ -304,7 +304,12 @@ async function handleMessages(sock, m) {
                                     };
                                 }
                             }
-                            return null;
+                            const fallbackLid = (p?.id && typeof p.id === 'string' && p.id.endsWith('@lid')) ? p.id : null;
+                            return fallbackLid ? {
+                                jid: fallbackLid,
+                                isAdmin: p.admin === 'admin',
+                                isSuperAdmin: p.admin === 'superadmin'
+                            } : null;
                         }))).filter(p => p !== null);
 
                         const safeParticipants = participants.filter((p) => isValidParticipantJid(p?.jid));

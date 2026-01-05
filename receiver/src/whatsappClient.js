@@ -262,6 +262,69 @@ const messageStore = new Map();
 const groupMetadataSendCache = new Map();
 const GROUP_METADATA_DEDUP_WINDOW_MS = 30000; // 30 seconds deduplication window
 
+let contactsSyncTimeout = null;
+let lastContactsSyncAt = 0;
+const CONTACTS_SYNC_DEBOUNCE_MS = 10000;
+const CONTACTS_SYNC_MIN_INTERVAL_MS = 5 * 60 * 1000;
+
+function buildContactsSyncPayload(sock) {
+    try {
+        const contacts = sock?.contacts || {};
+        const out = [];
+        for (const [jid, info] of Object.entries(contacts)) {
+            const phoneJid = normalizePhoneJid(jid) || normalizePhoneJid(info?.id) || normalizePhoneJid(info?.phoneNumber);
+            if (!phoneJid || typeof phoneJid !== 'string' || !phoneJid.endsWith('@s.whatsapp.net')) continue;
+            if (isBadJidString(phoneJid)) continue;
+            const name = (typeof info?.name === 'string' && info.name.trim())
+                ? info.name.trim()
+                : (typeof info?.notify === 'string' ? info.notify.trim() : '');
+
+            out.push({
+                phone: phoneJid,
+                name: name || null,
+            });
+        }
+        return out;
+    } catch (err) {
+        logger.debug({ err: err?.message }, 'Failed building contacts sync payload');
+        return [];
+    }
+}
+
+async function syncContactsToBackend(sock, reason = 'unknown') {
+    try {
+        const now = Date.now();
+        if (now - lastContactsSyncAt < CONTACTS_SYNC_MIN_INTERVAL_MS) {
+            logger.debug({ reason }, 'Skipping contacts sync (min interval not reached)');
+            return;
+        }
+
+        const payload = buildContactsSyncPayload(sock);
+        if (!Array.isArray(payload) || payload.length === 0) {
+            logger.debug({ reason }, 'Skipping contacts sync (no contacts found)');
+            return;
+        }
+
+        lastContactsSyncAt = now;
+        logger.info({ reason, count: payload.length }, 'Syncing contacts to backend');
+        await apiClient.syncContacts(payload);
+    } catch (err) {
+        logger.warn({ err: err?.message, reason }, 'Contacts sync failed');
+    }
+}
+
+function scheduleContactsSync(sock, reason = 'event') {
+    try {
+        if (contactsSyncTimeout) clearTimeout(contactsSyncTimeout);
+        contactsSyncTimeout = setTimeout(() => {
+            contactsSyncTimeout = null;
+            syncContactsToBackend(sock, reason);
+        }, CONTACTS_SYNC_DEBOUNCE_MS);
+    } catch (err) {
+        logger.debug({ err: err?.message, reason }, 'Failed scheduling contacts sync');
+    }
+}
+
 function indexContactsLidMapping(sock) {
     try {
         const contacts = sock?.contacts || {};
@@ -816,13 +879,30 @@ async function connectToWhatsApp() {
                 try {
                     // Build initial LID mapping from contacts
                     indexContactsLidMapping(sock);
+
+                    // Sync contacts to backend (for Contacts menu)
+                    await syncContactsToBackend(sock, 'connect');
+
                     const all = await sock.groupFetchAllParticipating();
                     for (const g of Object.values(all || {})) {
                         try {
-                            const groupProfilePicture = await fetchContactProfilePicture(sock, g.id);
+                            // groupFetchAllParticipating() can be partial; prefer full group metadata
+                            let fullGroup = g;
+                            try {
+                                fullGroup = await sock.groupMetadata(g.id);
+                            } catch (metaErr) {
+                                logger.debug({ groupId: g.id, err: metaErr?.message }, 'Could not fetch full group metadata on connect, using participating payload');
+                            }
+
+                            if (fullGroup?.isCommunity === true) {
+                                logger.info({ groupId: fullGroup.id, groupName: fullGroup.subject, isCommunity: true }, 'Skipping community parent group on connect');
+                                continue;
+                            }
+
+                            const groupProfilePicture = await fetchContactProfilePicture(sock, fullGroup.id);
 
                             // Process participants - prioritize 'jid' field over 'id' field
-                            const participants = (await Promise.all((g.participants || []).map(async (p) => {
+                            const participants = (await Promise.all((fullGroup.participants || []).map(async (p) => {
                                 let phoneJid = null;
 
                                 if (p.jid && typeof p.jid === 'string' && p.jid.endsWith('@s.whatsapp.net')) {
@@ -834,8 +914,11 @@ async function connectToWhatsApp() {
                                     }
                                 }
 
-                                return phoneJid ? {
-                                    jid: phoneJid,
+                                const lidCandidate = normalizeLidJid(p?.id);
+                                const fallbackLid = lidCandidate || ((p?.id && typeof p.id === 'string' && p.id.endsWith('@lid')) ? p.id : null);
+                                const jidOut = phoneJid || fallbackLid;
+                                return jidOut ? {
+                                    jid: jidOut,
                                     isAdmin: p.admin === 'admin',
                                     isSuperAdmin: p.admin === 'superadmin'
                                 } : null;
@@ -843,25 +926,25 @@ async function connectToWhatsApp() {
 
                             const safeParticipants = participants.filter((p) => isValidParticipantJid(p?.jid));
 
-                            if (shouldSendGroupMetadata(g.id, g)) {
+                            if (shouldSendGroupMetadata(fullGroup.id, fullGroup)) {
                                 logger.info({
-                                    groupId: g.id,
-                                    groupName: g.subject,
+                                    groupId: fullGroup.id,
+                                    groupName: fullGroup.subject,
                                     participantCount: participants.length,
                                     source: 'connectToWhatsApp',
-                                    isCommunity: g.isCommunity || false
+                                    isCommunity: fullGroup.isCommunity || false
                                 }, 'Sending group metadata to backend');
 
                                 await apiClient.sendGroupMetadata({
-                                    groupId: g.id,
-                                    groupName: g.subject || 'Group',
+                                    groupId: fullGroup.id,
+                                    groupName: fullGroup.subject || 'Group',
                                     participants: safeParticipants,
-                                    groupDescription: g.desc || '',
+                                    groupDescription: fullGroup.desc || '',
                                     groupProfilePictureUrl: groupProfilePicture,
-                                    createdAt: g.creation ? new Date(g.creation * 1000).toISOString() : null
+                                    createdAt: fullGroup.creation ? new Date(fullGroup.creation * 1000).toISOString() : null
                                 });
                             } else {
-                                logger.debug({ groupId: g.id }, 'Skipping duplicate group metadata send on connect');
+                                logger.debug({ groupId: fullGroup.id }, 'Skipping duplicate group metadata send on connect');
                             }
                         } catch (err) {
                             logger.warn({ err: err.message, groupId: g.id }, 'Failed to push group metadata on connect');
@@ -914,6 +997,9 @@ async function connectToWhatsApp() {
                         recordLidToPhone(lidNormalized, pnNormalized);
                     }
                 }
+
+                // Refresh contacts in backend (debounced)
+                scheduleContactsSync(sock, 'contacts.upsert');
             } catch (e) {
                 logger.debug({ err: e.message }, 'contacts.upsert handler failed');
             }
@@ -932,6 +1018,9 @@ async function connectToWhatsApp() {
                         recordLidToPhone(lidNormalized, pnNormalized);
                     }
                 }
+
+                // Refresh contacts in backend (debounced)
+                scheduleContactsSync(sock, 'contacts.update');
             } catch (e) {
                 logger.debug({ err: e.message }, 'contacts.update handler failed');
             }
@@ -941,49 +1030,57 @@ async function connectToWhatsApp() {
         sock.ev.on('groups.upsert', async (groups) => {
             for (const group of groups) {
                 try {
+                    // Always try to fetch full metadata; groups.upsert payload can be partial (especially for communities)
+                    let groupData = group;
+                    try {
+                        groupData = await sock.groupMetadata(group.id);
+                    } catch (metaErr) {
+                        logger.debug({ groupId: group.id, err: metaErr?.message }, 'Could not fetch full group metadata, using upsert payload');
+                    }
+
                     logger.info({
-                        groupId: group.id,
-                        groupName: group.subject,
-                        participantCount: group.participants?.length || 0,
-                        fullGroupStructure: JSON.stringify(group, null, 2)
+                        groupId: groupData.id,
+                        groupName: groupData.subject,
+                        participantCount: groupData.participants?.length || 0,
+                        fullGroupStructure: JSON.stringify(groupData, null, 2)
                     }, 'Group metadata update received');
 
                     // Skip community parent groups (isCommunity: true) - only process regular groups and announcement groups
-                    if (group.isCommunity === true) {
+                    if (groupData.isCommunity === true) {
                         logger.info({
-                            groupId: group.id,
-                            groupName: group.subject,
+                            groupId: groupData.id,
+                            groupName: groupData.subject,
                             isCommunity: true
                         }, 'Skipping community parent group - not a chat group');
                         continue;
                     }
 
                     // Fetch group profile picture
-                    const groupProfilePicture = await fetchContactProfilePicture(sock, group.id);
+                    const groupProfilePicture = await fetchContactProfilePicture(sock, groupData.id);
 
-                    if (shouldSendGroupMetadata(group.id, group)) {
+                    if (shouldSendGroupMetadata(groupData.id, groupData)) {
                         // Process participants with enhanced logging
-                        let rawParticipants = group.participants || [];
+                        let rawParticipants = groupData.participants || [];
                         logger.info({
-                            groupId: group.id,
+                            groupId: groupData.id,
                             rawParticipantCount: rawParticipants.length,
                             sampleParticipant: rawParticipants[0] ? JSON.stringify(rawParticipants[0]) : 'none',
-                            isCommunityAnnounce: group.isCommunityAnnounce || false,
-                            linkedParent: group.linkedParent || null
+                            isCommunityAnnounce: groupData.isCommunityAnnounce || false,
+                            linkedParent: groupData.linkedParent || null
                         }, 'Processing participants for community group');
 
                         // For community announcement groups, try to fetch parent community participants
                         // to see if they have phone numbers
-                        if (group.isCommunityAnnounce && group.linkedParent) {
+                        if (groupData.isCommunityAnnounce && groupData.linkedParent) {
                             try {
                                 logger.info({ 
-                                    announcementGroupId: group.id,
-                                    parentGroupId: group.linkedParent 
+                                    announcementGroupId: groupData.id,
+                                    parentGroupId: groupData.linkedParent 
                                 }, 'Fetching parent community group metadata to check for participant phone numbers');
                                 
-                                const parentMetadata = await sock.groupMetadata(group.linkedParent);
+                                const parentMetadata = await sock.groupMetadata(groupData.linkedParent);
                                 logger.info({
-                                    parentGroupId: group.linkedParent,
+                                    parentGroupId: groupData.linkedParent,
                                     parentParticipantCount: parentMetadata.participants?.length || 0,
                                     allParentParticipants: JSON.stringify(parentMetadata.participants, null, 2)
                                 }, 'Fetched parent community group metadata');
@@ -1016,14 +1113,14 @@ async function connectToWhatsApp() {
                             } catch (err) {
                                 logger.warn({ 
                                     error: err.message,
-                                    parentGroupId: group.linkedParent 
+                                    parentGroupId: groupData.linkedParent 
                                 }, 'Could not fetch parent community group metadata');
                             }
                         }
 
                         // Try to query contacts store for any additional LID mappings
                         logger.info({
-                            groupId: group.id,
+                            groupId: groupData.id,
                             contactStoreSize: Object.keys(sock?.contacts || {}).length,
                             sampleContacts: Object.entries(sock?.contacts || {}).slice(0, 3).map(([jid, info]) => ({
                                 jid,
@@ -1045,7 +1142,7 @@ async function connectToWhatsApp() {
                                 }
                             }
                             logger.info({
-                                groupId: group.id,
+                                groupId: groupData.id,
                                 contactLidMapSize: contactLidMap.size,
                                 allLids: Array.from(contactLidMap.keys())
                             }, 'Built LID map from contact store');
@@ -1084,7 +1181,8 @@ async function connectToWhatsApp() {
                                 logger.debug({ lid: p.id, phoneJid: p.jid }, 'Using direct phone JID from participant.jid');
                             } else if (p.id) {
                                 // Try to convert LID to phone JID via cached mapping
-                                const converted = await convertLidToPhoneJid(sock, p.id);
+                                const normalizedLid = normalizeLidJid(p.id) || p.id;
+                                const converted = await convertLidToPhoneJid(sock, normalizedLid);
                                 if (converted && converted.endsWith('@s.whatsapp.net')) {
                                     phoneJid = converted;
                                     logger.debug({ lid: p.id, phoneJid: converted }, 'Converted LID to phone JID via cache');
@@ -1105,12 +1203,23 @@ async function connectToWhatsApp() {
                                     isAdmin: p.admin === 'admin',
                                     isSuperAdmin: p.admin === 'superadmin'
                                 });
+                            } else {
+                                // Keep unresolved LIDs so UI can show all participants (even if name/phone is hidden)
+                                const lidValue = normalizeLidJid(p?.id) || (typeof p?.id === 'string' ? p.id : null);
+                                if (!lidValue || typeof lidValue !== 'string' || !lidValue.endsWith('@lid')) {
+                                    continue;
+                                }
+                                participants.push({
+                                    jid: lidValue,
+                                    isAdmin: p.admin === 'admin',
+                                    isSuperAdmin: p.admin === 'superadmin'
+                                });
                             }
                         }
                         
                         if (unresolvedLids.length > 0) {
                             logger.warn({
-                                groupId: group.id,
+                                groupId: groupData.id,
                                 unresolvedCount: unresolvedLids.length,
                                 unresolvedLids: unresolvedLids,
                                 note: 'WhatsApp API limitation: These LIDs may be system accounts or participants whose phone numbers are hidden. Real participants will be added when they send messages.'
@@ -1130,33 +1239,32 @@ async function connectToWhatsApp() {
                         }
 
                         logger.info({
-                            groupId: group.id,
-                            groupName: group.subject,
+                            groupId: groupData.id,
                             rawParticipantCount: rawParticipants.length,
                             resolvedParticipantCount: participants.length,
                             skippedCount: rawParticipants.length - participants.length,
                             source: 'groups.upsert',
-                            isCommunity: group.isCommunity || false,
-                            isCommunityAnnounce: group.isCommunityAnnounce || false,
-                            groupType: group.type || 'unknown',
-                            parentGroup: group.linkedParent || null
+                            isCommunity: groupData.isCommunity || false,
+                            isCommunityAnnounce: groupData.isCommunityAnnounce || false,
+                            groupType: groupData.type || 'unknown',
+                            parentGroup: groupData.linkedParent || null
                         }, 'Sending group metadata to backend');
                         
                         await apiClient.sendGroupMetadata({
-                            groupId: group.id,
-                            groupName: group.subject || 'Group',
+                            groupId: groupData.id,
+                            groupName: groupData.subject || 'Group',
                             participants,
-                            groupDescription: group.desc || '',
+                            groupDescription: groupData.desc || '',
                             groupProfilePictureUrl: groupProfilePicture,
-                            createdAt: group.creation ? new Date(group.creation * 1000).toISOString() : null
+                            createdAt: groupData.creation ? new Date(groupData.creation * 1000).toISOString() : null
                         });
                     } else {
-                        logger.debug({ groupId: group.id }, 'Skipping duplicate group metadata send in groups.upsert');
+                        logger.debug({ groupId: groupData.id }, 'Skipping duplicate group metadata send in groups.upsert');
                     }
                 } catch (error) {
                     logger.error({
                         error: error.message,
-                        groupId: group.id,
+                        groupId: groupData.id,
                         stack: error.stack
                     }, 'Error processing group metadata update');
                 }
@@ -1206,8 +1314,10 @@ async function connectToWhatsApp() {
                                 }
                             }
 
-                            return phoneJid ? {
-                                jid: phoneJid,
+                            const fallbackLid = (p?.id && typeof p.id === 'string' && p.id.endsWith('@lid')) ? p.id : null;
+                            const jidOut = phoneJid || fallbackLid;
+                            return jidOut ? {
+                                jid: jidOut,
                                 isAdmin: p.admin === 'admin',
                                 isSuperAdmin: p.admin === 'superadmin'
                             } : null;
@@ -1384,8 +1494,10 @@ async function connectToWhatsApp() {
                             }
                         }
 
-                        return phoneJid ? {
-                            jid: phoneJid,
+                        const fallbackLid = (p?.id && typeof p.id === 'string' && p.id.endsWith('@lid')) ? p.id : null;
+                        const jidOut = phoneJid || fallbackLid;
+                        return jidOut ? {
+                            jid: jidOut,
                             isAdmin: p.admin === 'admin',
                             isSuperAdmin: p.admin === 'superadmin'
                         } : null;
@@ -1422,8 +1534,10 @@ async function connectToWhatsApp() {
                                     }
                                 }
 
-                                return phoneJid ? {
-                                    jid: phoneJid,
+                                const fallbackLid = (p?.id && typeof p.id === 'string' && p.id.endsWith('@lid')) ? p.id : null;
+                                const jidOut = phoneJid || fallbackLid;
+                                return jidOut ? {
+                                    jid: jidOut,
                                     isAdmin: p.admin === 'admin',
                                     isSuperAdmin: p.admin === 'superadmin'
                                 } : null;
