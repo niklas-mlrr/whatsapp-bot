@@ -2,6 +2,28 @@
 
 use Illuminate\Support\Str;
 
+$mysqlSslOptions = static function (): array {
+    if (!extension_loaded('pdo_mysql')) {
+        return [];
+    }
+
+    $sslCa = env('MYSQL_ATTR_SSL_CA');
+
+    if (!$sslCa) {
+        return [];
+    }
+
+    $attribute = defined('Pdo\Mysql::ATTR_SSL_CA')
+        ? \Pdo\Mysql::ATTR_SSL_CA
+        : (defined('PDO::MYSQL_ATTR_SSL_CA') ? \PDO::MYSQL_ATTR_SSL_CA : null);
+
+    if (!$attribute) {
+        return [];
+    }
+
+    return [$attribute => $sslCa];
+};
+
 return [
 
     /*
@@ -57,9 +79,7 @@ return [
             'prefix_indexes' => true,
             'strict' => true,
             'engine' => null,
-            'options' => extension_loaded('pdo_mysql') ? array_filter([
-                PDO::MYSQL_ATTR_SSL_CA => env('MYSQL_ATTR_SSL_CA'),
-            ]) : [],
+            'options' => $mysqlSslOptions(),
         ],
 
         'mariadb' => [
@@ -77,9 +97,7 @@ return [
             'prefix_indexes' => true,
             'strict' => true,
             'engine' => null,
-            'options' => extension_loaded('pdo_mysql') ? array_filter([
-                PDO::MYSQL_ATTR_SSL_CA => env('MYSQL_ATTR_SSL_CA'),
-            ]) : [],
+            'options' => $mysqlSslOptions(),
         ],
 
         'pgsql' => [

@@ -35,7 +35,7 @@ function setSocketInstance(sock) {
     }
     
     // Listen for connection updates
-    if (sock.ev && sock.ev.on) {
+    if (sock?.ev && sock.ev.on) {
         sock.ev.on('connection.update', (update) => {
             console.log('Connection update received:', update);
             if (update.connection === 'open') {
@@ -99,22 +99,76 @@ async function start() {
     const sock = await connectToWhatsApp();
     setSocketInstance(sock);
 
+    if (!sock) {
+        isConnected = false;
+        awaitingInitialSync = true;
+        console.log('WhatsApp connection is currently locked/unavailable. Server will continue running.');
+    }
+
     const app = express();
     app.use(bodyParser.json({ limit: '10mb' }));
 
     // Health check endpoint
     app.get('/status', (req, res) => {
+        const lock = whatsappClient.getConnectionLock?.();
+        const failureReportPath = whatsappClient.getLastFailureReportPath?.();
+
         res.json({
             status: 'running',
             whatsapp: {
                 initialized: !!sockInstance,
                 connected: isConnected,
+                locked: !!lock,
+                lock: lock ? {
+                    lockedAt: lock.lockedAt,
+                    reason: lock.reason,
+                    statusCode: lock?.details?.statusCode,
+                    deviceRemoved: lock?.details?.deviceRemoved,
+                } : null,
+                failureReportPath: failureReportPath || null,
                 user: sockInstance?.user ? {
                     id: sockInstance.user.id,
                     name: sockInstance.user.name
                 } : null
             }
         });
+    });
+
+    // Manual recovery endpoint: clears connection lock and performs a single reconnect attempt.
+    // This does NOT re-enable auto-reconnect loops.
+    app.post('/whatsapp/retry', async (req, res) => {
+        try {
+            whatsappClient.clearConnectionLock?.();
+            const newSock = await connectToWhatsApp();
+            if (newSock) {
+                setSocketInstance(newSock);
+            }
+
+            const lock = whatsappClient.getConnectionLock?.();
+            const failureReportPath = whatsappClient.getLastFailureReportPath?.();
+
+            res.json({
+                ok: true,
+                whatsapp: {
+                    initialized: !!sockInstance,
+                    connected: isConnected,
+                    locked: !!lock,
+                    lock: lock ? {
+                        lockedAt: lock.lockedAt,
+                        reason: lock.reason,
+                        statusCode: lock?.details?.statusCode,
+                        deviceRemoved: lock?.details?.deviceRemoved,
+                    } : null,
+                    failureReportPath: failureReportPath || null,
+                    user: sockInstance?.user ? {
+                        id: sockInstance.user.id,
+                        name: sockInstance.user.name,
+                    } : null,
+                },
+            });
+        } catch (error) {
+            res.status(500).json({ ok: false, error: error?.message || 'retry_failed' });
+        }
     });
 
     async function loadMediaBuffer(media, mimetype, defaultMime = 'application/octet-stream') {

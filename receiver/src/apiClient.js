@@ -279,7 +279,7 @@ const updateMessageStatus = async (whatsappMessageId, status) => {
         }, 'Sending message status update to backend');
         
         // Extract base URL without the webhook path
-        const baseUrl = config.backend.apiUrl.replace(/\/api\/whatsapp-webhook\/?$/, '');
+        const baseUrl = config.backend.apiUrl.replace(/\/api\/whatsapp[-/]webhook\/?$/, '');
         
         // Find the message by WhatsApp message ID and update its status
         const response = await axios.post(`${baseUrl}/api/messages/update-status`, {
@@ -350,7 +350,7 @@ const notifyMessageEdited = async (whatsappMessageId, newContent) => {
     try {
         logger.info({ whatsappMessageId, newContent }, 'Notifying backend of message edit');
         
-        const baseUrl = config.backend.apiUrl.replace(/\/api\/whatsapp-webhook\/?$/, '');
+        const baseUrl = config.backend.apiUrl.replace(/\/api\/whatsapp[-/]webhook\/?$/, '');
         
         const response = await axios.post(`${baseUrl}/api/messages/notify-edit`, {
             whatsapp_message_id: whatsappMessageId,
@@ -384,7 +384,7 @@ const notifyMessageDeleted = async (whatsappMessageId) => {
     try {
         logger.info({ whatsappMessageId }, 'Notifying backend of message deletion');
         
-        const baseUrl = config.backend.apiUrl.replace(/\/api\/whatsapp-webhook\/?$/, '');
+        const baseUrl = config.backend.apiUrl.replace(/\/api\/whatsapp[-/]webhook\/?$/, '');
         
         const response = await axios.post(`${baseUrl}/api/messages/notify-delete`, {
             whatsapp_message_id: whatsappMessageId,
@@ -414,7 +414,7 @@ const notifyMessageDeleted = async (whatsappMessageId) => {
  */
 const sendGroupMetadata = async (groupData) => {
     try {
-        const baseUrl = config.backend.apiUrl.replace(/\/api\/whatsapp-webhook\/?$/, '');
+        const baseUrl = config.backend.apiUrl.replace(/\/api\/whatsapp[-/]webhook\/?$/, '');
         
         const payload = {
             group_id: groupData.groupId,

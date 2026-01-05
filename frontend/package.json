@@ -1,8 +1,16 @@
 {
-  "dependencies": {
-    "@heroicons/vue": "^2.2.0",
-    "axios": "^1.11.0",
-    "pinia": "^3.0.3",
-    "vue": "^3.5.18"
+  "name": "frontend",
+  "private": true,
+  "workspaces": [
+    "vue-project"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace vue-project",
+    "build": "npm run build --workspace vue-project",
+    "preview": "npm run preview --workspace vue-project",
+    "lint": "npm run lint --workspace vue-project",
+    "format": "npm run format --workspace vue-project",
+    "type-check": "npm run type-check --workspace vue-project",
+    "test:unit": "npm run test:unit --workspace vue-project"
   }
 }

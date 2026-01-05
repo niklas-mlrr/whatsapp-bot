@@ -138,6 +138,44 @@ export function useWebSocket() {
   const authStore = useAuthStore();
   let retryTimeoutId: number | null = null;
 
+  const getConnectionDebugInfo = () => {
+    const wsScheme = websocketConfig.forceTLS ? 'wss' : 'ws';
+    const port = websocketConfig.forceTLS ? websocketConfig.wssPort : websocketConfig.wsPort;
+    const host = websocketConfig.wsHost;
+    const key = websocketConfig.key;
+    const authEndpoint = websocketConfig.authEndpoint;
+    return {
+      wsScheme,
+      host,
+      port,
+      key,
+      authEndpoint,
+      url: `${wsScheme}://${host}:${port}`,
+    };
+  };
+
+  const formatPusherError = (error: any) => {
+    const base: Record<string, any> = {
+      message: error?.message,
+      type: error?.type,
+    };
+
+    if (error?.error) {
+      base.error = {
+        type: error.error.type,
+        data: error.error.data,
+        code: error.error.code,
+        message: error.error.message,
+      };
+    }
+
+    if (error?.data) {
+      base.data = error.data;
+    }
+
+    return base;
+  };
+
   // Connect to WebSocket server
   const connect = async (retryCount = 0, maxRetries = 3): Promise<boolean> => {
     try {
@@ -150,6 +188,9 @@ export function useWebSocket() {
         console.error('No authentication token available');
         return false;
       }
+
+      const connectionInfo = getConnectionDebugInfo();
+      console.info('WebSocket connecting with config:', connectionInfo);
 
       echo = new Echo<'reverb'>({
         ...websocketConfig,
@@ -179,7 +220,10 @@ export function useWebSocket() {
 
         echo.connector.pusher.connection.bind('error', (error: any) => {
           clearTimeout(timeoutId);
-          console.error('WebSocket connection error:', error);
+          console.error('WebSocket connection error:', {
+            connectionInfo,
+            error: formatPusherError(error),
+          });
           reject(error);
         });
 
@@ -202,7 +246,10 @@ export function useWebSocket() {
 
       return true;
     } catch (error) {
-      console.error('WebSocket connection error:', error);
+      console.error('WebSocket connection error:', {
+        connectionInfo: getConnectionDebugInfo(),
+        error,
+      });
       
       // Retry logic
       if (retryCount < maxRetries) {

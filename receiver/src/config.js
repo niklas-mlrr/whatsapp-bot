@@ -26,7 +26,8 @@ const config = {
     
     // Backend API Configuration
     backend: {
-        apiUrl: process.env.BACKEND_API_URL || 'http://192.168.178.84:8000/api/whatsapp-webhook',
+        // Default to local Laravel API webhook; override in .env when pointing elsewhere
+        apiUrl: process.env.BACKEND_API_URL || 'http://127.0.0.1:8000/api/whatsapp/webhook',
         apiKey: process.env.BACKEND_API_KEY || '',
         timeoutMs: parseInt(process.env.BACKEND_TIMEOUT_MS, 10) || 30000, // Increased to 30s for large groups/communities
         maxRetries: parseInt(process.env.BACKEND_MAX_RETRIES, 10) || 3,

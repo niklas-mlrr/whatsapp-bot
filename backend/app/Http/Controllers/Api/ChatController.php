@@ -902,18 +902,7 @@ class ChatController extends Controller
                             m.media_type,
                             m.metadata,
                             m.reactions,
-                            m.reply_to_message_id,
-                            (
-                                SELECT JSON_ARRAYAGG(
-                                    JSON_OBJECT(
-                                        'user_id', pv.user_id,
-                                        'option_index', pv.option_index,
-                                        'voted_at', pv.voted_at
-                                    )
-                                )
-                                FROM poll_votes pv 
-                                WHERE pv.message_id = m.id
-                            ) as poll_votes
+                            m.reply_to_message_id
                         FROM whatsapp_messages m
                         LEFT JOIN users u ON m.sender_id = u.id
                         WHERE m.chat_id = ?
@@ -944,18 +933,7 @@ class ChatController extends Controller
                             m.media_type,
                             m.metadata,
                             m.reactions,
-                            m.reply_to_message_id,
-                            (
-                                SELECT JSON_ARRAYAGG(
-                                    JSON_OBJECT(
-                                        'user_id', pv.user_id,
-                                        'option_index', pv.option_index,
-                                        'voted_at', pv.voted_at
-                                    )
-                                )
-                                FROM poll_votes pv 
-                                WHERE pv.message_id = m.id
-                            ) as poll_votes
+                            m.reply_to_message_id
                         FROM whatsapp_messages m
                         LEFT JOIN users u ON m.sender_id = u.id
                         LEFT JOIN chats c ON m.chat_id = c.id
@@ -984,18 +962,7 @@ class ChatController extends Controller
                         m.media_type,
                         m.metadata,
                         m.reactions,
-                        m.reply_to_message_id,
-                        (
-                            SELECT JSON_ARRAYAGG(
-                                JSON_OBJECT(
-                                    'user_id', pv.user_id,
-                                    'option_index', pv.option_index,
-                                    'voted_at', pv.voted_at
-                                )
-                            )
-                            FROM poll_votes pv 
-                            WHERE pv.message_id = m.id
-                        ) as poll_votes
+                        m.reply_to_message_id
                     FROM whatsapp_messages m
                     LEFT JOIN users u ON m.sender_id = u.id
                     LEFT JOIN chats c ON m.chat_id = c.id
@@ -1010,7 +977,30 @@ class ChatController extends Controller
             $rows = DB::select($sql, $bindings);
             $rows = array_reverse($rows);
 
-        $formatted = array_map(function ($m) use ($currentUserId) {
+            // Load poll votes without using JSON aggregation (more compatible with MariaDB/MySQL variants)
+            $pollVotesByMessageId = [];
+            $messageIds = array_values(array_unique(array_map(fn ($row) => (int) $row->id, $rows)));
+            if (!empty($messageIds)) {
+                $placeholders = implode(',', array_fill(0, count($messageIds), '?'));
+                $votes = DB::select(
+                    "SELECT message_id, user_id, option_index, voted_at FROM poll_votes WHERE message_id IN ($placeholders)",
+                    $messageIds
+                );
+
+                foreach ($votes as $vote) {
+                    $mid = (int) $vote->message_id;
+                    if (!isset($pollVotesByMessageId[$mid])) {
+                        $pollVotesByMessageId[$mid] = [];
+                    }
+                    $pollVotesByMessageId[$mid][] = [
+                        'user_id' => $vote->user_id,
+                        'option_index' => $vote->option_index,
+                        'voted_at' => $vote->voted_at,
+                    ];
+                }
+            }
+
+        $formatted = array_map(function ($m) use ($currentUserId, $pollVotesByMessageId) {
             // Decode metadata if it's a JSON string
             $metadata = isset($m->metadata) && is_string($m->metadata) ? json_decode($m->metadata, true) : [];
             if (!is_array($metadata)) {
@@ -1050,7 +1040,7 @@ class ChatController extends Controller
                                 FROM users u
                                 LEFT JOIN chats c ON (
                                     c.is_group = false 
-                                    AND JSON_CONTAINS(c.participants, JSON_QUOTE(u.phone))
+                                    AND c.participants LIKE CONCAT('%\"', u.phone, '\"%')
                                 )
                                 WHERE u.id IN (" . implode(',', array_map('intval', $userIds)) . ")
                             ");
@@ -1105,14 +1095,7 @@ class ChatController extends Controller
                 }
             }
             
-            // Decode poll_votes if it's a JSON string
-            $pollVotes = null;
-            if (isset($m->poll_votes) && $m->poll_votes) {
-                $pollVotes = is_string($m->poll_votes) ? json_decode($m->poll_votes, true) : $m->poll_votes;
-                if (!is_array($pollVotes)) {
-                    $pollVotes = null;
-                }
-            }
+            $pollVotes = $pollVotesByMessageId[(int) $m->id] ?? null;
             
             // Extract filename and size from metadata
             $filename = $metadata['filename'] ?? $metadata['original_name'] ?? null;
@@ -1302,18 +1285,7 @@ class ChatController extends Controller
                             m.media_type,
                             m.metadata,
                             m.reactions,
-                            m.reply_to_message_id,
-                            (
-                                SELECT JSON_ARRAYAGG(
-                                    JSON_OBJECT(
-                                        'user_id', pv.user_id,
-                                        'option_index', pv.option_index,
-                                        'voted_at', pv.voted_at
-                                    )
-                                )
-                                FROM poll_votes pv 
-                                WHERE pv.message_id = m.id
-                            ) as poll_votes
+                            m.reply_to_message_id
                         FROM whatsapp_messages m
                         LEFT JOIN users u ON m.sender_id = u.id
                         WHERE m.chat_id = ?
@@ -1348,18 +1320,7 @@ class ChatController extends Controller
                         m.media_type,
                         m.metadata,
                         m.reactions,
-                        m.reply_to_message_id,
-                        (
-                            SELECT JSON_ARRAYAGG(
-                                JSON_OBJECT(
-                                    'user_id', pv.user_id,
-                                    'option_index', pv.option_index,
-                                    'voted_at', pv.voted_at
-                                )
-                            )
-                            FROM poll_votes pv 
-                            WHERE pv.message_id = m.id
-                        ) as poll_votes
+                        m.reply_to_message_id
                     FROM whatsapp_messages m
                     LEFT JOIN users u ON m.sender_id = u.id
                     WHERE m.chat_id = ?
@@ -1372,8 +1333,31 @@ class ChatController extends Controller
                 $rows = array_reverse($rows);
             }
 
+            // Load poll votes without using JSON aggregation (more compatible with MariaDB/MySQL variants)
+            $pollVotesByMessageId = [];
+            $messageIds = array_values(array_unique(array_map(fn ($row) => (int) $row->id, $rows)));
+            if (!empty($messageIds)) {
+                $placeholders = implode(',', array_fill(0, count($messageIds), '?'));
+                $votes = DB::select(
+                    "SELECT message_id, user_id, option_index, voted_at FROM poll_votes WHERE message_id IN ($placeholders)",
+                    $messageIds
+                );
+
+                foreach ($votes as $vote) {
+                    $mid = (int) $vote->message_id;
+                    if (!isset($pollVotesByMessageId[$mid])) {
+                        $pollVotesByMessageId[$mid] = [];
+                    }
+                    $pollVotesByMessageId[$mid][] = [
+                        'user_id' => $vote->user_id,
+                        'option_index' => $vote->option_index,
+                        'voted_at' => $vote->voted_at,
+                    ];
+                }
+            }
+
             // Format messages (already in correct order)
-            $formattedMessages = array_map(function ($m) use ($currentUserId) {
+            $formattedMessages = array_map(function ($m) use ($currentUserId, $pollVotesByMessageId) {
                 // Decode metadata if it's a JSON string
                 $metadata = is_string($m->metadata) ? json_decode($m->metadata, true) : [];
                 if (!is_array($metadata)) {
@@ -1403,7 +1387,7 @@ class ChatController extends Controller
                                     FROM users u
                                     LEFT JOIN chats c ON (
                                         c.is_group = false 
-                                        AND JSON_CONTAINS(c.participants, JSON_QUOTE(u.phone))
+                                        AND c.participants LIKE CONCAT('%\"', u.phone, '\"%')
                                     )
                                     WHERE u.id IN (" . implode(',', array_map('intval', $userIds)) . ")
                                 ");
@@ -1458,14 +1442,7 @@ class ChatController extends Controller
                     }
                 }
                 
-                // Decode poll_votes if it's a JSON string
-                $pollVotes = null;
-                if (isset($m->poll_votes) && $m->poll_votes) {
-                    $pollVotes = is_string($m->poll_votes) ? json_decode($m->poll_votes, true) : $m->poll_votes;
-                    if (!is_array($pollVotes)) {
-                        $pollVotes = null;
-                    }
-                }
+                $pollVotes = $pollVotesByMessageId[(int) $m->id] ?? null;
                 
                 // Extract filename and size from metadata
                 $filename = $metadata['filename'] ?? $metadata['original_name'] ?? null;

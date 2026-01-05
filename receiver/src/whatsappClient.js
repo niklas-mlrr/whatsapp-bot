@@ -1,5 +1,8 @@
-import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers, jidDecode, jidNormalizedUser } from '@whiskeysockets/baileys';
+import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers, jidDecode, jidNormalizedUser, makeCacheableSignalKeyStore } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import pino from 'pino';
 import config from './config.js';
 import { logger } from './logger.js';
@@ -23,8 +26,229 @@ let isReconnecting = false;
 let currentSocket = null;
 let reconnectCallback = null;
 let reconnectTimeout = null;
-let conflictRetryCount = 0;
-const MAX_CONFLICT_RETRIES = 1; // Allow one retry after conflict
+let didAutoResetAuthDir = false;
+
+let connectionLock = null;
+let lastFailureReportPath = null;
+
+let instanceLockPath = null;
+
+function resetAuthDirOnce() {
+    try {
+        if (didAutoResetAuthDir) return false;
+        didAutoResetAuthDir = true;
+
+        const dir = config.whatsapp.authDir;
+        if (!dir) return false;
+
+        try {
+            fs.rmSync(dir, { recursive: true, force: true });
+        } catch {
+            // ignore
+        }
+        fs.mkdirSync(dir, { recursive: true });
+        logger.warn({ dir }, 'Reset WhatsApp auth directory due to invalid/incompatible session');
+        return true;
+    } catch (err) {
+        logger.error({ err: err?.message }, 'Failed to reset auth directory');
+        return false;
+    }
+}
+
+function acquireInstanceLock() {
+    try {
+        const dir = config.whatsapp.authDir;
+        if (!dir) return true;
+
+        fs.mkdirSync(dir, { recursive: true });
+        instanceLockPath = path.join(dir, '.receiver-instance.lock');
+
+        if (fs.existsSync(instanceLockPath)) {
+            const raw = fs.readFileSync(instanceLockPath, 'utf8');
+            const existing = raw ? JSON.parse(raw) : null;
+            const existingPid = existing?.pid;
+
+            if (typeof existingPid === 'number') {
+                // Re-entrant lock: allow reconnects within the same process
+                if (existingPid === process.pid) {
+                    return true;
+                }
+                try {
+                    process.kill(existingPid, 0);
+                    // process exists
+                    lockConnection('ANOTHER_RECEIVER_INSTANCE_RUNNING', {
+                        lockFile: instanceLockPath,
+                        existing,
+                    });
+                    return false;
+                } catch {
+                    // pid not running, treat as stale
+                }
+            }
+        }
+
+        const payload = {
+            pid: process.pid,
+            createdAt: new Date().toISOString(),
+            hostname: os.hostname(),
+            cwd: process.cwd(),
+        };
+
+        fs.writeFileSync(instanceLockPath, JSON.stringify(payload, null, 2), 'utf8');
+        return true;
+    } catch (err) {
+        logger.error({ err: err?.message }, 'Failed to acquire instance lock');
+        return true;
+    }
+}
+
+function releaseInstanceLock() {
+    try {
+        if (!instanceLockPath) return;
+        if (!fs.existsSync(instanceLockPath)) return;
+
+        const raw = fs.readFileSync(instanceLockPath, 'utf8');
+        const existing = raw ? JSON.parse(raw) : null;
+        if (existing?.pid !== process.pid) return;
+
+        fs.unlinkSync(instanceLockPath);
+    } catch (err) {
+        logger.debug({ err: err?.message }, 'Failed to release instance lock');
+    }
+}
+
+process.on('exit', () => releaseInstanceLock());
+['SIGINT', 'SIGTERM', 'SIGHUP'].forEach((signal) => {
+    process.on(signal, () => releaseInstanceLock());
+});
+
+function writeConnectionFailureReport(lock) {
+    try {
+        const now = new Date();
+        const year = String(now.getFullYear());
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        const timestamp = now.toISOString().replace(/[:.]/g, '-');
+
+        const baseDir = path.join(process.cwd(), 'logs', 'whatsapp-failures', year, month);
+        fs.mkdirSync(baseDir, { recursive: true });
+
+        const jsonPath = path.join(baseDir, `failure-${day}-${timestamp}.json`);
+        const txtPath = path.join(baseDir, `failure-${day}-${timestamp}.txt`);
+
+        const payload = {
+            createdAt: now.toISOString(),
+            lock,
+            runtime: {
+                pid: process.pid,
+                node: process.version,
+                platform: process.platform,
+                arch: process.arch,
+                hostname: os.hostname(),
+                cwd: process.cwd(),
+            },
+            config: {
+                nodeEnv: config.nodeEnv,
+                whatsapp: {
+                    authDir: config.whatsapp.authDir,
+                    clientName: config.whatsapp.clientName,
+                    qrTimeoutMs: config.whatsapp.qrTimeoutMs,
+                },
+                backend: {
+                    apiUrl: config.backend.apiUrl,
+                },
+            },
+        };
+
+        fs.writeFileSync(jsonPath, JSON.stringify(payload, null, 2), 'utf8');
+        fs.writeFileSync(
+            txtPath,
+            [
+                `createdAt: ${payload.createdAt}`,
+                `reason: ${lock?.reason}`,
+                `lockedAt: ${lock?.lockedAt}`,
+                `authDir: ${config.whatsapp.authDir}`,
+                `statusCode: ${lock?.details?.statusCode}`,
+                `deviceRemoved: ${lock?.details?.deviceRemoved}`,
+                `isQrTimeout: ${lock?.details?.isQrTimeout}`,
+                `shouldReconnect: ${lock?.details?.shouldReconnect}`,
+                `backendApiUrl: ${config.backend.apiUrl}`,
+                '',
+                'details:',
+                JSON.stringify(lock?.details, null, 2),
+                '',
+                'recovery:',
+                '1) Ensure no other instance uses the same auth dir',
+                '2) Remove the linked device in WhatsApp on your phone',
+                '3) Delete the auth dir',
+                '4) Restart the receiver',
+                '',
+            ].join('\n'),
+            'utf8'
+        );
+
+        lastFailureReportPath = jsonPath;
+        console.error(`[WhatsApp] Connection failure report written: ${jsonPath}`);
+        console.error(`[WhatsApp] Human readable report: ${txtPath}`);
+    } catch (err) {
+        console.error('[WhatsApp] Failed to write connection failure report:', err?.message || err);
+    }
+}
+
+function summarizeLastDisconnect(lastDisconnect) {
+    try {
+        const err = lastDisconnect?.error;
+        const isBoom = err instanceof Boom;
+        return {
+            date: lastDisconnect?.date,
+            isBoom,
+            message: err?.message,
+            stack: err?.stack,
+            output: isBoom ? err?.output : undefined,
+            data: isBoom ? err?.data : err?.data,
+        };
+    } catch (e) {
+        return { error: e?.message || 'failed_to_summarize_last_disconnect' };
+    }
+}
+
+function lockConnection(reason, details) {
+    if (connectionLock) return;
+    connectionLock = {
+        lockedAt: new Date().toISOString(),
+        reason,
+        details,
+    };
+
+    writeConnectionFailureReport(connectionLock);
+    logger.fatal({ lock: connectionLock }, 'WhatsApp connection locked. Auto-reconnect is disabled to prevent QR-code loops.');
+    logger.fatal('Recovery steps: ensure no other instance uses the same auth dir, remove the linked device in WhatsApp on your phone, delete the auth dir, then restart the receiver.');
+}
+
+function getConnectionLock() {
+    return connectionLock;
+}
+
+function getLastFailureReportPath() {
+    return lastFailureReportPath;
+}
+
+function clearConnectionLock() {
+    connectionLock = null;
+    lastFailureReportPath = null;
+}
+
+function isDeviceRemovedConflict(lastDisconnect) {
+    try {
+        const err = lastDisconnect?.error;
+        const data = err?.data;
+        const content = data?.content;
+        if (!Array.isArray(content)) return false;
+        return content.some((c) => c?.tag === 'conflict' && c?.attrs?.type === 'device_removed');
+    } catch {
+        return false;
+    }
+}
 
 // Track edit message IDs to skip their status updates
 const editMessageIds = new Set();
@@ -43,9 +267,25 @@ function indexContactsLidMapping(sock) {
         const contacts = sock?.contacts || {};
         let count = 0;
         for (const [jid, info] of Object.entries(contacts)) {
-            const lidStr = (typeof info?.lid === 'object') ? (info.lid?.jid || info.lid?.toString?.()) : info?.lid;
-            if (lidStr && typeof jid === 'string' && jid.endsWith('@s.whatsapp.net')) {
-                recordLidToPhone(lidStr, jid);
+            const jidStr = (typeof jid === 'string') ? jid : null;
+            const infoId = (typeof info?.id === 'string') ? info.id : null;
+
+            const lidStr = (typeof info?.lid === 'object')
+                ? (info.lid?.jid || info.lid?.toString?.())
+                : (typeof info?.lid === 'string' ? info.lid : null);
+
+            const phoneStr = normalizePhoneJid(info?.phoneNumber);
+            const pnFromKey = (jidStr && jidStr.endsWith('@s.whatsapp.net')) ? jidStr : null;
+            const pnFromInfoId = (infoId && infoId.endsWith('@s.whatsapp.net')) ? infoId : null;
+
+            if (lidStr && (pnFromKey || pnFromInfoId)) {
+                recordLidToPhone(lidStr, pnFromKey || pnFromInfoId);
+                count++;
+            } else if ((jidStr && jidStr.endsWith('@lid')) && phoneStr) {
+                recordLidToPhone(jidStr, phoneStr);
+                count++;
+            } else if ((infoId && infoId.endsWith('@lid')) && (phoneStr || pnFromKey)) {
+                recordLidToPhone(infoId, phoneStr || pnFromKey);
                 count++;
             }
         }
@@ -58,6 +298,15 @@ function indexContactsLidMapping(sock) {
 // Map LID JIDs to phone JIDs when we discover them from message events
 // key: '123456789@lid' -> value: '491234567890@s.whatsapp.net'
 const lidToPhoneMap = new Map();
+
+function normalizePhoneJid(value) {
+    if (!value) return null;
+    const raw = String(value);
+    if (raw.endsWith('@s.whatsapp.net')) return raw;
+    if (raw.endsWith('@lid')) return raw;
+    if (raw.includes('@')) return raw;
+    return `${raw.replace(/^\+/, '')}@s.whatsapp.net`;
+}
 
 function recordLidToPhone(lidJid, phoneJid) {
     try {
@@ -185,7 +434,6 @@ async function fetchContactStatus(sock, jid) {
     }
 }
 
-
 /**
  * Convert LID to phone number JID using socket's contact store
  * @param {object} sock - The socket instance
@@ -195,8 +443,25 @@ async function fetchContactStatus(sock, jid) {
 function convertLidToPhoneJid(sock, jid) {
     if (!jid) return jid;
 
+    // Raw phone number (no domain)
+    if (typeof jid === 'string' && !jid.includes('@')) {
+        return normalizePhoneJid(jid);
+    }
+
     // Already a phone or group JID
     if (!jid.endsWith('@lid')) return jid;
+
+    // Prefer Baileys internal lid-mapping store when available (v7+)
+    try {
+        const pn = sock?.signalRepository?.lidMapping?.getPNForLID?.(jid);
+        const normalized = normalizePhoneJid(pn);
+        if (normalized) {
+            recordLidToPhone(jid, normalized);
+            return normalized;
+        }
+    } catch (err) {
+        logger.debug({ err: err.message }, 'getPNForLID failed');
+    }
 
     // Prefer known mapping from runtime
     const mapped = lidToPhoneMap.get(jid);
@@ -206,8 +471,9 @@ function convertLidToPhoneJid(sock, jid) {
     try {
         const contacts = sock?.contacts || {};
         for (const [contactJid, contactInfo] of Object.entries(contacts)) {
-            // Some Baileys versions store lid as string or object
-            const lidStr = (typeof contactInfo?.lid === 'object') ? (contactInfo.lid?.jid || contactInfo.lid?.toString?.()) : contactInfo?.lid;
+            const lidStr = (typeof contactInfo?.lid === 'object')
+                ? (contactInfo.lid?.jid || contactInfo.lid?.toString?.())
+                : (typeof contactInfo?.lid === 'string' ? contactInfo.lid : null);
             if (lidStr === jid) {
                 logger.debug({ lid: jid, phoneJid: contactJid }, 'Resolved LID to phone JID via contacts');
                 return contactJid;
@@ -231,32 +497,32 @@ function shouldSendGroupMetadata(groupId, groupData = null) {
     // Filter out community parent groups - they have the same name as their announcement group
     // but we only want to store the actual announcement group
     if (groupData && groupData.isCommunity) {
-        logger.debug({ 
-            groupId, 
+        logger.debug({
+            groupId,
             groupName: groupData.subject,
             reason: 'Community parent group filtered out'
         }, 'Skipping community parent group - only storing announcement groups');
         return false;
     }
-    
-    // Also filter by group ID pattern - community parent groups often end with @g.us 
+
+    // Also filter by group ID pattern - community parent groups often end with @g.us
     // but have specific patterns. For now, we'll rely on the isCommunity flag.
-    
+
     const now = Date.now();
     const lastSent = groupMetadataSendCache.get(groupId);
-    
+
     if (!lastSent || (now - lastSent) > GROUP_METADATA_DEDUP_WINDOW_MS) {
         groupMetadataSendCache.set(groupId, now);
-        logger.debug({ 
-            groupId, 
+        logger.debug({
+            groupId,
             timestamp: now,
-            action: 'ALLOWED' 
+            action: 'ALLOWED'
         }, 'Group metadata send check passed');
         return true;
     }
-    
-    logger.debug({ 
-        groupId, 
+
+    logger.debug({
+        groupId,
         lastSentAgo: Math.round((now - lastSent) / 1000) + 's',
         dedupWindow: GROUP_METADATA_DEDUP_WINDOW_MS / 1000 + 's',
         action: 'SKIPPED'
@@ -281,10 +547,20 @@ async function connectToWhatsApp() {
         return currentSocket;
     }
 
+    if (connectionLock) {
+        logger.fatal({ lock: connectionLock }, 'WhatsApp connection attempt blocked because the connection is locked (preventing QR-code loops).');
+        return null;
+    }
+
+    const hasLock = acquireInstanceLock();
+    if (hasLock === false) {
+        return null;
+    }
+
     try {
         isReconnecting = true;
         logger.info('Initializing WhatsApp client...');
-        
+
         // Use file-based authentication state
         const { state, saveCreds } = await useMultiFileAuthState(config.whatsapp.authDir);
         logger.debug(`Using auth directory: ${config.whatsapp.authDir}`);
@@ -293,25 +569,30 @@ async function connectToWhatsApp() {
         const { version, isLatest } = await fetchLatestBaileysVersion();
         logger.info(`Using Baileys version ${version}, isLatest: ${isLatest}`);
 
+        const socketLogger = pino({
+            level: config.logging.level,
+            transport: config.nodeEnv === 'development' ? {
+                target: 'pino-pretty',
+                options: {
+                    colorize: true,
+                    translateTime: 'SYS:standard',
+                    ignore: 'pid,hostname',
+                },
+            } : undefined,
+        });
+
         // Configure the WhatsApp socket
         const sock = makeWASocket({
             browser: Browsers.macOS(config.whatsapp.clientName),
             version,
-            auth: state,
+            auth: {
+                creds: state.creds,
+                keys: makeCacheableSignalKeyStore(state.keys, socketLogger),
+            },
             msgRetryCounterCache,
-            logger: pino({
-                level: config.logging.level,
-                transport: config.nodeEnv === 'development' ? {
-                    target: 'pino-pretty',
-                    options: {
-                        colorize: true,
-                        translateTime: 'SYS:standard',
-                        ignore: 'pid,hostname',
-                    },
-                } : undefined,
-            }),
+            logger: socketLogger,
             syncFullHistory: true,
-            printQRInTerminal: true,
+            qrTimeout: config.whatsapp.qrTimeoutMs,
             markOnlineOnConnect: true,
             generateHighQualityLinkPreview: true,
             keepAliveIntervalMs: 30000, // Send keepalive every 30 seconds
@@ -347,20 +628,6 @@ async function connectToWhatsApp() {
             },
         });
 
-        // Handle ping/pong to keep connection alive
-        sock.ws.on('CB:iq,type:get,xmlns:urn:xmpp:ping', async (node) => {
-            logger.debug('Received ping from WhatsApp server, sending pong');
-            // Send pong response
-            await sock.query({
-                tag: 'iq',
-                attrs: {
-                    to: '@s.whatsapp.net',
-                    type: 'result',
-                    id: node.attrs.id
-                }
-            });
-        });
-
         // Event listener for connection updates
         sock.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect, qr } = update;
@@ -385,45 +652,63 @@ async function connectToWhatsApp() {
                 isReconnecting = false;
 
                 // Check for specific error types
-                const statusCode = (lastDisconnect?.error instanceof Boom) 
-                    ? lastDisconnect.error.output.statusCode 
+                const statusCode = (lastDisconnect?.error instanceof Boom)
+                    ? lastDisconnect.error.output.statusCode
                     : null;
 
-                if (statusCode === DisconnectReason.loggedOut) {
-                    logger.fatal('Device logged out. Please delete the auth directory and restart.');
-                    process.exit(1);
-                } else if (statusCode === 440) {
-                    // Status 440 = conflict (another instance is connected)
-                    if (conflictRetryCount < MAX_CONFLICT_RETRIES) {
-                        conflictRetryCount++;
-                        logger.warn(`Connection conflict detected (attempt ${conflictRetryCount}/${MAX_CONFLICT_RETRIES + 1}). Another WhatsApp Web instance may be connected.`);
-                        logger.warn('Waiting 30 seconds for the other instance to fully disconnect, then retrying...');
-                        
+                const deviceRemoved = isDeviceRemovedConflict(lastDisconnect);
+
+                const isUnauthorized = statusCode === 401;
+                const isNotRegistered = sock?.authState?.creds ? !sock.authState.creds.registered : null;
+                const shouldHardResetAuth = statusCode === DisconnectReason.loggedOut || (isUnauthorized && deviceRemoved);
+                const isQrTimeout = statusCode === DisconnectReason.timedOut && isNotRegistered === true;
+
+                // Common after upgrading Baileys: old auth dir is not compatible with v7 key types.
+                // If we're not registered yet and we get 401, reset auth dir once and retry.
+                if (isUnauthorized && isNotRegistered === true) {
+                    const reset = resetAuthDirOnce();
+                    if (reset) {
+                        logger.warn('Auth reset performed. Retrying WhatsApp connection...');
                         if (reconnectTimeout) {
-                            logger.warn('Reconnect already scheduled, skipping duplicate schedule');
-                            return;
+                            clearTimeout(reconnectTimeout);
+                            reconnectTimeout = null;
                         }
-                        
                         reconnectTimeout = setTimeout(async () => {
                             reconnectTimeout = null;
                             try {
-                                logger.info('Retrying connection after conflict...');
                                 const newSock = await connectToWhatsApp();
                                 if (reconnectCallback && newSock) {
                                     reconnectCallback(newSock);
                                 }
                             } catch (err) {
-                                logger.error({ err }, 'Reconnection after conflict failed');
+                                logger.error({ err }, 'Reconnection after auth reset failed');
+                                isReconnecting = false;
                             }
-                        }, 30000); // 30 second delay
-                    } else {
-                        logger.error('Connection conflict detected: Another WhatsApp Web instance is already connected.');
-                        logger.error('This usually means another receiver instance (e.g., on remote server) is running.');
-                        logger.error('Please stop the other instance or use different auth directories for each instance.');
-                        logger.error('Maximum conflict retries reached. Not reconnecting automatically to prevent connection loop.');
-                        process.exit(1);
+                        }, 1500);
+                        return;
                     }
-                } else if (shouldReconnect) {
+                }
+
+                if (shouldHardResetAuth || isQrTimeout || statusCode === 440) {
+                    if (reconnectTimeout) {
+                        clearTimeout(reconnectTimeout);
+                        reconnectTimeout = null;
+                    }
+
+                    const summary = summarizeLastDisconnect(lastDisconnect);
+                    lockConnection('UNRECOVERABLE_CONNECTION_FAILURE', {
+                        statusCode,
+                        deviceRemoved,
+                        isQrTimeout,
+                        isNotRegistered,
+                        shouldReconnect,
+                        lastDisconnect: summary,
+                        authDir: config.whatsapp.authDir,
+                    });
+                    return;
+                }
+
+                if (shouldReconnect) {
                     // Use exponential backoff for reconnection
                     const retryDelay = 5000; // 5s for other errors
                     logger.info(`Reconnecting to WhatsApp in ${retryDelay/1000} seconds...`);
@@ -449,7 +734,7 @@ async function connectToWhatsApp() {
             } else if (connection === 'open') {
                 logger.info('Successfully connected to WhatsApp');
                 isReconnecting = false;
-                conflictRetryCount = 0; // Reset conflict counter on successful connection
+                connectionLock = null;
                 if (reconnectTimeout) {
                     clearTimeout(reconnectTimeout);
                     reconnectTimeout = null;
@@ -463,11 +748,11 @@ async function connectToWhatsApp() {
                     for (const g of Object.values(all || {})) {
                         try {
                             const groupProfilePicture = await fetchContactProfilePicture(sock, g.id);
-                            
+
                             // Process participants - prioritize 'jid' field over 'id' field
                             const participants = (g.participants || []).map(p => {
                                 let phoneJid = null;
-                                
+
                                 if (p.jid && typeof p.jid === 'string' && p.jid.endsWith('@s.whatsapp.net')) {
                                     phoneJid = p.jid;
                                 } else if (p.id) {
@@ -492,7 +777,7 @@ async function connectToWhatsApp() {
                                     source: 'connectToWhatsApp',
                                     isCommunity: g.isCommunity || false
                                 }, 'Sending group metadata to backend');
-                                
+
                                 await apiClient.sendGroupMetadata({
                                     groupId: g.id,
                                     groupName: g.subject || 'Group',
@@ -517,6 +802,23 @@ async function connectToWhatsApp() {
         // Save credentials when they get updated
         sock.ev.on('creds.update', saveCreds);
 
+        // v7+: listen for new LID/PN mappings when reported
+        sock.ev.on('lid-mapping.update', (updates) => {
+            try {
+                const list = Array.isArray(updates) ? updates : [updates];
+                for (const u of list) {
+                    const lid = u?.lid || u?.lidJid || u?.lidId || u?.id;
+                    const pnRaw = u?.pn || u?.pnJid || u?.phoneNumber || u?.participantPn || u?.remoteJidAlt;
+                    const pn = normalizePhoneJid(pnRaw);
+                    if (typeof lid === 'string' && lid.endsWith('@lid') && pn) {
+                        recordLidToPhone(lid, pn);
+                    }
+                }
+            } catch (err) {
+                logger.debug({ err: err.message }, 'lid-mapping.update handler failed');
+            }
+        });
+
         // Delegate message processing to the message handler
         sock.ev.on('messages.upsert', (m) => {
             handleMessages(sock, m);
@@ -526,11 +828,15 @@ async function connectToWhatsApp() {
         sock.ev.on('contacts.upsert', (contacts) => {
             try {
                 for (const c of contacts || []) {
-                    // c.id: phone JID, try to find lid via store
-                    if (c?.id && typeof c.id === 'string' && c.id.endsWith('@s.whatsapp.net')) {
-                        const store = sock.contacts?.[c.id];
-                        const lidStr = (typeof store?.lid === 'object') ? (store.lid?.jid || store.lid?.toString?.()) : store?.lid;
-                        if (lidStr) recordLidToPhone(lidStr, c.id);
+                    const id = c?.id;
+                    const lid = c?.lid;
+                    const pnFromId = (typeof id === 'string' && id.endsWith('@s.whatsapp.net')) ? id : null;
+                    const pnFromPhone = normalizePhoneJid(c?.phoneNumber);
+
+                    if (typeof lid === 'string' && lid.endsWith('@lid') && pnFromId) {
+                        recordLidToPhone(lid, pnFromId);
+                    } else if (typeof id === 'string' && id.endsWith('@lid') && pnFromPhone) {
+                        recordLidToPhone(id, pnFromPhone);
                     }
                 }
             } catch (e) {
@@ -540,10 +846,15 @@ async function connectToWhatsApp() {
         sock.ev.on('contacts.update', (updates) => {
             try {
                 for (const u of updates || []) {
-                    if (u?.id && typeof u.id === 'string' && u.id.endsWith('@s.whatsapp.net')) {
-                        const store = sock.contacts?.[u.id];
-                        const lidStr = (typeof store?.lid === 'object') ? (store.lid?.jid || store.lid?.toString?.()) : store?.lid;
-                        if (lidStr) recordLidToPhone(lidStr, u.id);
+                    const id = u?.id;
+                    const lid = u?.lid;
+                    const pnFromId = (typeof id === 'string' && id.endsWith('@s.whatsapp.net')) ? id : null;
+                    const pnFromPhone = normalizePhoneJid(u?.phoneNumber);
+
+                    if (typeof lid === 'string' && lid.endsWith('@lid') && pnFromId) {
+                        recordLidToPhone(lid, pnFromId);
+                    } else if (typeof id === 'string' && id.endsWith('@lid') && pnFromPhone) {
+                        recordLidToPhone(id, pnFromPhone);
                     }
                 }
             } catch (e) {
@@ -1105,4 +1416,4 @@ async function connectToWhatsApp() {
     }
 }
 
-export { connectToWhatsApp, setReconnectCallback, addEditMessageId, addProtocolMessageId, fetchContactProfilePicture, fetchContactStatus, convertLidToPhoneJid, storeSentMessage, recordLidToPhone, shouldSendGroupMetadata };
+export { connectToWhatsApp, setReconnectCallback, addEditMessageId, addProtocolMessageId, fetchContactProfilePicture, fetchContactStatus, convertLidToPhoneJid, storeSentMessage, recordLidToPhone, shouldSendGroupMetadata, getConnectionLock, getLastFailureReportPath, clearConnectionLock };

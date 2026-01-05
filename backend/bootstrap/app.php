@@ -49,6 +49,10 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->remove(\Illuminate\Foundation\Http\Middleware\VerifyCsrfToken::class);
         
         // Allow WebSocket connections from the same origin
+        $middleware->web(prepend: [
+            \Illuminate\Http\Middleware\HandleCors::class,
+        ]);
+
         $middleware->web(\Illuminate\Http\Middleware\AddLinkHeadersForPreloadedAssets::class);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

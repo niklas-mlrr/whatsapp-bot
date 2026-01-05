@@ -1,5 +1,8 @@
-const defaultScheme = (import.meta.env.VITE_REVERB_SCHEME ?? 'http').toLowerCase();
+const envScheme = (import.meta.env.VITE_REVERB_SCHEME ?? '').toLowerCase();
 const defaultHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+const pageIsHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
+
+const defaultScheme = (envScheme || (pageIsHttps ? 'https' : 'http')).toLowerCase();
 const basePort = Number(
     import.meta.env.VITE_REVERB_PORT ?? (defaultScheme === 'https' ? '443' : '8080')
 );
@@ -11,7 +14,7 @@ const apiBaseUrl = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8000/api';
 const isLocalhost = (import.meta.env.VITE_REVERB_HOST ?? defaultHost) === 'localhost' || 
                     (import.meta.env.VITE_REVERB_HOST ?? defaultHost) === '127.0.0.1';
 // Always use http for localhost, even if scheme is https
-const shouldForceTLS = defaultScheme === 'https' && !isLocalhost;
+const shouldForceTLS = (defaultScheme === 'https' || pageIsHttps) && !isLocalhost;
 
 export const websocketConfig = {
     broadcaster: 'pusher',
