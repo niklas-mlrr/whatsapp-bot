@@ -79,6 +79,7 @@
             :current-user="currentUser"
             :is-group-chat="isGroupChat"
             :members="members"
+            :contacts="contacts"
             @open-image-preview="handleOpenImagePreview"
             @add-reaction="handleAddReaction"
             @remove-reaction="handleRemoveReaction"
@@ -164,8 +165,10 @@ interface Message {
   chat?: string | { id: string; name: string };
   created_at: string;
   updated_at: string;
+  delivered_at?: string;
   read_at?: string; // Timestamp when message was read
   read_by?: string[];
+  receipt_statuses?: Array<{ participant_id: string; delivered_at?: string | null; read_at?: string | null }>;
   temp_id?: string;
   status?: 'sending' | 'sent' | 'delivered' | 'read' | 'failed' | string;
   type?: 'text' | 'image' | 'video' | 'audio' | 'document' | 'location' | 'contact' | 'sticker' | 'unsupported' | string;
@@ -201,7 +204,10 @@ interface ReadReceiptEvent {
   message_id: string;
   chat_id: string;
   user_id: string;
-  read_at: string;
+  read_at?: string;
+  delivered_at?: string;
+  status?: string;
+  participant_id?: string;
 }
 
 interface ChatMember {
@@ -723,11 +729,59 @@ const handleTyping = (event: TypingEvent) => {
 };
 
 const handleReadReceipt = (event: ReadReceiptEvent) => {
+  const rank = (s?: string) => {
+    if (s === 'read') return 3;
+    if (s === 'delivered') return 2;
+    if (s === 'sent') return 1;
+    return 0;
+  };
+
+  const hasReadAt = !!(event.read_at);
+  const hasDeliveredAt = !!(event.delivered_at);
+  const inferredStatus = ((): string | undefined => {
+    if (typeof event.status === 'string' && event.status.trim()) return event.status;
+    if (hasReadAt) return 'read';
+    if (hasDeliveredAt) return 'delivered';
+    return undefined;
+  })();
+
   messages.value = messages.value.map(msg => {
-    if (msg.id === event.message_id && msg.status !== 'read') {
-      return { ...msg, status: 'read' as const };
+    if (String(msg.id) !== String(event.message_id)) return msg;
+
+    const next: any = { ...msg };
+
+    // Maintain read_by for compatibility with existing UI/state
+    if (event.user_id) {
+      const rb = Array.isArray(next.read_by) ? [...next.read_by] : [];
+      const uid = String(event.user_id);
+      if (!rb.includes(uid)) rb.push(uid);
+      next.read_by = rb;
     }
-    return msg;
+
+    if (inferredStatus && rank(inferredStatus) > rank(String(next.status || ''))) {
+      next.status = inferredStatus;
+    }
+
+    if (event.delivered_at && !next.delivered_at) {
+      next.delivered_at = event.delivered_at;
+    }
+    if (event.read_at && !next.read_at) {
+      next.read_at = event.read_at;
+    }
+
+    const pid = (event.participant_id || event.user_id) ? String(event.participant_id || event.user_id) : null;
+    if (pid) {
+      const receipts = Array.isArray(next.receipt_statuses) ? [...next.receipt_statuses] : [];
+      const idx = receipts.findIndex((r: any) => String(r?.participant_id) === pid);
+      const existing = idx >= 0 ? { ...receipts[idx] } : { participant_id: pid };
+      if (event.delivered_at) existing.delivered_at = event.delivered_at;
+      if (event.read_at) existing.read_at = event.read_at;
+      if (idx >= 0) receipts[idx] = existing;
+      else receipts.push(existing);
+      next.receipt_statuses = receipts;
+    }
+
+    return next;
   });
 };
 
@@ -925,7 +979,10 @@ const normalizeMessage = (msg: any): Message => {
     updated_at: msg.updated_at || new Date().toISOString(),
     deleted_at: msg.deleted_at || undefined,
     edited_at: msg.edited_at || undefined,
+    delivered_at: msg.delivered_at || undefined,
+    read_at: msg.read_at || undefined,
     read_by: Array.isArray(msg.read_by) ? msg.read_by : [],
+    receipt_statuses: Array.isArray(msg.receipt_statuses) ? msg.receipt_statuses : [],
     media: msg.media || null,
     mimetype: msg.mimetype || null,
     filename: msg.filename || undefined,
@@ -1567,28 +1624,17 @@ const setupWebSocketListeners = () => {
     // Listen for read receipts
     const readReceiptUnsubscribe = listenForReadReceipts(props.chat.toString(), (event: any) => {
       if (!event || !event.message_id) {
+        const maybePayload = (event && typeof event === 'object' && 'data' in event && (event as any).data)
+          ? (event as any).data
+          : ((event && typeof event === 'object' && 'broadcast_data' in event && (event as any).broadcast_data)
+              ? (event as any).broadcast_data
+              : null);
+        if (!maybePayload || !maybePayload.message_id) return;
+        handleReadReceipt(maybePayload as ReadReceiptEvent);
         return;
       }
-      
-      messages.value = messages.value.map(msg => {
-        if (msg.id === event.message_id) {
-          
-          // Update message status and read_at timestamp
-          const updatedMsg = {
-            ...msg,
-            status: event.status || 'read',
-            read_at: event.read_at || msg.read_at
-          };
-          
-          // Update read_by array if user_id is provided
-          if (event.user_id && msg.read_by) {
-            updatedMsg.read_by = [...msg.read_by, event.user_id].filter((v, i, a) => a.indexOf(v) === i);
-          }
-          
-          return updatedMsg;
-        }
-        return msg;
-      });
+
+      handleReadReceipt(event as ReadReceiptEvent);
     });
     
     // Listen for reaction updates

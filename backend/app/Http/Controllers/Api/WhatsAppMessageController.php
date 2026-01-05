@@ -317,7 +317,7 @@ class WhatsAppMessageController extends Controller
                 $message,
                 $user,
                 $originalContent
-            ))->toOthers();
+            ));
             
             return response()->json([
                 'status' => 'success',
@@ -469,43 +469,63 @@ class WhatsAppMessageController extends Controller
                 ]);
             }
         } else {
-            // Direct chat handling: normalize to @s.whatsapp.net when needed
+            // Direct chat handling
             $normalizedChatId = $chatJid;
-            if (preg_match('/^(\+?\d+)@$/', $normalizedChatId, $matches)) {
-                $normalizedChatId = ltrim($matches[1], '+') . '@s.whatsapp.net';
-            } elseif (!str_contains($normalizedChatId, '@')) {
-                $normalizedChatId = ltrim($normalizedChatId, '+') . '@s.whatsapp.net';
-            }
-
-            // Extract phone number for flexible searching
-            $phoneNumber = preg_replace('/@.*$/', '', $normalizedChatId);
-
-            // Try to find existing chat by phone number (handles format variations)
-            $chat = Chat::where('is_group', false)
-                ->get()
-                ->first(function($c) use ($phoneNumber) {
-                    $metadata = is_string($c->metadata) ? json_decode($c->metadata, true) : $c->metadata;
-                    if (!$metadata || !isset($metadata['whatsapp_id'])) {
-                        return false;
-                    }
-                    $storedPhone = preg_replace('/@.*$/', '', $metadata['whatsapp_id']);
-                    return $storedPhone === $phoneNumber;
-                });
-
-            if (!$chat) {
-                // Format the phone number for display (e.g., "+4917646765869")
-                $displayName = '+' . $phoneNumber;
-
-                $chat = Chat::create([
-                    'name' => $displayName,
-                    'is_group' => false,
-                    'created_by' => $user->id,
-                    'participants' => [$normalizedChatId, 'me'],
-                    'metadata' => [
-                        'whatsapp_id' => $normalizedChatId,
+            if (str_ends_with($normalizedChatId, '@lid')) {
+                $chat = Chat::where('is_group', false)
+                    ->where('metadata->whatsapp_id', $normalizedChatId)
+                    ->first();
+                
+                if (!$chat) {
+                    $chat = Chat::create([
+                        'name' => $normalizedChatId,
+                        'is_group' => false,
                         'created_by' => $user->id,
-                    ],
-                ]);
+                        'participants' => [$normalizedChatId, 'me'],
+                        'metadata' => [
+                            'whatsapp_id' => $normalizedChatId,
+                            'created_by' => $user->id,
+                        ],
+                    ]);
+                }
+            } else {
+                // Direct chat handling: normalize to @s.whatsapp.net when needed
+                if (preg_match('/^(\+?\d+)@$/', $normalizedChatId, $matches)) {
+                    $normalizedChatId = ltrim($matches[1], '+') . '@s.whatsapp.net';
+                } elseif (!str_contains($normalizedChatId, '@')) {
+                    $normalizedChatId = ltrim($normalizedChatId, '+') . '@s.whatsapp.net';
+                }
+
+                // Extract phone number for flexible searching
+                $phoneNumber = preg_replace('/@.*$/', '', $normalizedChatId);
+
+                // Try to find existing chat by phone number (handles format variations)
+                $chat = Chat::where('is_group', false)
+                    ->get()
+                    ->first(function($c) use ($phoneNumber) {
+                        $metadata = is_string($c->metadata) ? json_decode($c->metadata, true) : $c->metadata;
+                        if (!$metadata || !isset($metadata['whatsapp_id'])) {
+                            return false;
+                        }
+                        $storedPhone = preg_replace('/@.*$/', '', $metadata['whatsapp_id']);
+                        return $storedPhone === $phoneNumber;
+                    });
+
+                if (!$chat) {
+                    // Format the phone number for display (e.g., "+4917646765869")
+                    $displayName = '+' . $phoneNumber;
+
+                    $chat = Chat::create([
+                        'name' => $displayName,
+                        'is_group' => false,
+                        'created_by' => $user->id,
+                        'participants' => [$normalizedChatId, 'me'],
+                        'metadata' => [
+                            'whatsapp_id' => $normalizedChatId,
+                            'created_by' => $user->id,
+                        ],
+                    ]);
+                }
             }
         }
 
@@ -1247,25 +1267,6 @@ class WhatsAppMessageController extends Controller
             // Store original content
             $originalContent = $message->content;
             
-            // Update chat's last message
-            $chat = $message->chat;
-            if ($chat) {
-                // Update contact info if needed
-                $this->updateContactInfoIfNeeded($chat, $request->all());
-                
-                $chat->update([
-                    'last_message_id' => $message->id,
-                    'last_message_at' => now(),
-                ]);
-
-                // Increment unread count for all users except the sender
-                if ($senderUser = User::where('phone', $message->sender_phone)->first()) {
-                    $chat->users()->where('user_id', '!=', $senderUser->id)->increment('unread_count');
-                } else {
-                    $chat->increment('unread_count');
-                }
-            }
-            
             // Update message content
             $message->update([
                 'content' => $newContent,
@@ -1280,7 +1281,7 @@ class WhatsAppMessageController extends Controller
                 $message,
                 $user,
                 $originalContent
-            ))->toOthers();
+            ));
             
             \Log::info('Message edit notification processed', [
                 'message_id' => $message->id,
@@ -1295,6 +1296,7 @@ class WhatsAppMessageController extends Controller
         } catch (\Exception $e) {
             \Log::error('Error processing message edit notification', [
                 'error' => $e->getMessage(),
+                'whatsapp_message_id' => $request->input('whatsapp_message_id'),
                 'trace' => $e->getTraceAsString(),
             ]);
             

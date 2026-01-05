@@ -23,6 +23,154 @@ class WhatsAppMessageService
         $this->webSocketService = $webSocketService;
     }
 
+    private function mergeLidSenderIfNeeded(WhatsAppMessageData $data): void
+    {
+        try {
+            $sender = $data->sender ?? null;
+            $senderLid = $data->senderLid ?? null;
+
+            if (!is_string($sender) || !is_string($senderLid)) {
+                return;
+            }
+
+            if (!Str::endsWith($sender, '@s.whatsapp.net')) {
+                return;
+            }
+
+            if (!Str::endsWith($senderLid, '@lid')) {
+                return;
+            }
+
+            if ($sender === $senderLid) {
+                return;
+            }
+
+            $lidUser = User::where('phone', $senderLid)->first();
+            if (!$lidUser) {
+                return;
+            }
+
+            $phoneUser = User::where('phone', $sender)->first();
+
+            if ($phoneUser && $phoneUser->id !== $lidUser->id) {
+                WhatsAppMessage::withTrashed()->where('sender_id', $lidUser->id)->update(['sender_id' => $phoneUser->id]);
+
+                $pivotRows = DB::table('chat_user')->where('user_id', $lidUser->id)->get();
+                foreach ($pivotRows as $row) {
+                    $exists = DB::table('chat_user')
+                        ->where('chat_id', $row->chat_id)
+                        ->where('user_id', $phoneUser->id)
+                        ->exists();
+
+                    if ($exists) {
+                        DB::table('chat_user')->where('id', $row->id)->delete();
+                        continue;
+                    }
+
+                    DB::table('chat_user')->where('id', $row->id)->update([
+                        'user_id' => $phoneUser->id,
+                        'whatsapp_id' => $sender,
+                        'updated_at' => now(),
+                    ]);
+                }
+
+                $this->mergeContactPhoneIfNeeded($senderLid, $sender);
+
+                $stillUsed = WhatsAppMessage::withTrashed()->where('sender_id', $lidUser->id)->exists()
+                    || DB::table('chat_user')->where('user_id', $lidUser->id)->exists();
+
+                if (!$stillUsed) {
+                    $lidUser->delete();
+                }
+
+                Log::channel('whatsapp')->info('Merged @lid sender user into phone sender user', [
+                    'sender_lid' => $senderLid,
+                    'sender' => $sender,
+                    'lid_user_id' => $lidUser->id,
+                    'phone_user_id' => $phoneUser->id,
+                    'deleted_lid_user' => !$stillUsed,
+                ]);
+
+                return;
+            }
+
+            if (!$phoneUser) {
+                $lidUser->update(['phone' => $sender]);
+
+                DB::table('chat_user')
+                    ->where('user_id', $lidUser->id)
+                    ->where('whatsapp_id', $senderLid)
+                    ->update([
+                        'whatsapp_id' => $sender,
+                        'updated_at' => now(),
+                    ]);
+
+                $this->mergeContactPhoneIfNeeded($senderLid, $sender);
+
+                Log::channel('whatsapp')->info('Updated @lid sender user phone to real phone sender', [
+                    'sender_lid' => $senderLid,
+                    'sender' => $sender,
+                    'user_id' => $lidUser->id,
+                ]);
+            }
+        } catch (\Throwable $e) {
+            Log::channel('whatsapp')->warning('Failed to merge @lid sender into phone sender (non-fatal)', [
+                'error' => $e->getMessage(),
+                'sender' => $data->sender ?? null,
+                'sender_lid' => $data->senderLid ?? null,
+            ]);
+        }
+    }
+
+    private function mergeContactPhoneIfNeeded(string $senderLid, string $sender): void
+    {
+        try {
+            $appUser = User::getFirstUser();
+            if (!$appUser) {
+                return;
+            }
+
+            $lidContact = \App\Models\Contact::where('user_id', $appUser->id)
+                ->where('phone', $senderLid)
+                ->first();
+
+            if (!$lidContact) {
+                return;
+            }
+
+            $phoneContact = \App\Models\Contact::where('user_id', $appUser->id)
+                ->where('phone', $sender)
+                ->first();
+
+            if (!$phoneContact) {
+                $lidContact->update(['phone' => $sender]);
+                $this->webSocketService->contactUpdated($lidContact->fresh());
+                return;
+            }
+
+            $updates = [];
+            if (empty($phoneContact->profile_picture_url) && !empty($lidContact->profile_picture_url)) {
+                $updates['profile_picture_url'] = $lidContact->profile_picture_url;
+            }
+            if (empty($phoneContact->bio) && !empty($lidContact->bio)) {
+                $updates['bio'] = $lidContact->bio;
+            }
+
+            if (!empty($updates)) {
+                $phoneContact->update($updates);
+                $this->webSocketService->contactUpdated($phoneContact->fresh());
+            }
+
+            $lidContact->delete();
+        } catch (\Throwable $e) {
+            Log::channel('whatsapp')->debug('Failed to merge contact phone (non-fatal)', [
+                'error' => $e->getMessage(),
+                'sender' => $sender,
+                'sender_lid' => $senderLid,
+            ]);
+        }
+    }
+
     public function handle(WhatsAppMessageData $data, int $retryCount = 0): void
     {
         Log::channel('whatsapp')->info('WhatsAppMessageService.handle() called', [
@@ -46,6 +194,8 @@ class WhatsAppMessageService
 
             // Process with timeout protection
             DB::transaction(function() use ($data) {
+                $this->mergeLidSenderIfNeeded($data);
+
                 // Find or create user - but only for valid phone numbers
                 Log::channel('whatsapp')->debug('About to call findOrCreateUserSafely', [
                     'sender' => $data->sender,
@@ -161,6 +311,8 @@ class WhatsAppMessageService
                 'original_content' => $data->content,
                 'content_length' => mb_strlen($data->content),
                 'message_id' => $data->messageId,
+                'sender_jid' => $data->senderJid,
+                'sender_lid' => $data->senderLid,
             ],
         ]);
     }
@@ -222,6 +374,8 @@ class WhatsAppMessageService
                     'media_path' => $filename,
                     'dimensions' => $this->getImageDimensions($imageData),
                     'message_id' => $data->messageId,
+                    'sender_jid' => $data->senderJid,
+                    'sender_lid' => $data->senderLid,
                 ],
             ]);
 
@@ -288,6 +442,8 @@ class WhatsAppMessageService
                     'duration' => $this->getVideoDuration(storage_path('app/public/' . $filename)),
                     'filename' => $data->fileName,
                     'message_id' => $data->messageId,
+                    'sender_jid' => $data->senderJid,
+                    'sender_lid' => $data->senderLid,
                 ],
             ]);
 
@@ -353,6 +509,8 @@ class WhatsAppMessageService
                     'duration' => $duration,
                     'filename' => $data->fileName,
                     'message_id' => $data->messageId,
+                    'sender_jid' => $data->senderJid,
+                    'sender_lid' => $data->senderLid,
                 ],
             ]);
 
@@ -416,6 +574,8 @@ class WhatsAppMessageService
                     'filename' => $data->fileName ?? 'document.' . $extension,
                     'original_name' => $data->fileName ?? 'document.' . $extension,
                     'message_id' => $data->messageId,
+                    'sender_jid' => $data->senderJid,
+                    'sender_lid' => $data->senderLid,
                 ],
             ]);
 
@@ -458,6 +618,8 @@ class WhatsAppMessageService
                     'address' => $locationData['address'] ?? null,
                     'url' => $locationData['url'] ?? null,
                     'message_id' => $data->messageId,
+                    'sender_jid' => $data->senderJid,
+                    'sender_lid' => $data->senderLid,
                 ],
             ]);
 
@@ -501,6 +663,8 @@ class WhatsAppMessageService
                     'organization' => $contactData['organization'] ?? null,
                     'title' => $contactData['title'] ?? null,
                     'message_id' => $data->messageId,
+                    'sender_jid' => $data->senderJid,
+                    'sender_lid' => $data->senderLid,
                 ],
             ]);
 
@@ -537,6 +701,8 @@ class WhatsAppMessageService
                 'original_type' => $data->type,
                 'content_type' => gettype($data->content),
                 'message_id' => $data->messageId,
+                'sender_jid' => $data->senderJid,
+                'sender_lid' => $data->senderLid,
             ],
         ]);
     }
@@ -801,51 +967,79 @@ class WhatsAppMessageService
             // (fall through to user attachment logic at the end)
         } else {
             // Direct chat handling
-            // Normalize incomplete/short formats to @s.whatsapp.net
-            if (preg_match('/^(\+?\d+)@$/', $normalizedChatId, $matches)) {
-                $normalizedChatId = ltrim($matches[1], '+') . '@s.whatsapp.net';
-            } elseif (!str_contains($normalizedChatId, '@')) {
-                $normalizedChatId = ltrim($normalizedChatId, '+') . '@s.whatsapp.net';
-            }
-
-            // Extract phone number for flexible searching
-            $phoneNumber = preg_replace('/@.*$/', '', $normalizedChatId);
-
-            // Try to find existing direct chat by phone number (ignoring domain variations)
-            $chat = Chat::where('is_group', false)
-                ->get()
-                ->first(function ($c) use ($phoneNumber) {
-                    $metadata = is_string($c->metadata) ? json_decode($c->metadata, true) : $c->metadata;
-                    if (!$metadata || !isset($metadata['whatsapp_id'])) {
-                        return false;
-                    }
-                    $storedPhone = preg_replace('/@.*$/', '', $metadata['whatsapp_id']);
-                    return $storedPhone === $phoneNumber;
-                });
-
-            if (!$chat) {
-                // Format the phone number for display (e.g., "+4917646765869")
-                $displayName = '+' . $phoneNumber;
-
-                $chat = Chat::create([
-                    'name' => $displayName,
-                    'is_group' => false,
-                    'created_by' => $senderId,
-                    'participants' => [$normalizedChatId, 'me'],
-                    'pending_approval' => true,
-                    'metadata' => [
+            if (str_ends_with($normalizedChatId, '@lid')) {
+                $chat = Chat::where('is_group', false)
+                    ->where('metadata->whatsapp_id', $normalizedChatId)
+                    ->first();
+                
+                if (!$chat) {
+                    $chat = Chat::create([
+                        'name' => $normalizedChatId,
+                        'is_group' => false,
+                        'created_by' => $senderId,
+                        'participants' => [$normalizedChatId, 'me'],
+                        'pending_approval' => true,
+                        'metadata' => [
+                            'whatsapp_id' => $normalizedChatId,
+                            'created_by' => $senderId
+                        ]
+                    ]);
+                
+                    Log::channel('whatsapp')->info('Created new direct chat (LID)', [
+                        'chat_id' => $chat->id,
                         'whatsapp_id' => $normalizedChatId,
-                        'created_by' => $senderId
-                    ]
-                ]);
+                        'original_chat_id' => $chatId
+                    ]);
+                
+                    $this->webSocketService->newChatCreated($chat);
+                }
+            } else {
+                // Normalize incomplete/short formats to @s.whatsapp.net
+                if (preg_match('/^(\+?\d+)@$/', $normalizedChatId, $matches)) {
+                    $normalizedChatId = ltrim($matches[1], '+') . '@s.whatsapp.net';
+                } elseif (!str_contains($normalizedChatId, '@')) {
+                    $normalizedChatId = ltrim($normalizedChatId, '+') . '@s.whatsapp.net';
+                }
 
-                Log::channel('whatsapp')->info('Created new direct chat', [
-                    'chat_id' => $chat->id,
-                    'whatsapp_id' => $normalizedChatId,
-                    'original_chat_id' => $chatId
-                ]);
+                // Extract phone number for flexible searching
+                $phoneNumber = preg_replace('/@.*$/', '', $normalizedChatId);
 
-                $this->webSocketService->newChatCreated($chat);
+                // Try to find existing direct chat by phone number (ignoring domain variations)
+                $chat = Chat::where('is_group', false)
+                    ->get()
+                    ->first(function ($c) use ($phoneNumber) {
+                        $metadata = is_string($c->metadata) ? json_decode($c->metadata, true) : $c->metadata;
+                        if (!$metadata || !isset($metadata['whatsapp_id'])) {
+                            return false;
+                        }
+                        $storedPhone = preg_replace('/@.*$/', '', $metadata['whatsapp_id']);
+                        return $storedPhone === $phoneNumber;
+                    });
+
+                if (!$chat) {
+                    // Format the phone number for display (e.g., "+4917646765869")
+                    $displayName = '+' . $phoneNumber;
+
+                    $chat = Chat::create([
+                        'name' => $displayName,
+                        'is_group' => false,
+                        'created_by' => $senderId,
+                        'participants' => [$normalizedChatId, 'me'],
+                        'pending_approval' => true,
+                        'metadata' => [
+                            'whatsapp_id' => $normalizedChatId,
+                            'created_by' => $senderId
+                        ]
+                    ]);
+
+                    Log::channel('whatsapp')->info('Created new direct chat', [
+                        'chat_id' => $chat->id,
+                        'whatsapp_id' => $normalizedChatId,
+                        'original_chat_id' => $chatId
+                    ]);
+
+                    $this->webSocketService->newChatCreated($chat);
+                }
             }
         }
 
@@ -1052,18 +1246,6 @@ class WhatsAppMessageService
                     ]);
                     return $user;
                 }
-            }
-            
-            // No mapping found, create a temporary user
-            // This will be mapped later when we have the real phone number
-            $user = User::where('phone', 'like', '%@lid')->first();
-            
-            if ($user) {
-                Log::channel('whatsapp')->info('Using existing @lid user for invalid phone', [
-                    'phone' => $phone,
-                    'existing_user_id' => $user->id
-                ]);
-                return $user;
             }
             
             // Create a temporary user for @lid numbers

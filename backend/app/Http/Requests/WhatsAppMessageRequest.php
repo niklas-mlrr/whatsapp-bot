@@ -54,6 +54,7 @@ class WhatsAppMessageRequest extends FormRequest
             'reactedMessageId' => ['nullable', 'string'],
             'emoji' => ['nullable', 'string'],
             'senderJid' => ['nullable', 'string'],
+            'senderLid' => ['nullable', 'string'],
             'quotedMessage' => ['nullable', 'array'],
             'quotedMessage.quotedMessageId' => ['nullable', 'string'],
             'quotedMessage.quotedContent' => ['nullable', 'string'],
@@ -126,6 +127,22 @@ class WhatsAppMessageRequest extends FormRequest
         if ($this->has('sender')) {
             $sanitizedData['sender'] = \App\Helpers\SecurityHelper::sanitizeJid($this->input('sender'));
         }
+
+        if (array_key_exists('sender', $sanitizedData) && $sanitizedData['sender'] === null) {
+            $fallback = null;
+            if ($this->has('senderLid')) {
+                $fallback = \App\Helpers\SecurityHelper::sanitizeJid($this->input('senderLid'));
+            }
+            if ($fallback === null && $this->has('senderJid')) {
+                $fallback = \App\Helpers\SecurityHelper::sanitizeJid($this->input('senderJid'));
+            }
+            if ($fallback === null && $this->has('from')) {
+                $fallback = \App\Helpers\SecurityHelper::sanitizeJid($this->input('from'));
+            }
+            if ($fallback !== null) {
+                $sanitizedData['sender'] = $fallback;
+            }
+        }
         
         if ($this->has('from')) {
             $sanitizedData['from'] = \App\Helpers\SecurityHelper::sanitizeJid($this->input('from'));
@@ -137,6 +154,10 @@ class WhatsAppMessageRequest extends FormRequest
         
         if ($this->has('senderJid')) {
             $sanitizedData['senderJid'] = \App\Helpers\SecurityHelper::sanitizeJid($this->input('senderJid'));
+        }
+
+        if ($this->has('senderLid')) {
+            $sanitizedData['senderLid'] = \App\Helpers\SecurityHelper::sanitizeJid($this->input('senderLid'));
         }
         
         if ($this->has('fileName')) {

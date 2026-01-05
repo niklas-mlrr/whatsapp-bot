@@ -338,7 +338,7 @@ async function start() {
                 try {
                     const id = sentMessage?.key?.id;
                     if (id) {
-                        const protoLike = { conversation: content || '' };
+                        const protoLike = sentMessage?.message || { conversation: content || '' };
                         storeSentMessage(id, protoLike);
                     }
                 } catch (_) {}
@@ -378,6 +378,12 @@ async function start() {
                             },
                             messageOptions
                         );
+                        try {
+                            const id = sentMessage?.key?.id;
+                            if (id && sentMessage?.message) {
+                                storeSentMessage(id, sentMessage.message);
+                            }
+                        } catch (_) {}
                     } else if (fs.existsSync(media)) {
                         console.log('Reading local file:', media);
                         // Read the local file
@@ -395,6 +401,12 @@ async function start() {
                             },
                             messageOptions
                         );
+                        try {
+                            const id = sentMessage?.key?.id;
+                            if (id && sentMessage?.message) {
+                                storeSentMessage(id, sentMessage.message);
+                            }
+                        } catch (_) {}
                     } else if (media.startsWith('data:')) {
                         console.log('Processing base64 image data');
                         // Handle base64 data URL
@@ -421,6 +433,12 @@ async function start() {
                         // Send the message with the correct options
                         const sendOptions = quotedMessage ? { quoted: quotedMessage, waitForAck: false } : { quoted: null, waitForAck: false };
                         sentMessage = await sockInstance.sendMessage(targetChat, message, sendOptions);
+                        try {
+                            const id = sentMessage?.key?.id;
+                            if (id && sentMessage?.message) {
+                                storeSentMessage(id, sentMessage.message);
+                            }
+                        } catch (_) {}
                     } else {
                         throw new Error('Unsupported media format. Must be a URL or data URI');
                     }
@@ -471,6 +489,12 @@ async function start() {
 
                     const messageOptions = quotedMessage ? { quoted: quotedMessage, waitForAck: false } : { quoted: null, waitForAck: false };
                     sentMessage = await sockInstance.sendMessage(targetChat, documentMessage, messageOptions);
+                    try {
+                        const id = sentMessage?.key?.id;
+                        if (id && sentMessage?.message) {
+                            storeSentMessage(id, sentMessage.message);
+                        }
+                    } catch (_) {}
                 } catch (error) {
                     console.error('Error processing document:', {
                         error: error.message,
@@ -502,6 +526,12 @@ async function start() {
 
                     const messageOptions = quotedMessage ? { quoted: quotedMessage, waitForAck: false } : { quoted: null, waitForAck: false };
                     sentMessage = await sockInstance.sendMessage(targetChat, videoMessage, messageOptions);
+                    try {
+                        const id = sentMessage?.key?.id;
+                        if (id && sentMessage?.message) {
+                            storeSentMessage(id, sentMessage.message);
+                        }
+                    } catch (_) {}
                 } catch (error) {
                     console.error('Error processing video:', {
                         error: error.message,
@@ -529,6 +559,12 @@ async function start() {
 
                     const messageOptions = quotedMessage ? { quoted: quotedMessage, waitForAck: false } : { quoted: null, waitForAck: false };
                     sentMessage = await sockInstance.sendMessage(targetChat, audioMessage, messageOptions);
+                    try {
+                        const id = sentMessage?.key?.id;
+                        if (id && sentMessage?.message) {
+                            storeSentMessage(id, sentMessage.message);
+                        }
+                    } catch (_) {}
                 } catch (error) {
                     console.error('Error processing audio:', {
                         error: error.message,
@@ -581,6 +617,13 @@ async function start() {
                             values: pollData.options.map(option => option.optionName || option.name || option)
                         }
                     }, messageOptions);
+
+                    try {
+                        const id = sentMessage?.key?.id;
+                        if (id && sentMessage?.message) {
+                            storeSentMessage(id, sentMessage.message);
+                        }
+                    } catch (_) {}
                     
                     // Store the sent poll message for vote aggregation
                     if (sentMessage?.key?.id) {
@@ -655,6 +698,15 @@ async function start() {
 
             // Optional participant for group reactions
             const { participant } = req.body || {};
+
+            // WhatsApp requires key.participant for group reactions to messages not from us.
+            // Without it Baileys will accept the payload but WA will ignore it.
+            if (chatJid.endsWith('@g.us') && !(fromMe === true || fromMe === 'true')) {
+                if (!(typeof participant === 'string' && participant.includes('@'))) {
+                    console.error('Missing participant for group reaction to non-self message', { chatJid, messageId, fromMe, participant });
+                    return res.status(400).json({ error: 'Missing participant for group reaction' });
+                }
+            }
 
             // Build reaction payload for Baileys
             const reactionMessage = {

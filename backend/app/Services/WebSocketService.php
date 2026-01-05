@@ -28,7 +28,7 @@ class WebSocketService
         }
     }
 
-    public function messageStatusUpdated(WhatsAppMessage $message): void
+    public function messageStatusUpdated(WhatsAppMessage $message, ?string $participantId = null): void
     {
         try {
             // For read receipts, we need to identify who read the message
@@ -48,18 +48,22 @@ class WebSocketService
                         $readerUserId = $reader->id;
                     }
                 } else {
-                    // For group messages, we'd need to track who read it
-                    // For now, we'll send null for group messages as the read tracking is more complex
                     $readerUserId = null;
                 }
+            }
+
+            if ($participantId) {
+                $readerUserId = $participantId;
             }
             
             $broadcastData = [
                 'message_id' => $message->id,
                 'status' => $message->status,
+                'delivered_at' => $message->delivered_at?->toIso8601String(),
                 'read_at' => $message->read_at?->toIso8601String(),
                 'is_read' => (bool) $message->read_at,
                 'user_id' => $readerUserId, // Add user_id for frontend compatibility
+                'participant_id' => $participantId,
                 'event' => 'message-status-updated',
             ];
             

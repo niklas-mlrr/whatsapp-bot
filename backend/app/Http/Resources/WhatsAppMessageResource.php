@@ -78,13 +78,29 @@ class WhatsAppMessageResource extends JsonResource
         
         // Check if message is soft-deleted
         $isDeleted = !is_null($this->deleted_at);
+
+        $sender = $this->sender;
+        if (is_string($sender)) {
+            $senderLower = strtolower($sender);
+            if (str_contains($senderLower, 'promise') || str_contains($senderLower, '[object')) {
+                $sender = null;
+            }
+        }
+
+        $senderName = $this->sender_name;
+        if ($sender === null && is_string($senderName)) {
+            $sn = strtolower(trim($senderName));
+            if ($sn === 'whatsapp user' || $sn === 'temporary user') {
+                $senderName = 'Unknown';
+            }
+        }
         
         return [
             // Core message data
             'id' => $this->id,
             'sender_id' => $this->sender_id,
-            'sender' => $this->sender,
-            'sender_name' => $this->sender_name,
+            'sender' => $sender,
+            'sender_name' => $senderName,
             'chat_id' => $this->chat_id,
             'chat' => $this->chat,
             'type' => $isDeleted ? 'deleted' : $this->type,
@@ -98,7 +114,9 @@ class WhatsAppMessageResource extends JsonResource
             // Message status
             'direction' => $this->direction,
             'status' => $this->status,
+            'delivered_at' => $this->delivered_at?->toIso8601String(),
             'read_at' => $this->read_at?->toIso8601String(),
+            'read_by' => $this->read_by ?? [],
             'is_read' => (bool) $this->read_at,
             'is_from_me' => $isFromCurrentUser,
             
@@ -135,11 +153,18 @@ class WhatsAppMessageResource extends JsonResource
             
             // Relationships
             'sender_info' => $this->whenLoaded('senderUser', function () {
+                $phone = $this->senderUser->phone;
+                if (is_string($phone)) {
+                    $phoneLower = strtolower($phone);
+                    if (str_contains($phoneLower, 'promise') || str_contains($phoneLower, '[object')) {
+                        $phone = null;
+                    }
+                }
                 return [
                     'id' => $this->senderUser->id,
                     'name' => $this->senderUser->name,
                     'avatar' => $this->senderUser->avatar_url,
-                    'phone' => $this->senderUser->phone,
+                    'phone' => $phone,
                 ];
             }),
         ];

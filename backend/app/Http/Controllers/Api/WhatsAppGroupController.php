@@ -61,6 +61,18 @@ class WhatsAppGroupController extends Controller
                 ->values()
                 ->all();
 
+            // Participants metadata: keep only entries with valid/normalized JIDs
+            $participantMeta = collect($validated['participants'] ?? [])
+                ->map(function ($p) {
+                    $jid = $this->normalizeJid($p['jid'] ?? null);
+                    if (!$jid) return null;
+                    $p['jid'] = $jid;
+                    return $p;
+                })
+                ->filter()
+                ->values()
+                ->all();
+
             $group = Chat::firstOrCreate(
                 [
                     'is_group' => true,
@@ -75,7 +87,7 @@ class WhatsAppGroupController extends Controller
                         'whatsapp_id' => $validated['group_id'],
                         'description' => $validated['description'] ?? '',
                         'created_at' => $validated['created_at'],
-                        'participants' => $validated['participants'] ?? [],
+                        'participants' => $participantMeta,
                         'profile_picture_url' => $validated['profile_picture_url'] ?? null,
                     ],
                 ]
@@ -95,7 +107,7 @@ class WhatsAppGroupController extends Controller
                 $metadata['description'] = $validated['description'] ?? ($metadata['description'] ?? '');
                 $metadata['created_at'] = $validated['created_at'] ?? ($metadata['created_at'] ?? null);
                 if (array_key_exists('participants', $validated) && !empty($validated['participants'])) {
-                    $metadata['participants'] = $validated['participants'];
+                    $metadata['participants'] = $participantMeta;
                 }
                 $metadata['profile_picture_url'] = $validated['profile_picture_url'] ?? ($metadata['profile_picture_url'] ?? null);
                 $updates = [

@@ -414,22 +414,22 @@ export function useWebSocket() {
       
       if (!listenersSetup.has('read-receipts')) {
         // Listen for message status updates (includes read receipts)
-        channel.listen('.message-status-updated', (data: any) => {
+        const handleReceiptEvent = (data: any) => {
+          const payload = (data && typeof data === 'object' && 'data' in data && data.data) ? data.data : data;
           const callbacks = readReceiptCallbacks.get(chatId);
           if (callbacks) {
-            callbacks.forEach(cb => cb(data));
+            callbacks.forEach(cb => cb(payload));
           } else {
             console.warn('[WebSocket] No callbacks registered for read receipts in chat:', chatId);
           }
-        });
+        };
+
+        channel.listen('.message-status-updated', handleReceiptEvent);
+        channel.listen('message-status-updated', handleReceiptEvent);
         
         // Also listen for legacy .message.read events for backward compatibility
-        channel.listen('.message.read', (data: any) => {
-          const callbacks = readReceiptCallbacks.get(chatId);
-          if (callbacks) {
-            callbacks.forEach(cb => cb(data));
-          }
-        });
+        channel.listen('.message.read', handleReceiptEvent);
+        channel.listen('message.read', handleReceiptEvent);
         
         listenersSetup.add('read-receipts');
       }

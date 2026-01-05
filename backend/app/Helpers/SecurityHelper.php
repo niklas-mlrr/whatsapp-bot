@@ -63,12 +63,21 @@ class SecurityHelper
         if ($jid === '') {
             return $jid;
         }
+
+        $jidLower = strtolower($jid);
+        if (str_contains($jidLower, '[object promise]') || str_contains($jidLower, 'objectpromise')) {
+            return null;
+        }
         
         if (strpos($jid, '@') === false) {
             return self::sanitizePhone($jid);
         }
         
         $jid = strtolower($jid);
+        
+        if (preg_match('/^(\+?\d{5,})@lid$/', $jid, $m)) {
+            return ltrim($m[1], '+') . '@lid';
+        }
         
         if (preg_match('/^(\+?\d{5,})@s\.whatsapp\.net$/', $jid, $m)) {
             return $m[1] . '@s.whatsapp.net';

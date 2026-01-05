@@ -25,18 +25,22 @@ class WhatsAppMessage extends Model
         'reply_to_message_id',
         'type',
         'status',
+        'delivered_at',
         'content',
         'media_url',
         'media_type',
         'media_size',
         'read_at',
+        'read_by',
         'edited_at',
         'metadata',
         'reactions',
     ];
 
     protected $casts = [
+        'delivered_at' => 'datetime',
         'read_at' => 'datetime',
+        'read_by' => 'array',
         'metadata' => 'array',
         'reactions' => 'array',
         'is_read' => 'boolean',

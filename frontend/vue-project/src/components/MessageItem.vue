@@ -94,7 +94,7 @@
         </template>
         
         <template v-else-if="message.type === 'text' || !message.type">
-          <span class="whitespace-pre-wrap break-words" v-html="message.content"></span>
+          <span class="whitespace-pre-wrap break-words" v-html="renderedContent"></span>
         </template>
         
         <!-- Poll message -->
@@ -188,7 +188,7 @@
               </div>
             </div>
           </div>
-          <span v-if="message.content" class="block mt-2 whitespace-pre-line" v-html="message.content"></span>
+          <span v-if="message.content" class="block mt-2 whitespace-pre-line" v-html="renderedContent"></span>
         </template>
         
         <!-- Document message -->
@@ -197,6 +197,7 @@
             <a 
               :href="documentUrl" 
               target="_blank" 
+              rel="noopener noreferrer"
               class="flex items-center p-2 bg-gray-100 dark:bg-zinc-700 rounded-lg hover:bg-gray-200 dark:hover:bg-zinc-600 transition-colors"
             >
               <div class="p-2 bg-gray-200 dark:bg-zinc-600 rounded-lg mr-3">
@@ -218,7 +219,7 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
               </svg>
             </a>
-            <span v-if="message.content" class="block mt-2 whitespace-pre-line" v-html="message.content"></span>
+            <span v-if="message.content" class="block mt-2 whitespace-pre-line" v-html="renderedContent"></span>
           </div>
         </template>
         
@@ -259,7 +260,7 @@
               @play="isPlayingAudio = true"
               @pause="isPlayingAudio = false"
             ></audio>
-            <span v-if="message.content" class="block mt-2 whitespace-pre-line" v-html="message.content"></span>
+            <span v-if="message.content" class="block mt-2 whitespace-pre-line" v-html="renderedContent"></span>
           </div>
         </template>
         
@@ -283,7 +284,7 @@
               </svg>
             </button>
           </div>
-          <span v-if="message.content" class="block mt-2 whitespace-pre-line" v-html="message.content"></span>
+          <span v-if="message.content" class="block mt-2 whitespace-pre-line" v-html="renderedContent"></span>
         </template>
         
         <!-- Location message -->
@@ -291,6 +292,7 @@
           <a 
             :href="`https://www.google.com/maps?q=${message.location.latitude},${message.location.longitude}`" 
             target="_blank"
+            rel="noopener noreferrer"
             class="block overflow-hidden rounded-lg border border-gray-200"
           >
             <div class="h-32 bg-gray-100 relative">
@@ -357,7 +359,12 @@
           </span>
           
           <!-- Message status icons (WhatsApp-style checks) -->
-          <span v-if="isMe" class="flex items-center">
+          <span
+            v-if="isMe"
+            class="flex items-center relative"
+            @mouseenter="showStatusTooltip = true"
+            @mouseleave="showStatusTooltip = false"
+          >
             <!-- Clock icon for sending -->
             <template v-if="message.isSending || messageStatus === 'sending'">
               <svg class="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -390,6 +397,40 @@
                 <path d="M7.5 13l4 4L21.5 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
             </template>
+
+            <div
+              v-if="shouldShowStatusTooltip && showStatusTooltip"
+              class="absolute bottom-full right-0 mb-1 min-w-[220px] max-w-[280px] bg-black text-white text-xs rounded shadow-lg px-3 py-2 z-20"
+            >
+              <template v-if="!isGroupChat">
+                <div class="flex justify-between gap-3">
+                  <span class="opacity-80">Gesendet</span>
+                  <span class="text-right">{{ formatDateTime((message as any).delivered_at) }}</span>
+                </div>
+                <div class="flex justify-between gap-3 mt-1">
+                  <span class="opacity-80">Gelesen</span>
+                  <span class="text-right">{{ formatDateTime((message as any).read_at) }}</span>
+                </div>
+              </template>
+
+              <template v-else>
+                <div
+                  v-for="row in groupReceiptRows"
+                  :key="row.participant_id"
+                  class="mt-1 first:mt-0"
+                >
+                  <div class="font-medium truncate">{{ row.label }}</div>
+                  <div class="flex justify-between gap-3">
+                    <span class="opacity-80">Gesendet</span>
+                    <span class="text-right">{{ formatDateTime(row.delivered_at) }}</span>
+                  </div>
+                  <div class="flex justify-between gap-3 mt-0.5">
+                    <span class="opacity-80">Gelesen</span>
+                    <span class="text-right">{{ formatDateTime(row.read_at) }}</span>
+                  </div>
+                </div>
+              </template>
+            </div>
           </span>
         </div>
       </div>
@@ -534,6 +575,10 @@ const props = defineProps<{
     isFailed?: boolean
     isDelivered?: boolean
     isRead?: boolean
+    delivered_at?: string
+    read_at?: string
+    read_by?: Array<string | number>
+    receipt_statuses?: Array<{ participant_id: string; delivered_at?: string | null; read_at?: string | null }>
     sending_time?: string
     created_at?: string
     updated_at?: string
@@ -567,6 +612,7 @@ const props = defineProps<{
   }
   isGroupChat?: boolean
   members?: Array<{ id: string | number; name?: string; phone?: string; phone_number?: string }>
+  contacts?: Array<{ id?: string | number; name?: string; phone?: string }>
 }>()
 
 const chatStore = useChatStore()
@@ -593,6 +639,7 @@ const isVideoPlaying = ref(false)
 const isImageLoading = ref(true)
 const showReactionPicker = ref(false)
 const activeTooltipEmoji = ref<string | null>(null)
+const showStatusTooltip = ref(false)
 
 // Emoji categories for the picker
 const emojiCategories = {
@@ -614,6 +661,83 @@ const quickReactions = ['👍', '❤️', '😂', '😮', '😢', '🙏', '🔥'
 // Computed properties
 const isMe = computed(() => props.message.sender === 'me' || props.message.isMe)
 const showSenderName = computed(() => Boolean(props.isGroupChat) && !isMe.value && Boolean(props.message.sender))
+
+const renderedContent = computed(() => {
+  return linkifyContent(props.message.content)
+})
+
+const shouldShowStatusTooltip = computed(() => {
+  if (!isMe.value) return false
+  if (props.isGroupChat) return false
+  if (props.message.isSending || props.message.isFailed) return false
+  return messageStatus.value === 'delivered' || messageStatus.value === 'read'
+})
+
+const normalizeDigits = (val: unknown): string => {
+  if (val === undefined || val === null) return ''
+  const s = String(val)
+  if (s.includes('@g.us')) return ''
+  return s.replace(/@.*$/, '').replace(/\D/g, '')
+}
+
+const formatDateTime = (val: unknown): string => {
+  if (!val) return '-'
+  const d = new Date(String(val))
+  if (isNaN(d.getTime())) return '-'
+  return d.toLocaleString([], {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+}
+
+const groupReceiptRows = computed(() => {
+  const members: Array<any> = (props.members || []) as any
+  const receipts: Array<any> = Array.isArray((props.message as any).receipt_statuses)
+    ? (props.message as any).receipt_statuses
+    : []
+
+  const byId = new Map<string, any>()
+  for (const r of receipts) {
+    const pid = normalizeDigits(r?.participant_id)
+    if (!pid) continue
+    byId.set(pid, r)
+  }
+
+  const rows: Array<{ participant_id: string; label: string; delivered_at?: string | null; read_at?: string | null }> = []
+
+  for (const m of members) {
+    const phone = m?.phone || m?.phone_number
+    if (phone === 'me') continue
+    const pid = normalizeDigits(m?.id ?? phone)
+    if (!pid) continue
+    const r = byId.get(pid)
+    const label = String(m?.name || m?.phone || m?.phone_number || (pid ? `+${pid}` : '') || 'Unknown')
+    rows.push({
+      participant_id: pid,
+      label,
+      delivered_at: r?.delivered_at ?? null,
+      read_at: r?.read_at ?? null,
+    })
+  }
+
+  for (const r of receipts) {
+    const pid = normalizeDigits(r?.participant_id)
+    if (!pid) continue
+    if (rows.some(x => x.participant_id === pid)) continue
+    rows.push({
+      participant_id: pid,
+      label: pid ? `+${pid}` : 'Unknown',
+      delivered_at: r?.delivered_at ?? null,
+      read_at: r?.read_at ?? null,
+    })
+  }
+
+  return rows
+})
 
 // Slight right offset for received messages in direct chats (no avatar present)
 const messageOffsetClass = computed(() => {
@@ -758,6 +882,34 @@ const bubbleAlign = computed(() =>
   isMe.value ? 'justify-end' : 'justify-start'
 )
 
+function linkifyContent(raw?: string): string {
+  if (!raw || typeof raw !== 'string') return ''
+
+  const normalized = raw.replace(/<br\s*\/?\s*>/gi, '\n')
+  const urlRegex = /((https?:\/\/|www\.)[^\s<]+|(?:(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,}))(?:\/[^\s<]*)?)/gi
+
+  const lines = normalized.split('\n')
+  const linkedLines = lines.map((line) => {
+    return line.replace(urlRegex, (match: string, _g0: string, _g1: string, offset: number) => {
+      const prevChar = offset > 0 ? line[offset - 1] : ''
+      // Don't linkify emails like test@example.com
+      if (prevChar === '@' || match.includes('@')) {
+        return match
+      }
+      let url = match
+      let trailing = ''
+      while (url.length > 0 && /[\)\]\}\.,!\?:;]+$/.test(url)) {
+        trailing = url.slice(-1) + trailing
+        url = url.slice(0, -1)
+      }
+      const href = url.startsWith('http') ? url : `https://${url}`
+      return `<a href="${href}" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:underline break-all">${url}</a>${trailing}`
+    })
+  })
+
+  return linkedLines.join('<br/>')
+}
+
 const bubbleClass = computed(() => {
   const baseClasses = [
     'px-4 py-2 rounded-lg shadow text-sm break-words',
@@ -825,6 +977,10 @@ const messageStatus = computed((): 'sent' | 'delivered' | 'read' | 'sending' | '
   
   // Priority 2: Check explicit delivered status from backend
   if (backendStatus === 'delivered') {
+    return 'delivered'
+  }
+
+  if ((props.message as any).delivered_at) {
     return 'delivered'
   }
   
@@ -902,6 +1058,22 @@ function isNumericOnly(val?: string): boolean {
   return /^\d+$/.test(String(val).trim())
 }
 
+function normalizeContactPhone(val?: unknown): string {
+  if (val === undefined || val === null) return ''
+  const s = String(val)
+  if (s.includes('@g.us')) return ''
+  return s.replace(/@.*$/, '').replace(/\D/g, '')
+}
+
+function findContactNameByPhone(val?: unknown): string {
+  const digits = normalizeContactPhone(val)
+  if (!digits) return ''
+  const list = Array.isArray(props.contacts) ? props.contacts : []
+  const found = list.find(c => normalizeContactPhone(c?.phone) === digits)
+  const name = found?.name ? String(found.name).trim() : ''
+  return name
+}
+
 function resolveUserLabelById(userId: string | number): string {
   if (isMyReaction(userId)) return 'Du'
 
@@ -909,6 +1081,8 @@ function resolveUserLabelById(userId: string | number): string {
   // 1) Exact member match by id
   const found = list.find(m => String(m.id) === String(userId))
   if (found) {
+    const contactName = findContactNameByPhone((found as any).phone || (found as any).phone_number)
+    if (contactName) return contactName
     if (found.name && String(found.name).trim()) return String(found.name)
     // Prefer mapped non-phone label before phone
     const mappedTry = (props.message as any).reaction_users?.[String(userId)]
@@ -926,6 +1100,8 @@ function resolveUserLabelById(userId: string | number): string {
       // Prefer the only other member in the chat
       const other = list.find(m => String(m.id) !== String(currentUserId))
       if (other) {
+        const contactName = findContactNameByPhone((other as any).phone || (other as any).phone_number)
+        if (contactName) return contactName
         if (other.name && String(other.name).trim()) return String(other.name)
         // Prefer mapped non-phone label before phone
         const mappedOther = (props.message as any).reaction_users?.[String(userId)]
@@ -949,9 +1125,15 @@ function resolveUserLabelById(userId: string | number): string {
   const mapped = map && typeof map === 'object' ? String(map[String(userId)] || '') : ''
   if (mapped && !isPhoneLike(mapped) && !isNumericOnly(mapped)) return mapped
 
+  // Prefer contact name even if we only have mapped/phone-ish data
+  const contactFromMapped = findContactNameByPhone(mapped)
+  if (contactFromMapped) return contactFromMapped
+
   // 4) If we have a member phone, use it; otherwise use mapped phone if present
   if (found) {
     const phone = (found as any).phone || (found as any).phone_number
+    const contactName = findContactNameByPhone(phone)
+    if (contactName) return contactName
     if (phone) return formatPhone(String(phone))
   }
   if (mapped) return formatPhone(mapped)

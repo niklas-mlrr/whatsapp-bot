@@ -7,6 +7,22 @@ import { createChildLogger } from './logger.js';
 
 const logger = createChildLogger('apiClient');
 
+function isBadJidString(value) {
+    if (typeof value !== 'string') return true;
+    const lower = value.toLowerCase();
+    return lower.includes('promise') || lower.includes('[object');
+}
+
+function isValidSenderJid(value) {
+    if (typeof value !== 'string') return false;
+    if (isBadJidString(value)) return false;
+    if (value === 'me') return true;
+    if (value.endsWith('@g.us')) return true;
+    if (value.endsWith('@lid')) return /^\d{5,}@lid$/.test(value);
+    if (value.endsWith('@s.whatsapp.net')) return /^\d{5,}@s\.whatsapp\.net$/.test(value);
+    return false;
+}
+
 // Create an axios instance with default config
 const apiClient = axios.create({
     baseURL: config.backend.apiUrl,
@@ -214,8 +230,14 @@ const sendToPHP = async (payload) => {
     }, 'Sending message to backend');
     
     try {
+        const candidateSender = payload.sender || payload.senderJid || payload.from;
+        const safeSender = isValidSenderJid(candidateSender)
+            ? candidateSender
+            : (isValidSenderJid(payload.senderLid) ? payload.senderLid : candidateSender);
+
         const messageData = {
-            sender: payload.senderJid || payload.from, // Prefer group participant when provided
+            // Prefer explicit sender values; never fall back to group chat JID for sender
+            sender: safeSender,
             chat: payload.chat || payload.from,        // Prefer explicit chat JID (group) when provided
             type: payload.type,
             content: payload.body !== undefined ? String(payload.body) : '', // Ensure string content
@@ -230,6 +252,7 @@ const sendToPHP = async (payload) => {
             reactedMessageId: payload.reactedMessageId || null,
             emoji: payload.emoji || null,
             senderJid: payload.senderJid || null,
+            senderLid: payload.senderLid || null,
             quotedMessage: payload.quotedMessage || null,  // Include quoted message data
             senderProfilePictureUrl: (payload.senderProfilePictureUrl ?? null),  // Sender's WhatsApp profile picture
             senderBio: (payload.senderBio ?? null),  // Sender's WhatsApp bio/status
@@ -270,11 +293,12 @@ const sendToPHP = async (payload) => {
  * @param {string} status - The new status (sent, delivered, read, failed).
  * @returns {Promise<Object>} The response from the backend.
  */
-const updateMessageStatus = async (whatsappMessageId, status) => {
+const updateMessageStatus = async (whatsappMessageId, status, participant = null) => {
     try {
-        logger.info({ 
+        logger.debug({ 
             whatsappMessageId, 
             status,
+            participant,
             timestamp: new Date().toISOString()
         }, 'Sending message status update to backend');
         
@@ -285,6 +309,7 @@ const updateMessageStatus = async (whatsappMessageId, status) => {
         const response = await axios.post(`${baseUrl}/api/messages/update-status`, {
             whatsapp_message_id: whatsappMessageId,
             status: status,
+            participant: participant || undefined,
         }, {
             headers: {
                 'Content-Type': 'application/json',
@@ -296,9 +321,9 @@ const updateMessageStatus = async (whatsappMessageId, status) => {
         
         if (response.status >= 400) {
             // 404 is expected for edit/protocol messages which generate new IDs
-            // Log these at warning level for debugging
+            // Log these at debug level for debugging
             if (response.status === 404) {
-                logger.warning({ 
+                logger.debug({ 
                     whatsappMessageId, 
                     status,
                     responseStatus: response.status,
@@ -317,6 +342,17 @@ const updateMessageStatus = async (whatsappMessageId, status) => {
             return null;
         }
         
+        // Backend may intentionally ignore unknown IDs (e.g. reactions/edit/protocol generated IDs)
+        if (response?.data?.message === 'Message not found (ignored)') {
+            logger.debug({
+                whatsappMessageId,
+                status,
+                responseStatus: response.status,
+                timestamp: new Date().toISOString(),
+            }, 'Status update ignored by backend');
+            return null;
+        }
+
         logger.info({ 
             whatsappMessageId, 
             status,
@@ -370,6 +406,8 @@ const notifyMessageEdited = async (whatsappMessageId, newContent) => {
             error: error.message, 
             whatsappMessageId,
             newContent,
+            responseStatus: error.response?.status,
+            responseData: error.response?.data,
         }, 'Error notifying message edit');
         return null;
     }

@@ -251,27 +251,58 @@ const selectedParticipant = ref<{ jid: string; isAdmin?: boolean } | null>(null)
 const participantChat = ref<any | null>(null);
 const contacts = ref<any[]>([]);
 
-const participantsList = computed(() => {
+const participantsList = ref<Array<{ jid: string; phone: string; isAdmin: boolean; display: string; profilePictureUrl: string | null }>>([]);
+
+const isValidParticipantJid = (jid: string): boolean => {
+  if (!jid) return false;
+  if (jid.includes('[object Promise]') || jid.toLowerCase().includes('promise')) return false;
+  return /^\d{5,}@s\.whatsapp\.net$/.test(jid) || /^\d{5,}@lid$/.test(jid);
+};
+
+const rebuildParticipantsList = async () => {
   const chat: any = props.chat;
   const fromMetadata = Array.isArray(chat?.metadata?.participants) ? chat.metadata.participants : [];
+
   if (fromMetadata.length > 0) {
-    return fromMetadata.map((p: any) => {
-      const jid = String(p?.jid || '');
+    const resolved = await Promise.all(fromMetadata.map(async (p: any) => {
+      const jidValue = await Promise.resolve(p?.jid);
+      const jid = typeof jidValue === 'string' ? jidValue : '';
+      if (!isValidParticipantJid(jid)) return null;
       const phone = jid.replace(/@.*$/, '');
       const display = resolveParticipantDisplay(jid);
       const profilePictureUrl = resolveParticipantProfilePicture(jid);
       return { jid, phone: phone.startsWith('+') ? phone : '+' + phone, isAdmin: !!(p?.isAdmin || p?.isSuperAdmin), display, profilePictureUrl };
-    });
+    }));
+    const filtered = resolved.filter((p): p is { jid: string; phone: string; isAdmin: boolean; display: string; profilePictureUrl: string | null } => !!p);
+    if (filtered.length > 0) {
+      participantsList.value = filtered;
+      return;
+    }
   }
+
   const arr = Array.isArray(chat?.participants) ? chat.participants : [];
-  return arr.filter((x: any) => x && String(x) !== 'me').map((raw: any) => {
-    const jid = typeof raw === 'string' && raw.includes('@') ? raw : String(raw) + '@s.whatsapp.net';
+  const filtered = arr.filter((x: any) => x && String(x) !== 'me');
+  const resolved = await Promise.all(filtered.map(async (raw: any) => {
+    const resolvedRaw = await Promise.resolve(raw);
+    let jid: string | null = null;
+
+    if (typeof resolvedRaw === 'string') {
+      jid = resolvedRaw.includes('@') ? resolvedRaw : `${resolvedRaw}@s.whatsapp.net`;
+    } else if (resolvedRaw && typeof resolvedRaw === 'object' && typeof (resolvedRaw as any).jid === 'string') {
+      const candidate = String((resolvedRaw as any).jid);
+      jid = candidate.includes('@') ? candidate : `${candidate}@s.whatsapp.net`;
+    }
+
+    if (!jid) return null;
+    if (!isValidParticipantJid(jid)) return null;
     const phone = jid.replace(/@.*$/, '');
     const display = resolveParticipantDisplay(jid);
     const profilePictureUrl = resolveParticipantProfilePicture(jid);
     return { jid, phone: phone.startsWith('+') ? phone : '+' + phone, isAdmin: false, display, profilePictureUrl };
-  });
-});
+  }));
+
+  participantsList.value = resolved.filter((p): p is { jid: string; phone: string; isAdmin: boolean; display: string; profilePictureUrl: string | null } => !!p);
+};
 
 function resolveParticipantDisplay(jid: string): string {
   // First check contacts table
@@ -380,6 +411,7 @@ const fetchContacts = async () => {
 
 onMounted(() => {
   fetchContacts();
+  rebuildParticipantsList();
 });
 
 // Watch for modal opening to reset to first level and refresh contacts
@@ -389,6 +421,15 @@ watch(() => props.isOpen, (isOpen) => {
     clearParticipantView();
     // Refresh contacts to get latest names
     fetchContacts();
+    rebuildParticipantsList();
   }
+});
+
+watch(() => props.chat, () => {
+  rebuildParticipantsList();
+}, { deep: true });
+
+watch(contacts, () => {
+  rebuildParticipantsList();
 });
 </script>

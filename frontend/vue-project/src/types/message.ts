@@ -9,8 +9,10 @@ export interface Message {
   status: 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
   created_at: string;
   updated_at: string;
+  delivered_at?: string;
   read_at?: string; // Timestamp when message was read
   read_by?: string[];
+  receipt_statuses?: Array<{ participant_id: string; delivered_at?: string | null; read_at?: string | null }>;
   isSending?: boolean;
   temp_id?: string;
   media_url?: string;

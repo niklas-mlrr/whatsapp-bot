@@ -278,14 +278,11 @@ function indexContactsLidMapping(sock) {
             const pnFromKey = (jidStr && jidStr.endsWith('@s.whatsapp.net')) ? jidStr : null;
             const pnFromInfoId = (infoId && infoId.endsWith('@s.whatsapp.net')) ? infoId : null;
 
-            if (lidStr && (pnFromKey || pnFromInfoId)) {
-                recordLidToPhone(lidStr, pnFromKey || pnFromInfoId);
-                count++;
-            } else if ((jidStr && jidStr.endsWith('@lid')) && phoneStr) {
-                recordLidToPhone(jidStr, phoneStr);
-                count++;
-            } else if ((infoId && infoId.endsWith('@lid')) && (phoneStr || pnFromKey)) {
-                recordLidToPhone(infoId, phoneStr || pnFromKey);
+            const lidNormalized = normalizeLidJid(lidStr) || normalizeLidJid(infoId) || normalizeLidJid(jidStr);
+            const pnNormalized = normalizePhoneJid(pnFromKey || pnFromInfoId || phoneStr || jidStr);
+
+            if (lidNormalized && pnNormalized && pnNormalized.endsWith('@s.whatsapp.net')) {
+                recordLidToPhone(lidNormalized, pnNormalized);
                 count++;
             }
         }
@@ -299,27 +296,83 @@ function indexContactsLidMapping(sock) {
 // key: '123456789@lid' -> value: '491234567890@s.whatsapp.net'
 const lidToPhoneMap = new Map();
 
+ function isThenable(value) {
+     return !!value && (typeof value === 'object' || typeof value === 'function') && typeof value.then === 'function';
+ }
+
 function normalizePhoneJid(value) {
     if (!value) return null;
-    const raw = String(value);
-    if (raw.endsWith('@s.whatsapp.net')) return raw;
-    if (raw.endsWith('@lid')) return raw;
-    if (raw.includes('@')) return raw;
-    return `${raw.replace(/^\+/, '')}@s.whatsapp.net`;
+    if (isThenable(value)) return null;
+
+    if (typeof value !== 'string' && typeof value !== 'number') return null;
+
+    const raw = String(value).trim();
+    if (!raw) return null;
+
+    // Strip device suffix (e.g. "4917...:0@s.whatsapp.net" -> "4917...@s.whatsapp.net")
+    // We never want to persist device-specific JIDs.
+    const withoutDevice = raw
+        .replace(/^(\d+):\d+@s\.whatsapp\.net$/, '$1@s.whatsapp.net')
+        .replace(/^(\d+):\d+@hosted$/, '$1@hosted')
+        .replace(/^(\d+):\d+@lid$/, '$1@lid')
+        .replace(/^(\d+):\d+@hosted\.lid$/, '$1@lid');
+
+    if (withoutDevice.endsWith('@s.whatsapp.net')) return withoutDevice;
+    if (withoutDevice.endsWith('@lid')) return withoutDevice;
+    if (withoutDevice.includes('@')) return withoutDevice;
+
+    return `${withoutDevice.replace(/^\+/, '')}@s.whatsapp.net`;
+}
+
+function normalizeLidJid(value) {
+    if (!value) return null;
+    if (isThenable(value)) return null;
+    if (typeof value !== 'string' && typeof value !== 'number') return null;
+    const raw = String(value).trim();
+    if (!raw) return null;
+
+    // Some Baileys internals expose bare lidUser (e.g. "3425...")
+    if (/^\d{5,}$/.test(raw)) return `${raw}@lid`;
+
+    // Normalize hosted.lid and strip device suffix
+    const lidish = raw
+        .replace(/^(\d+):\d+@lid$/, '$1@lid')
+        .replace(/^(\d+):\d+@hosted\.lid$/, '$1@lid')
+        .replace(/^(\d+)@hosted\.lid$/, '$1@lid');
+
+    if (lidish.endsWith('@lid')) return lidish;
+    return null;
+}
+
+function isBadJidString(value) {
+    if (typeof value !== 'string') return true;
+    const lower = value.toLowerCase();
+    return lower.includes('promise') || lower.includes('[object');
+}
+
+function isValidParticipantJid(value) {
+    if (typeof value !== 'string') return false;
+    if (isBadJidString(value)) return false;
+    if (value.endsWith('@lid')) return /^\d{5,}@lid$/.test(value);
+    if (value.endsWith('@s.whatsapp.net')) return /^\d{5,}@s\.whatsapp\.net$/.test(value);
+    return false;
 }
 
 function recordLidToPhone(lidJid, phoneJid) {
     try {
-        if (typeof lidJid !== 'string' || typeof phoneJid !== 'string') return;
-        if (!lidJid.endsWith('@lid')) return;
-        if (!phoneJid.endsWith('@s.whatsapp.net')) return;
-        const existing = lidToPhoneMap.get(lidJid);
-        if (existing && existing !== phoneJid) {
-            logger.debug({ lidJid, existing, phoneJid }, 'Updating LID to phone JID mapping');
+        const lid = normalizeLidJid(lidJid);
+        const phone = normalizePhoneJid(phoneJid);
+        if (!lid || !phone) return;
+        if (!lid.endsWith('@lid')) return;
+        if (!phone.endsWith('@s.whatsapp.net')) return;
+
+        const existing = lidToPhoneMap.get(lid);
+        if (existing && existing !== phone) {
+            logger.debug({ lidJid: lid, existing, phoneJid: phone }, 'Updating LID to phone JID mapping');
         } else if (!existing) {
-            logger.debug({ lidJid, phoneJid }, 'Recording LID to phone JID mapping');
+            logger.debug({ lidJid: lid, phoneJid: phone }, 'Recording LID to phone JID mapping');
         }
-        lidToPhoneMap.set(lidJid, phoneJid);
+        lidToPhoneMap.set(lid, phone);
     } catch (err) {
         logger.debug({ err: err.message, lidJid, phoneJid }, 'Failed to record LID mapping');
     }
@@ -440,32 +493,46 @@ async function fetchContactStatus(sock, jid) {
  * @param {string} jid - The JID (could be LID like "123@lid" or already a phone JID)
  * @returns {string} The phone number JID or original JID if conversion fails
  */
-function convertLidToPhoneJid(sock, jid) {
+async function convertLidToPhoneJid(sock, jid) {
     if (!jid) return jid;
+
+    // Guard against unexpected non-strings (incl. Promises)
+    if (isThenable(jid)) return null;
+    if (typeof jid !== 'string') return null;
 
     // Raw phone number (no domain)
     if (typeof jid === 'string' && !jid.includes('@')) {
         return normalizePhoneJid(jid);
     }
 
+    const canonicalLid = normalizeLidJid(jid) || jid;
+
     // Already a phone or group JID
-    if (!jid.endsWith('@lid')) return jid;
+    if (!String(canonicalLid).endsWith('@lid')) return normalizePhoneJid(jid) || jid;
 
     // Prefer Baileys internal lid-mapping store when available (v7+)
     try {
-        const pn = sock?.signalRepository?.lidMapping?.getPNForLID?.(jid);
+        const pn = await Promise.resolve(sock?.signalRepository?.lidMapping?.getPNForLID?.(canonicalLid));
         const normalized = normalizePhoneJid(pn);
         if (normalized) {
-            recordLidToPhone(jid, normalized);
+            recordLidToPhone(canonicalLid, normalized);
+            logger.debug({ lid: canonicalLid, pnRaw: pn, pn: normalized }, 'Resolved LID to phone JID via lidMapping');
             return normalized;
+        }
+
+        if (pn) {
+            logger.debug({ lid: canonicalLid, pnRaw: pn }, 'lidMapping returned PN but could not normalize it');
         }
     } catch (err) {
         logger.debug({ err: err.message }, 'getPNForLID failed');
     }
 
     // Prefer known mapping from runtime
-    const mapped = lidToPhoneMap.get(jid);
-    if (mapped) return mapped;
+    const mapped = lidToPhoneMap.get(canonicalLid);
+    if (mapped) {
+        logger.debug({ lid: canonicalLid, pn: mapped }, 'Resolved LID to phone JID via local cache');
+        return mapped;
+    }
 
     // Resolve via contacts store (authoritative)
     try {
@@ -474,9 +541,14 @@ function convertLidToPhoneJid(sock, jid) {
             const lidStr = (typeof contactInfo?.lid === 'object')
                 ? (contactInfo.lid?.jid || contactInfo.lid?.toString?.())
                 : (typeof contactInfo?.lid === 'string' ? contactInfo.lid : null);
-            if (lidStr === jid) {
-                logger.debug({ lid: jid, phoneJid: contactJid }, 'Resolved LID to phone JID via contacts');
-                return contactJid;
+            const normalizedLid = normalizeLidJid(lidStr);
+            if (normalizedLid && normalizedLid === canonicalLid) {
+                const normalizedPhone = normalizePhoneJid(contactJid);
+                if (normalizedPhone) {
+                    recordLidToPhone(canonicalLid, normalizedPhone);
+                }
+                logger.debug({ lid: canonicalLid, phoneJid: normalizedPhone || contactJid }, 'Resolved LID to phone JID via contacts');
+                return normalizedPhone || contactJid;
             }
         }
     } catch (error) {
@@ -484,7 +556,7 @@ function convertLidToPhoneJid(sock, jid) {
     }
 
     // Unknown LID: keep as-is; caller may filter it out until we learn mapping
-    return jid;
+    return canonicalLid;
 }
 
 /**
@@ -750,13 +822,13 @@ async function connectToWhatsApp() {
                             const groupProfilePicture = await fetchContactProfilePicture(sock, g.id);
 
                             // Process participants - prioritize 'jid' field over 'id' field
-                            const participants = (g.participants || []).map(p => {
+                            const participants = (await Promise.all((g.participants || []).map(async (p) => {
                                 let phoneJid = null;
 
                                 if (p.jid && typeof p.jid === 'string' && p.jid.endsWith('@s.whatsapp.net')) {
                                     phoneJid = p.jid;
                                 } else if (p.id) {
-                                    const converted = convertLidToPhoneJid(sock, p.id);
+                                    const converted = await convertLidToPhoneJid(sock, p.id);
                                     if (converted && converted.endsWith('@s.whatsapp.net')) {
                                         phoneJid = converted;
                                     }
@@ -767,7 +839,9 @@ async function connectToWhatsApp() {
                                     isAdmin: p.admin === 'admin',
                                     isSuperAdmin: p.admin === 'superadmin'
                                 } : null;
-                            }).filter(p => p !== null);
+                            }))).filter(p => p !== null);
+
+                            const safeParticipants = participants.filter((p) => isValidParticipantJid(p?.jid));
 
                             if (shouldSendGroupMetadata(g.id, g)) {
                                 logger.info({
@@ -781,7 +855,7 @@ async function connectToWhatsApp() {
                                 await apiClient.sendGroupMetadata({
                                     groupId: g.id,
                                     groupName: g.subject || 'Group',
-                                    participants,
+                                    participants: safeParticipants,
                                     groupDescription: g.desc || '',
                                     groupProfilePictureUrl: groupProfilePicture,
                                     createdAt: g.creation ? new Date(g.creation * 1000).toISOString() : null
@@ -809,9 +883,10 @@ async function connectToWhatsApp() {
                 for (const u of list) {
                     const lid = u?.lid || u?.lidJid || u?.lidId || u?.id;
                     const pnRaw = u?.pn || u?.pnJid || u?.phoneNumber || u?.participantPn || u?.remoteJidAlt;
+                    const lidNormalized = normalizeLidJid(lid);
                     const pn = normalizePhoneJid(pnRaw);
-                    if (typeof lid === 'string' && lid.endsWith('@lid') && pn) {
-                        recordLidToPhone(lid, pn);
+                    if (lidNormalized && pn && pn.endsWith('@s.whatsapp.net')) {
+                        recordLidToPhone(lidNormalized, pn);
                     }
                 }
             } catch (err) {
@@ -833,10 +908,10 @@ async function connectToWhatsApp() {
                     const pnFromId = (typeof id === 'string' && id.endsWith('@s.whatsapp.net')) ? id : null;
                     const pnFromPhone = normalizePhoneJid(c?.phoneNumber);
 
-                    if (typeof lid === 'string' && lid.endsWith('@lid') && pnFromId) {
-                        recordLidToPhone(lid, pnFromId);
-                    } else if (typeof id === 'string' && id.endsWith('@lid') && pnFromPhone) {
-                        recordLidToPhone(id, pnFromPhone);
+                    const lidNormalized = normalizeLidJid(lid) || normalizeLidJid(id);
+                    const pnNormalized = normalizePhoneJid(pnFromId || pnFromPhone || id);
+                    if (lidNormalized && pnNormalized && pnNormalized.endsWith('@s.whatsapp.net')) {
+                        recordLidToPhone(lidNormalized, pnNormalized);
                     }
                 }
             } catch (e) {
@@ -851,10 +926,10 @@ async function connectToWhatsApp() {
                     const pnFromId = (typeof id === 'string' && id.endsWith('@s.whatsapp.net')) ? id : null;
                     const pnFromPhone = normalizePhoneJid(u?.phoneNumber);
 
-                    if (typeof lid === 'string' && lid.endsWith('@lid') && pnFromId) {
-                        recordLidToPhone(lid, pnFromId);
-                    } else if (typeof id === 'string' && id.endsWith('@lid') && pnFromPhone) {
-                        recordLidToPhone(id, pnFromPhone);
+                    const lidNormalized = normalizeLidJid(lid) || normalizeLidJid(id);
+                    const pnNormalized = normalizePhoneJid(pnFromId || pnFromPhone || id);
+                    if (lidNormalized && pnNormalized && pnNormalized.endsWith('@s.whatsapp.net')) {
+                        recordLidToPhone(lidNormalized, pnNormalized);
                     }
                 }
             } catch (e) {
@@ -1009,7 +1084,7 @@ async function connectToWhatsApp() {
                                 logger.debug({ lid: p.id, phoneJid: p.jid }, 'Using direct phone JID from participant.jid');
                             } else if (p.id) {
                                 // Try to convert LID to phone JID via cached mapping
-                                const converted = convertLidToPhoneJid(sock, p.id);
+                                const converted = await convertLidToPhoneJid(sock, p.id);
                                 if (converted && converted.endsWith('@s.whatsapp.net')) {
                                     phoneJid = converted;
                                     logger.debug({ lid: p.id, phoneJid: converted }, 'Converted LID to phone JID via cache');
@@ -1119,13 +1194,13 @@ async function connectToWhatsApp() {
                         const groupProfilePicture = await fetchContactProfilePicture(sock, groupMetadata.id);
 
                         // Process participants - prioritize 'jid' field over 'id' field
-                        const participants = (groupMetadata.participants || []).map(p => {
+                        const participants = (await Promise.all((groupMetadata.participants || []).map(async (p) => {
                             let phoneJid = null;
                             
                             if (p.jid && typeof p.jid === 'string' && p.jid.endsWith('@s.whatsapp.net')) {
                                 phoneJid = p.jid;
                             } else if (p.id) {
-                                const converted = convertLidToPhoneJid(sock, p.id);
+                                const converted = await convertLidToPhoneJid(sock, p.id);
                                 if (converted && converted.endsWith('@s.whatsapp.net')) {
                                     phoneJid = converted;
                                 }
@@ -1136,7 +1211,7 @@ async function connectToWhatsApp() {
                                 isAdmin: p.admin === 'admin',
                                 isSuperAdmin: p.admin === 'superadmin'
                             } : null;
-                        }).filter(p => p !== null);
+                        }))).filter(p => p !== null);
 
                         if (shouldSendGroupMetadata(groupMetadata.id, groupMetadata)) {
                             await apiClient.sendGroupMetadata({
@@ -1238,7 +1313,9 @@ async function connectToWhatsApp() {
                         }, 'Message status changed - sending to backend');
                         
                         // Send status update to backend
-                        const result = await apiClient.updateMessageStatus(messageId, status);
+                        // For group chats, key.participant contains the participant JID that acknowledged
+                        const participant = key?.participant || key?.participantPn || null;
+                        const result = await apiClient.updateMessageStatus(messageId, status, participant);
                         
                         logger.info({
                             messageId,
@@ -1295,13 +1372,13 @@ async function connectToWhatsApp() {
                     const groupProfilePicture = await fetchContactProfilePicture(sock, groupMetadata.id);
 
                     // Process participants - prioritize 'jid' field over 'id' field
-                    const participants = (groupMetadata.participants || []).map(p => {
+                    const participants = (await Promise.all((groupMetadata.participants || []).map(async (p) => {
                         let phoneJid = null;
                         
                         if (p.jid && typeof p.jid === 'string' && p.jid.endsWith('@s.whatsapp.net')) {
                             phoneJid = p.jid;
                         } else if (p.id) {
-                            const converted = convertLidToPhoneJid(sock, p.id);
+                            const converted = await convertLidToPhoneJid(sock, p.id);
                             if (converted && converted.endsWith('@s.whatsapp.net')) {
                                 phoneJid = converted;
                             }
@@ -1312,7 +1389,7 @@ async function connectToWhatsApp() {
                             isAdmin: p.admin === 'admin',
                             isSuperAdmin: p.admin === 'superadmin'
                         } : null;
-                    }).filter(p => p !== null);
+                    }))).filter(p => p !== null);
 
                     if (shouldSendGroupMetadata(groupMetadata.id, groupMetadata)) {
                         await apiClient.sendGroupMetadata({
@@ -1333,13 +1410,13 @@ async function connectToWhatsApp() {
                             // New mapping may have arrived via contacts events
                             const refreshed = await sock.groupMetadata(groupId);
                             // Process participants - prioritize 'jid' field over 'id' field
-                            const participants2 = (refreshed.participants || []).map(p => {
+                            const participants2 = (await Promise.all((refreshed.participants || []).map(async (p) => {
                                 let phoneJid = null;
                                 
                                 if (p.jid && typeof p.jid === 'string' && p.jid.endsWith('@s.whatsapp.net')) {
                                     phoneJid = p.jid;
                                 } else if (p.id) {
-                                    const converted = convertLidToPhoneJid(sock, p.id);
+                                    const converted = await convertLidToPhoneJid(sock, p.id);
                                     if (converted && converted.endsWith('@s.whatsapp.net')) {
                                         phoneJid = converted;
                                     }
@@ -1350,7 +1427,7 @@ async function connectToWhatsApp() {
                                     isAdmin: p.admin === 'admin',
                                     isSuperAdmin: p.admin === 'superadmin'
                                 } : null;
-                            }).filter(p => p !== null);
+                            }))).filter(p => p !== null);
                             
                             // Bypass deduplication for retry since we want to update with new participant mappings
                             if (shouldSendGroupMetadata(refreshed.id, refreshed)) {
@@ -1398,7 +1475,8 @@ async function connectToWhatsApp() {
                         logger.debug({ messageId, status, receiptInfo }, 'Message receipt status changed');
                         
                         // Send status update to backend
-                        await apiClient.updateMessageStatus(messageId, status);
+                        const participant = key?.participant || key?.participantPn || null;
+                        await apiClient.updateMessageStatus(messageId, status, participant);
                     }
                 } catch (error) {
                     logger.error({ error, receipt }, 'Error processing message receipt update');

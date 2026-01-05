@@ -7,6 +7,7 @@ use App\Models\WhatsAppMessage;
 use App\Services\WebSocketService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use App\Models\User;
@@ -218,15 +219,13 @@ class MessageStatusController extends Controller
         }
     }
 
-    /**
-     * Update message status by WhatsApp message ID (called by receiver)
-     */
     public function updateStatusByWhatsAppId(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
             'whatsapp_message_id' => 'required|string',
             'status' => 'required|in:sent,delivered,read,failed',
             'error' => 'nullable|string|max:1000',
+            'participant' => 'nullable|string|max:255',
         ]);
 
         if ($validator->fails()) {
@@ -240,51 +239,54 @@ class MessageStatusController extends Controller
         try {
             $whatsappMessageId = $request->input('whatsapp_message_id');
             $status = $request->input('status');
+            $participant = $request->input('participant');
 
-            // Add debug logging
+            $participantId = null;
+            if (is_string($participant) && trim($participant) !== '') {
+                $participantId = preg_replace('/[^0-9]/', '', preg_replace('/@.*$/', '', trim($participant)));
+                if ($participantId === '') {
+                    $participantId = null;
+                }
+            }
+
+            $now = now();
+
             Log::channel('whatsapp')->debug('Processing message status update', [
                 'whatsapp_message_id' => $whatsappMessageId,
                 'status' => $status,
-                'timestamp' => now()->toISOString(),
+                'timestamp' => $now->toIso8601String(),
             ]);
 
-            // Find message by WhatsApp message ID in metadata
             $message = WhatsAppMessage::where('metadata->message_id', $whatsappMessageId)->first();
 
             if (!$message) {
-                // This is normal for edit/protocol messages which generate new IDs
-                // Return 404 silently without logging to avoid spam
-                Log::channel('whatsapp')->warning('Message not found for status update', [
+                Log::channel('whatsapp')->debug('Message not found for status update (ignored)', [
                     'whatsapp_message_id' => $whatsappMessageId,
                     'status' => $status,
                     'searched_in_metadata' => true,
-                    'total_messages_in_db' => WhatsAppMessage::count(),
-                    'recent_message_ids' => WhatsAppMessage::orderBy('id', 'desc')
-                        ->limit(5)
-                        ->pluck('metadata->message_id', 'id')
-                        ->toArray(),
                 ]);
+
                 return response()->json([
-                    'status' => 'error',
-                    'message' => 'Message not found',
-                ], 404);
+                    'status' => 'success',
+                    'message' => 'Message not found (ignored)',
+                ]);
             }
 
             $updateData = ['status' => $status];
 
-            // Set read_at timestamp if status is 'read'
-            // IMPORTANT: Always update read_at when status is read to handle instant reads properly
             if ($status === 'read') {
-                $updateData['read_at'] = now();
-                Log::channel('whatsapp')->info('Marking message as read', [
-                    'message_id' => $message->id,
-                    'whatsapp_message_id' => $whatsappMessageId,
-                    'previous_read_at' => $message->read_at?->toIso8601String(),
-                    'new_read_at' => now()->toIso8601String(),
-                ]);
+                $updateData['read_at'] = $now;
+                if (!$message->delivered_at) {
+                    $updateData['delivered_at'] = $now;
+                }
             }
 
-            // Add error message if provided and status is failed
+            if ($status === 'delivered') {
+                if (!$message->delivered_at) {
+                    $updateData['delivered_at'] = $now;
+                }
+            }
+
             if ($status === 'failed' && $request->has('error')) {
                 $updateData['metadata'] = array_merge(
                     $message->metadata ?? [],
@@ -294,8 +296,45 @@ class MessageStatusController extends Controller
 
             $message->update($updateData);
 
-            // Notify via WebSocket
-            $this->webSocketService->messageStatusUpdated($message);
+            if ($participantId) {
+                try {
+                    $existing = DB::table('message_receipts')
+                        ->where('message_id', $message->id)
+                        ->where('participant_id', $participantId)
+                        ->first();
+
+                    $deliveredAt = $existing?->delivered_at;
+                    $readAt = $existing?->read_at;
+
+                    if (!$deliveredAt && in_array($status, ['delivered', 'read'], true)) {
+                        $deliveredAt = $now;
+                    }
+                    if (!$readAt && $status === 'read') {
+                        $readAt = $now;
+                    }
+
+                    DB::table('message_receipts')->updateOrInsert(
+                        [
+                            'message_id' => $message->id,
+                            'participant_id' => $participantId,
+                        ],
+                        [
+                            'delivered_at' => $deliveredAt,
+                            'read_at' => $readAt,
+                            'updated_at' => $now,
+                            'created_at' => $existing ? $existing->created_at : $now,
+                        ]
+                    );
+                } catch (\Exception $e) {
+                    Log::channel('whatsapp')->warning('Failed to upsert message receipt', [
+                        'message_id' => $message->id,
+                        'participant_id' => $participantId,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            }
+
+            $this->webSocketService->messageStatusUpdated($message, $participantId);
 
             Log::channel('whatsapp')->info('Message status updated from receiver', [
                 'message_id' => $message->id,
@@ -310,7 +349,9 @@ class MessageStatusController extends Controller
                     'message_id' => $message->id,
                     'whatsapp_message_id' => $whatsappMessageId,
                     'status' => $message->status,
+                    'delivered_at' => $message->delivered_at?->toIso8601String(),
                     'read_at' => $message->read_at?->toIso8601String(),
+                    'participant_id' => $participantId,
                 ],
             ]);
 
@@ -531,15 +572,55 @@ class MessageStatusController extends Controller
                 'receiver_url' => $receiverUrl
             ]);
 
-            // Determine if the message being reacted to was sent by us
-            $fromMe = $message->sender === 'me';
+            // Determine if the message being reacted to was sent by the app operator
+            $operator = User::getFirstUser();
+            $fromMe = $operator && (string)$message->sender_id === (string)$operator->id;
 
             // Participant for group chats when reacting to someone else's message
             $participant = null;
             if (($chatModel->is_group ?? false) && !$fromMe) {
-                $senderJid = $message->sender;
-                if (is_string($senderJid) && str_contains($senderJid, '@')) {
-                    $participant = $senderJid;
+                $meta = $message->metadata ?? [];
+                $candidate = $meta['sender_lid'] ?? $meta['sender_jid'] ?? ($message->sender ?? null);
+                if (is_string($candidate)) {
+                    $candidate = strtolower(trim($candidate));
+                    $isValidParticipant = (bool) preg_match('/^\d{5,}@s\.whatsapp\.net$/', $candidate)
+                        || (bool) preg_match('/^\d{5,}@lid$/', $candidate);
+                    if ($isValidParticipant) {
+                        $participant = $candidate;
+                    }
+                }
+
+                // Legacy fallback: use pivot mapping of sender_id in this chat
+                if (!$participant) {
+                    try {
+                        $pivotJid = \DB::table('chat_user')
+                            ->where('chat_id', $message->chat_id)
+                            ->where('user_id', $message->sender_id)
+                            ->value('whatsapp_id');
+
+                        if (is_string($pivotJid) && trim($pivotJid) !== '') {
+                            $pivotJid = strtolower(trim($pivotJid));
+                            $isValidPivot = (bool) preg_match('/^\d{5,}@s\.whatsapp\.net$/', $pivotJid)
+                                || (bool) preg_match('/^\d{5,}@lid$/', $pivotJid);
+                            if ($isValidPivot) {
+                                $participant = $pivotJid;
+                            }
+                        }
+                    } catch (\Throwable $e) {
+                        // non-fatal
+                    }
+                }
+
+                if (!$participant) {
+                    Log::channel('whatsapp')->warning('Cannot send group reaction: missing/invalid participant for target message', [
+                        'message_id' => $message->id,
+                        'whatsapp_message_id' => $whatsappMessageId,
+                        'chat_jid' => $chatJid,
+                        'meta_sender_lid' => $meta['sender_lid'] ?? null,
+                        'meta_sender_jid' => $meta['sender_jid'] ?? null,
+                        'sender_fallback' => $message->sender ?? null,
+                    ]);
+                    return;
                 }
             }
 

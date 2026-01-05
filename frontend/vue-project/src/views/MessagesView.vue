@@ -1,5 +1,5 @@
 <template>
-  <div class="h-screen bg-gray-100 dark:bg-black flex flex-row overflow-hidden relative">
+  <div class="app-root bg-gray-100 dark:bg-black flex flex-row overflow-hidden relative">
     <!-- Mobile menu button (shown when sidebar is hidden) -->
     <button
       v-if="!showSidebarOnMobile && selectedChat"
@@ -84,7 +84,7 @@
           </button>
         </div>
       </div>
-      <div class="flex-1 overflow-y-auto">
+      <div class="flex-1 overflow-y-auto overflow-x-hidden">
         <div v-if="loadingChats" class="text-blue-500 dark:text-gray-400 p-4">Chats werden geladen...</div>
         <div v-if="errorChats" class="text-red-500 dark:text-red-300 p-4">{{ errorChats }}</div>
         <div v-if="!loadingChats && !errorChats">
@@ -93,11 +93,11 @@
             <div class="neue-nachrichten-indicator px-4 py-2 bg-yellow-100 text-sm font-semibold text-gray-800 border-b border-gray-200 dark:bg-zinc-900 dark:text-yellow-400 dark:border-zinc-700">
               Neue Nachrichten
             </div>
-            <div v-for="chat in pendingChats" :key="chat.id" class="px-4 py-3 border-b border-gray-100 dark:border-zinc-700 bg-yellow-50 dark:bg-yellow-900/10">
-              <div class="flex items-center justify-between mb-2">
-                <span class="font-medium text-gray-800 dark:text-gray-200">{{ getChatDisplayName(chat) }}</span>
+            <div v-for="chat in pendingChats" :key="chat.id" class="px-4 py-3 border-b border-gray-100 dark:border-zinc-700 bg-yellow-50 dark:bg-yellow-900/10 overflow-hidden">
+              <div class="flex items-center justify-between mb-2 min-w-0">
+                <span class="font-medium text-gray-800 dark:text-gray-200 truncate">{{ getChatDisplayName(chat) }}</span>
               </div>
-              <p v-if="chat.last_message_preview" class="text-sm text-gray-700 dark:text-gray-300 mb-2 italic">{{ chat.last_message_preview }}</p>
+              <p v-if="chat.last_message_preview" class="text-sm text-gray-700 dark:text-gray-300 mb-2 italic break-words">{{ chat.last_message_preview }}</p>
               <b class="text-sm text-gray-600 dark:text-gray-400 mb-3">Möchtest du diesen Chat zulassen?</b>
               <div class="flex gap-2">
                 <button
@@ -120,8 +120,8 @@
           <ul>
             <li v-for="chat in approvedChats" :key="chat.id" 
                 @click="selectChat(chat)"
-                :class="['cursor-pointer px-4 py-3 border-b border-gray-100 dark:border-zinc-700 hover:bg-green-50 dark:hover:bg-zinc-700 relative group flex items-center justify-between dark:text-gray-200', selectedChat && selectedChat.id === chat.id ? 'bg-green-100 dark:bg-green-900/20 font-bold' : '']">
-              <div class="flex items-center gap-3 flex-1">
+                :class="['cursor-pointer px-4 py-3 border-b border-gray-100 dark:border-zinc-700 hover:bg-green-50 dark:hover:bg-zinc-700 relative group flex items-center justify-between dark:text-gray-200 min-w-0', selectedChat && selectedChat.id === chat.id ? 'bg-green-100 dark:bg-green-900/20 font-bold' : '']">
+              <div class="flex items-center gap-3 flex-1 min-w-0">
                 <div class="w-8 h-8 rounded-full overflow-hidden bg-green-300 flex items-center justify-center text-green-700 font-bold" :key="'lst-'+chat.id+'-'+(chat.contact_info_updated_at||'no')">
                   <img
                     v-if="chatAvatarUrl(chat)"
@@ -179,7 +179,7 @@
       </div>
     </aside>
     <!-- Main chat area -->
-    <main class="flex-1 flex flex-col h-full overflow-hidden">
+    <main class="flex-1 flex flex-col h-full min-h-0 overflow-hidden">
       <!-- Chat header (only shown when chat is selected) -->
       <div v-if="selectedChat" class="flex items-center gap-3 px-4 md:px-6 py-3 md:py-4 bg-white dark:bg-zinc-900 border-b border-gray-200 dark:border-zinc-800 shadow-sm min-h-[56px] md:min-h-[64px] sticky top-0 z-10">
         <div class="w-10 h-10 rounded-full overflow-hidden bg-green-300 flex items-center justify-center text-green-700 font-bold text-lg" :key="'hdr-'+selectedChatAvatarKey">
@@ -212,7 +212,7 @@
       </div>
       
       <!-- Messages area -->
-      <div class="flex-1 overflow-y-auto">
+      <div class="flex-1 min-h-0">
         <MessageList 
           v-if="selectedChat"
           :key="`${selectedChat.id}-${contactsVersion}`"
@@ -223,6 +223,7 @@
           :members="membersForChat"
           @reply-to-message="handleReplyToMessage"
           @edit-message="handleEditMessage"
+          @message-read="handleChatMessagesRead"
         />
         <div v-else class="flex items-center justify-center h-full text-gray-500 dark:text-gray-400 bg-white dark:bg-zinc-800">
           <div v-if="loadingChats" class="text-center">
@@ -237,7 +238,7 @@
       </div>
       
       <!-- Message input -->
-      <div class="flex-shrink-0 bg-white dark:bg-zinc-900 border-t border-gray-200 dark:border-zinc-800 z-10">
+      <div class="flex-shrink-0 bg-white dark:bg-zinc-900 border-t border-gray-200 dark:border-zinc-800 z-10 pb-[calc(env(safe-area-inset-bottom)+0.5rem)]">
         <!-- Edit preview -->
         <div v-if="editingMessage" class="bg-blue-50 dark:bg-blue-900/20 px-6 py-3 border-b border-blue-200 dark:border-blue-800 flex items-start gap-3">
           <div class="flex-1 min-w-0">
@@ -552,6 +553,14 @@ import apiClient from '@/services/api'
 
 // Initialize theme store
 const themeStore = useThemeStore()
+
+const updateViewportHeightVar = () => {
+  try {
+    if (typeof window === 'undefined') return
+    const vh = window.innerHeight * 0.01
+    document.documentElement.style.setProperty('--vh', `${vh}px`)
+  } catch {}
+}
 
 // Base current user from auth (fallback)
 const currentUser = ref({
@@ -1114,18 +1123,40 @@ async function selectChat(chat: any) {
   }, 300)
 }
 
+const isMarkingChatAsRead = ref(false)
+const lastReadAttemptedUnreadByChatId = ref<Record<string, number>>({})
+
+const setChatUnreadCount = (chatId: string, unreadCount: number) => {
+  const chat = chats.value.find(c => String(c.id) === String(chatId))
+  if (chat) {
+    chat.unread_count = unreadCount
+  }
+  if (selectedChat.value && String(selectedChat.value.id) === String(chatId)) {
+    selectedChat.value.unread_count = unreadCount
+  }
+}
+
 const markChatAsRead = async (chatId: string) => {
+  if (!chatId) return
+  if (isMarkingChatAsRead.value) return
+
+  isMarkingChatAsRead.value = true
   try {
     await apiClient.post(`/chats/${chatId}/read`)
-    
-    // Update the local chat's unread count
-    const chat = chats.value.find(c => c.id === chatId)
-    if (chat) {
-      chat.unread_count = 0
-    }
+    setChatUnreadCount(chatId, 0)
   } catch (error) {
     console.error('Error marking chat as read:', error)
+  } finally {
+    isMarkingChatAsRead.value = false
   }
+}
+
+const handleChatMessagesRead = async (_messageIds: string[]) => {
+  if (!selectedChat.value?.id) return
+
+  // Ensure the chat-level unread count is cleared too (badge is based on chat.unread_count)
+  setChatUnreadCount(String(selectedChat.value.id), 0)
+  await markChatAsRead(String(selectedChat.value.id))
 }
 
 async function sendMessageHandler() {
@@ -1693,6 +1724,11 @@ onUnmounted(() => {
   if (pollInterval) {
     clearInterval(pollInterval)
   }
+
+  try {
+    window.removeEventListener('resize', updateViewportHeightVar)
+    window.removeEventListener('orientationchange', updateViewportHeightVar)
+  } catch {}
 })
 
 onMounted(async () => {
@@ -1742,6 +1778,28 @@ onMounted(async () => {
         const currentPendingCount = pendingChats.value.length
         const newPendingCount = newChats.filter((c: any) => c.pending_approval).length
         
+        // If a chat is currently open, we don't want it to appear as unread in the list.
+        // The backend increments unread_count for all incoming messages, so we must actively
+        // clear it while the chat is open.
+        if (selectedChat.value?.id != null) {
+          const openChatId = String(selectedChat.value.id)
+          const openChat = newChats.find((c: any) => String(c.id) === openChatId)
+
+          if (openChat && openChat.unread_count && openChat.unread_count > 0) {
+            const serverUnreadCount = Number(openChat.unread_count) || 0
+
+            // Optimistically clear in the polling response to avoid badge persistence
+            openChat.unread_count = 0
+
+            // Avoid spamming the endpoint every poll for the same unread_count value
+            const lastAttempted = lastReadAttemptedUnreadByChatId.value[openChatId]
+            if (lastAttempted !== serverUnreadCount) {
+              lastReadAttemptedUnreadByChatId.value[openChatId] = serverUnreadCount
+              markChatAsRead(openChatId)
+            }
+          }
+        }
+
         // Update the chats list
         chats.value = newChats
         syncSelectedChat(newChats)
@@ -1789,6 +1847,12 @@ const adjustTextareaHeight = () => {
 }
 
 onMounted(() => {
+  updateViewportHeightVar()
+  try {
+    window.addEventListener('resize', updateViewportHeightVar)
+    window.addEventListener('orientationchange', updateViewportHeightVar)
+  } catch {}
+
   // Initial height adjustment
   nextTick(() => {
     adjustTextareaHeight()
@@ -1797,6 +1861,11 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.app-root {
+  height: calc(var(--vh, 1vh) * 100);
+  min-height: calc(var(--vh, 1vh) * 100);
+}
+
 /* Custom minimalistic scrollbar for the message input textarea */
 textarea::-webkit-scrollbar {
   width: 6px;

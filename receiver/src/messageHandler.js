@@ -8,6 +8,16 @@ import * as apiClient from './apiClient.js';
 
 // Note: Avoid importing from whatsappClient at top-level to prevent circular dependency
 
+function withTimeout(promise, timeoutMs, label = 'operation') {
+    let t;
+    const timeout = new Promise((_, reject) => {
+        t = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+    });
+    return Promise.race([promise, timeout]).finally(() => {
+        if (t) clearTimeout(t);
+    });
+}
+
  
 function unwrapMessage(message) {
     let content = message;
@@ -37,6 +47,27 @@ function unwrapMessage(message) {
     return content;
 }
 
+function isBadJidString(value) {
+    if (typeof value !== 'string') return true;
+    const lower = value.toLowerCase();
+    return lower.includes('promise') || lower.includes('[object');
+}
+
+function isValidParticipantJid(value) {
+    if (typeof value !== 'string') return false;
+    if (isBadJidString(value)) return false;
+    if (value.endsWith('@g.us')) return true;
+    if (value.endsWith('@lid')) return /^\d{5,}@lid$/.test(value);
+    if (value.endsWith('@s.whatsapp.net')) return /^\d{5,}@s\.whatsapp\.net$/.test(value);
+    return false;
+}
+
+function pickSafeSenderJid(primary, fallback) {
+    if (typeof primary === 'string' && isValidParticipantJid(primary)) return primary;
+    if (typeof fallback === 'string' && isValidParticipantJid(fallback)) return fallback;
+    return null;
+}
+
 /**
  * Processes incoming message events from Baileys.
  * @param {import('@whiskeysockets/baileys').WASocket} sock - The socket instance.
@@ -44,13 +75,52 @@ function unwrapMessage(message) {
  */
 async function handleMessages(sock, m) {
     try {
-        logger.debug({ messageCount: m.messages.length, type: m.type }, 'Processing incoming messages');
+        const sampleKey = m?.messages?.[0]?.key;
+        logger.info({
+            upsertType: m?.type,
+            messageCount: Array.isArray(m?.messages) ? m.messages.length : 0,
+            sample: sampleKey ? {
+                remoteJid: sampleKey.remoteJid,
+                fromMe: sampleKey.fromMe,
+                participant: sampleKey.participant,
+                id: sampleKey.id,
+            } : null,
+        }, 'messages.upsert received');
 
         for (const msg of m.messages) {
-            // Skip our own messages and focus on notifications
-            if (!msg.key.fromMe && m.type === 'notify') {
+            const upsertType = m?.type;
+            const shouldProcessUpsert = upsertType === 'notify' || upsertType === 'append' || upsertType === 'replace';
+
+            // Skip our own messages and focus on incoming messages
+            if (!msg.key.fromMe && shouldProcessUpsert) {
                 const remoteJid = msg.key.remoteJid;
                 const isGroup = remoteJid?.endsWith('@g.us');
+                let chatJid = remoteJid;
+
+                const senderLid = isGroup
+                    ? (msg.key?.participant || msg.participant || undefined)
+                    : undefined;
+                
+                if (isGroup) {
+                    logger.info({
+                        remoteJid,
+                        messageId: msg?.key?.id,
+                        participant: msg?.key?.participant,
+                        hasMessage: !!msg?.message,
+                    }, 'Processing incoming group message entry');
+                }
+                
+                if (!isGroup && typeof chatJid === 'string' && chatJid.endsWith('@lid')) {
+                    try {
+                        const converted = await convertLidToPhoneJid(sock, chatJid);
+                        if (converted && converted !== chatJid) {
+                            logger.debug({ from: chatJid, to: converted }, 'Converted direct-chat LID to phone JID');
+                            chatJid = converted;
+                        }
+                    } catch (e) {
+                        logger.debug({ error: e.message, chatJid }, 'Failed to convert direct-chat LID to phone JID');
+                    }
+                }
                 if (!msg.message) {
                     // Log more details for group messages (especially community groups)
                     if (isGroup) {
@@ -83,7 +153,7 @@ async function handleMessages(sock, m) {
                 
                 // We'll fetch profile after senderJid is determined (for groups)
                 // For now, just note that we need to fetch it
-                const needsProfileFetch = true;
+                let needsProfileFetch = true;
                 
                 // Extract actual message content if wrapped in messageContextInfo
                 let actualMessage = msg.message;
@@ -107,44 +177,60 @@ async function handleMessages(sock, m) {
                 }
                 
                 
-                let senderJid = isGroup
-                    ? (msg.key?.participant || msg.participant || undefined)
-                    : remoteJid;
+                let senderJid = isGroup ? senderLid : chatJid;
+                let resolvedSenderJid = senderJid;
                 
                 // Convert LID to phone JID for group participants
-                if (isGroup && senderJid) {
+                if (isGroup && resolvedSenderJid) {
                     // Prefer participantPn if present (already phone@s.whatsapp.net)
-                    if (senderJid.endsWith('@lid') && msg.key && msg.key.participantPn) {
-                        logger.debug({ from: senderJid, to: msg.key.participantPn }, 'Using participantPn as senderJid');
+                    if (resolvedSenderJid.endsWith('@lid') && msg.key && typeof msg.key.participantPn === 'string' && msg.key.participantPn.endsWith('@s.whatsapp.net') && !isBadJidString(msg.key.participantPn)) {
+                        logger.debug({ from: resolvedSenderJid, to: msg.key.participantPn }, 'Using participantPn as senderJid');
                         try {
                             // Already imported at top: recordLidToPhone
-                            recordLidToPhone(senderJid, msg.key.participantPn);
+                            recordLidToPhone(resolvedSenderJid, msg.key.participantPn);
                         } catch (_) {}
-                        senderJid = msg.key.participantPn;
-                    } else if (senderJid.endsWith('@lid')) {
+                        resolvedSenderJid = msg.key.participantPn;
+                    } else if (resolvedSenderJid.endsWith('@lid')) {
                         // Try contact store conversion as fallback
                         try {
                             // Already imported at top
                             if (typeof convertLidToPhoneJid === 'function') {
-                                const converted = convertLidToPhoneJid(sock, senderJid);
-                                if (converted !== senderJid) {
-                                    logger.debug({ from: senderJid, to: converted }, 'Converted LID to phone JID');
+                                const converted = await convertLidToPhoneJid(sock, resolvedSenderJid);
+                                if (converted && converted !== resolvedSenderJid) {
+                                    logger.debug({ from: resolvedSenderJid, to: converted }, 'Converted LID to phone JID');
                                 }
-                                senderJid = converted;
+                                if (converted) {
+                                    resolvedSenderJid = converted;
+                                }
                             } else {
-                                logger.debug({ senderJid }, 'convertLidToPhoneJid not a function, using raw senderJid');
+                                logger.debug({ senderJid: resolvedSenderJid }, 'convertLidToPhoneJid not a function, using raw senderJid');
                             }
                         } catch (e) {
-                            logger.debug({ error: e.message, senderJid }, 'convertLidToPhoneJid not available, using raw senderJid');
+                            logger.debug({ error: e.message, senderJid: resolvedSenderJid }, 'convertLidToPhoneJid not available, using raw senderJid');
                         }
                     }
+                }
+
+                if (isGroup) {
+                    const safe = pickSafeSenderJid(resolvedSenderJid, senderLid);
+                    if (safe) {
+                        resolvedSenderJid = safe;
+                    }
+                } else if (isBadJidString(resolvedSenderJid)) {
+                    resolvedSenderJid = chatJid;
+                }
+
+                // If we still only have an unresolved LID, don't block message processing on profile fetch
+                if (isGroup && typeof resolvedSenderJid === 'string' && resolvedSenderJid.endsWith('@lid')) {
+                    needsProfileFetch = false;
+                    logger.info({ remoteJid, messageId: msg?.key?.id, senderJid: resolvedSenderJid }, 'Skipping sender profile fetch for unresolved LID sender');
                 }
 
                 // Fetch sender profile picture and bio now that we have the correct senderJid
                 // For direct chats: senderJid = remoteJid
                 // For group chats: senderJid = participant JID
-                if (needsProfileFetch && senderJid) {
-                    const profileJid = isGroup ? senderJid : remoteJid;
+                if (needsProfileFetch && resolvedSenderJid) {
+                    const profileJid = isGroup ? resolvedSenderJid : chatJid;
                     logger.debug({ 
                         profileJid, 
                         isGroup, 
@@ -152,8 +238,8 @@ async function handleMessages(sock, m) {
                     }, 'Attempting to fetch sender profile info');
                     
                     try {
-                        senderProfilePicture = await fetchContactProfilePicture(sock, profileJid);
-                        senderBio = await fetchContactStatus(sock, profileJid);
+                        senderProfilePicture = await withTimeout(fetchContactProfilePicture(sock, profileJid), 3000, 'fetchContactProfilePicture');
+                        senderBio = await withTimeout(fetchContactStatus(sock, profileJid), 3000, 'fetchContactStatus');
                         if (typeof senderBio === 'string') {
                             // Trim to backend validation limit
                             senderBio = senderBio.slice(0, 500);
@@ -198,30 +284,36 @@ async function handleMessages(sock, m) {
                         // Send to backend using global deduplication
                         // Already imported at top: sendGroupMetadata
                         // Process participants - prioritize 'jid' field over 'id' field
-                        const participants = (groupMetadata.participants || []).map(p => {
-                            let phoneJid = null;
-                            
-                            if (p.jid && typeof p.jid === 'string' && p.jid.endsWith('@s.whatsapp.net')) {
-                                phoneJid = p.jid;
-                            } else if (p.id) {
-                                const converted = convertLidToPhoneJid(sock, p.id);
-                                if (converted && converted.endsWith('@s.whatsapp.net')) {
-                                    phoneJid = converted;
+                        const participantsRaw = groupMetadata.participants || [];
+                        const participants = (await Promise.all(participantsRaw.map(async (p) => {
+                            if (!p) return null;
+                            if (p.jid && typeof p.jid === 'string' && p.jid.endsWith('@s.whatsapp.net') && !isBadJidString(p.jid)) {
+                                return {
+                                    jid: p.jid,
+                                    isAdmin: p.admin === 'admin',
+                                    isSuperAdmin: p.admin === 'superadmin'
+                                };
+                            }
+                            if (p.id) {
+                                const converted = await convertLidToPhoneJid(sock, p.id);
+                                if (converted && converted.endsWith('@s.whatsapp.net') && !isBadJidString(converted)) {
+                                    return {
+                                        jid: converted,
+                                        isAdmin: p.admin === 'admin',
+                                        isSuperAdmin: p.admin === 'superadmin'
+                                    };
                                 }
                             }
+                            return null;
+                        }))).filter(p => p !== null);
 
-                            return phoneJid ? {
-                                jid: phoneJid,
-                                isAdmin: p.admin === 'admin',
-                                isSuperAdmin: p.admin === 'superadmin'
-                            } : null;
-                        }).filter(p => p !== null);
+                        const safeParticipants = participants.filter((p) => isValidParticipantJid(p?.jid));
                         
                         if (shouldSendGroupMetadata(groupMetadata.id, groupMetadata)) {
                             await sendGroupMetadata({
                                 groupId: groupMetadata.id,
                                 groupName: groupMetadata.subject || 'Group',
-                                participants,
+                                participants: safeParticipants,
                                 groupDescription: groupMetadata.desc || '',
                                 groupProfilePictureUrl: groupProfilePicture,
                                 createdAt: groupMetadata.creation ? new Date(groupMetadata.creation * 1000).toISOString() : null
@@ -233,7 +325,7 @@ async function handleMessages(sock, m) {
                         logger.debug({ 
                             groupId: remoteJid, 
                             groupName: groupMetadata.subject,
-                            participantCount: participants.length 
+                            participantCount: safeParticipants.length 
                         }, 'Group metadata fetched and sent to backend');
                     } catch (error) {
                         logger.debug({ 
@@ -257,12 +349,12 @@ async function handleMessages(sock, m) {
                     // 1. Simple text messages
                     if (actualMessage?.conversation) {
                         logger.debug({ remoteJid, messageId: msg.key.id, hasSenderProfile: !!senderProfilePicture }, 'Handling text message');
-                        await handleTextMessage(remoteJid, actualMessage.conversation, {}, msg.key.id, senderJid, senderProfilePicture, senderBio);
+                        await handleTextMessage(chatJid, actualMessage.conversation, {}, msg.key.id, resolvedSenderJid, senderProfilePicture, senderBio, senderLid);
                     }
                     // 2. Extended text messages (e.g., with context)
                     else if (actualMessage?.extendedTextMessage) {
                         const { text, contextInfo } = actualMessage.extendedTextMessage;
-                        await handleTextMessage(remoteJid, text, contextInfo, msg.key.id, senderJid, senderProfilePicture, senderBio);
+                        await handleTextMessage(chatJid, text, contextInfo, msg.key.id, resolvedSenderJid, senderProfilePicture, senderBio, senderLid);
                     }
                     // 3. Image messages
                     else if (actualMessage?.imageMessage) {
@@ -270,52 +362,52 @@ async function handleMessages(sock, m) {
                         if (actualMessage !== msg.message) {
                             msg.message = actualMessage;
                         }
-                        await handleImageMessage(sock, msg, remoteJid, senderJid, senderProfilePicture, senderBio);
+                        await handleImageMessage(sock, msg, chatJid, resolvedSenderJid, senderProfilePicture, senderBio, senderLid);
                     }
                     // 4. Video messages
                     else if (actualMessage?.videoMessage) {
                         if (actualMessage !== msg.message) {
                             msg.message = actualMessage;
                         }
-                        await handleVideoMessage(sock, msg, remoteJid, senderJid, senderProfilePicture, senderBio);
+                        await handleVideoMessage(sock, msg, chatJid, resolvedSenderJid, senderProfilePicture, senderBio, senderLid);
                     }
                     // 5. Document messages
                     else if (actualMessage?.documentMessage) {
                         if (actualMessage !== msg.message) {
                             msg.message = actualMessage;
                         }
-                        await handleDocumentMessage(sock, msg, remoteJid, senderJid, senderProfilePicture, senderBio);
+                        await handleDocumentMessage(sock, msg, chatJid, resolvedSenderJid, senderProfilePicture, senderBio, senderLid);
                     }
                     // 6. Audio messages
                     else if (actualMessage?.audioMessage) {
                         if (actualMessage !== msg.message) {
                             msg.message = actualMessage;
                         }
-                        await handleAudioMessage(sock, msg, remoteJid, senderJid, senderProfilePicture, senderBio);
+                        await handleAudioMessage(sock, msg, chatJid, resolvedSenderJid, senderProfilePicture, senderBio, senderLid);
                     }
                     // 7. Location messages
                     else if (actualMessage?.locationMessage) {
-                        await handleLocationMessage(msg, remoteJid, senderJid, senderProfilePicture, senderBio);
+                        await handleLocationMessage(msg, chatJid, resolvedSenderJid, senderProfilePicture, senderBio, senderLid);
                     }
                     // 8. Reaction messages
                     else if (actualMessage?.reactionMessage) {
-                        await handleReactionMessage(msg, remoteJid);
+                        await handleReactionMessage(sock, msg, chatJid);
                     }
                     // 9. Poll messages
                     else if (actualMessage?.pollCreationMessageV3) {
-                        await handlePollMessage(msg, remoteJid, senderJid, senderProfilePicture, senderBio);
+                        await handlePollMessage(msg, chatJid, resolvedSenderJid, senderProfilePicture, senderBio, senderLid);
                     }
                     // 9a. Poll update messages (votes)
                     else if (actualMessage?.pollUpdateMessage) {
-                        await handlePollUpdateMessage(msg, remoteJid);
+                        await handlePollUpdateMessage(msg, chatJid);
                     }
                     // 10. Edited messages
                     else if (actualMessage?.editedMessage) {
-                        await handleEditedMessage(msg, remoteJid);
+                        await handleEditedMessage(msg, chatJid);
                     }
                     // 11. Protocol messages (deletions, etc.)
                     else if (actualMessage?.protocolMessage) {
-                        await handleProtocolMessage(msg, remoteJid);
+                        await handleProtocolMessage(msg, chatJid);
                     }
                     // 12. Sender key distribution (group encryption key setup)
                     else if (actualMessage?.senderKeyDistributionMessage) {
@@ -340,10 +432,18 @@ async function handleMessages(sock, m) {
                         messageType: Object.keys(msg.message || {})[0]
                     }, 'Error processing message');
                 }
+            } else {
+                // Keep this as debug to avoid log noise, but helps when group messages come as other upsert types
+                logger.debug({
+                    upsertType: m?.type,
+                    fromMe: msg?.key?.fromMe,
+                    remoteJid: msg?.key?.remoteJid,
+                    id: msg?.key?.id,
+                }, 'Skipping messages.upsert entry');
             }
         }
     } catch (error) {
-        logger.error({ error: error?.message || String(error), stack: error?.stack }, 'Unexpected error in handleMessages');
+        logger.error({ error: error.message, stack: error.stack }, 'Error processing incoming messages');
     }
 }
 
@@ -373,8 +473,9 @@ function extractQuotedContent(quotedMessage) {
  * @param {string} [senderJid] - The sender's JID (for groups).
  * @param {string} [senderProfilePicture] - The sender's profile picture URL.
  * @param {string} [senderBio] - The sender's bio/status.
+ * @param {string} [senderLid] - The sender's LID (for groups).
  */
-async function handleTextMessage(remoteJid, text, contextInfo = {}, messageId = null, senderJid = null, senderProfilePicture = null, senderBio = null) {
+async function handleTextMessage(remoteJid, text, contextInfo = {}, messageId = null, senderJid = null, senderProfilePicture = null, senderBio = null, senderLid = null) {
     logger.debug({ 
         remoteJid, 
         textLength: text.length, 
@@ -409,7 +510,9 @@ async function handleTextMessage(remoteJid, text, contextInfo = {}, messageId = 
     const messageData = {
         from: remoteJid,
         chat: remoteJid,
+        sender: senderJid || remoteJid,
         senderJid: senderJid || undefined,
+        senderLid: senderLid || undefined,
         type: 'text',
         body: text,
         messageId: messageId,
@@ -441,8 +544,9 @@ async function handleTextMessage(remoteJid, text, contextInfo = {}, messageId = 
  * @param {string} [senderJid] - The sender's JID (for groups).
  * @param {string} [senderProfilePicture] - The sender's profile picture URL.
  * @param {string} [senderBio] - The sender's bio/status.
+ * @param {string} [senderLid] - The sender's LID (for groups).
  */
-async function handleImageMessage(sock, msg, remoteJid, senderJid = null, senderProfilePicture = null, senderBio = null) {
+async function handleImageMessage(sock, msg, remoteJid, senderJid = null, senderProfilePicture = null, senderBio = null, senderLid = null) {
     logger.debug({ remoteJid }, 'Processing image message');
     
     try {
@@ -482,7 +586,9 @@ async function handleImageMessage(sock, msg, remoteJid, senderJid = null, sender
         const messageData = {
             from: remoteJid,
             chat: remoteJid,
+            sender: senderJid || remoteJid,
             senderJid: senderJid || undefined,
+            senderLid: senderLid || undefined,
             type: 'image',
             body: caption,
             media: base64Image,
@@ -523,8 +629,9 @@ async function handleImageMessage(sock, msg, remoteJid, senderJid = null, sender
  * @param {string} [senderJid] - The sender's JID (for groups).
  * @param {string} [senderProfilePicture] - The sender's profile picture URL.
  * @param {string} [senderBio] - The sender's bio/status.
+ * @param {string} [senderLid] - The sender's LID (for groups).
  */
-async function handleVideoMessage(sock, msg, remoteJid, senderJid = null, senderProfilePicture = null, senderBio = null) {
+async function handleVideoMessage(sock, msg, remoteJid, senderJid = null, senderProfilePicture = null, senderBio = null, senderLid = null) {
     logger.debug({ remoteJid }, 'Processing video message');
     
     try {
@@ -570,7 +677,9 @@ async function handleVideoMessage(sock, msg, remoteJid, senderJid = null, sender
         const messageData = {
             from: remoteJid,
             chat: remoteJid,
+            sender: senderJid || remoteJid,
             senderJid: senderJid || undefined,
+            senderLid: senderLid || undefined,
             type: 'video',
             body: caption,
             media: base64Video,
@@ -580,7 +689,7 @@ async function handleVideoMessage(sock, msg, remoteJid, senderJid = null, sender
             mediaSize: mediaSize || undefined,
             quotedMessage: quotedMessageData,
             senderProfilePictureUrl: senderProfilePicture || undefined,
-            senderBio: senderBio || undefined
+            senderBio: (senderBio ?? undefined)
         };
         
         logger.debug({ 
@@ -612,8 +721,9 @@ async function handleVideoMessage(sock, msg, remoteJid, senderJid = null, sender
  * @param {string} [senderJid] - The sender's JID (for groups).
  * @param {string} [senderProfilePicture] - The sender's profile picture URL.
  * @param {string} [senderBio] - The sender's bio/status.
+ * @param {string} [senderLid] - The sender's LID (for groups).
  */
-async function handleDocumentMessage(sock, msg, remoteJid, senderJid = null, senderProfilePicture = null, senderBio = null) {
+async function handleDocumentMessage(sock, msg, remoteJid, senderJid = null, senderProfilePicture = null, senderBio = null, senderLid = null) {
     logger.debug({ remoteJid }, 'Processing document message');
     
     try {
@@ -660,7 +770,9 @@ async function handleDocumentMessage(sock, msg, remoteJid, senderJid = null, sen
         const messageData = {
             from: remoteJid,
             chat: remoteJid,
+            sender: senderJid || remoteJid,
             senderJid: senderJid || undefined,
+            senderLid: senderLid || undefined,
             type: 'document',
             body: caption,
             fileName: fileName,
@@ -671,7 +783,7 @@ async function handleDocumentMessage(sock, msg, remoteJid, senderJid = null, sen
             mediaSize: mediaSize || undefined,
             quotedMessage: quotedMessageData,
             senderProfilePictureUrl: senderProfilePicture || undefined,
-            senderBio: senderBio || undefined
+            senderBio: (senderBio ?? undefined)
         };
         
         logger.debug({ 
@@ -703,8 +815,9 @@ async function handleDocumentMessage(sock, msg, remoteJid, senderJid = null, sen
  * @param {string} [senderJid] - The sender's JID (for groups).
  * @param {string} [senderProfilePicture] - The sender's profile picture URL.
  * @param {string} [senderBio] - The sender's bio/status.
+ * @param {string} [senderLid] - The sender's LID (for groups).
  */
-async function handleAudioMessage(sock, msg, remoteJid, senderJid = null, senderProfilePicture = null, senderBio = null) {
+async function handleAudioMessage(sock, msg, remoteJid, senderJid = null, senderProfilePicture = null, senderBio = null, senderLid = null) {
     logger.debug({ remoteJid }, 'Processing audio message');
     
     try {
@@ -766,7 +879,9 @@ async function handleAudioMessage(sock, msg, remoteJid, senderJid = null, sender
         const messageData = {
             from: remoteJid,
             chat: remoteJid,
+            sender: senderJid || remoteJid,
             senderJid: senderJid || undefined,
+            senderLid: senderLid || undefined,
             type: 'audio',
             body: '', // Audio messages don't have captions, but backend expects a content field
             media: base64Audio,
@@ -777,7 +892,7 @@ async function handleAudioMessage(sock, msg, remoteJid, senderJid = null, sender
             duration: audioDuration || undefined,
             quotedMessage: quotedMessageData,
             senderProfilePictureUrl: senderProfilePicture || undefined,
-            senderBio: senderBio || undefined
+            senderBio: (senderBio ?? undefined)
         };
         
         logger.debug({ 
@@ -810,8 +925,9 @@ async function handleAudioMessage(sock, msg, remoteJid, senderJid = null, sender
  * @param {string} [senderJid] - The sender's JID (for groups).
  * @param {string} [senderProfilePicture] - The sender's profile picture URL.
  * @param {string} [senderBio] - The sender's bio/status.
+ * @param {string} [senderLid] - The sender's LID (for groups).
  */
-async function handleLocationMessage(msg, remoteJid, senderJid = null, senderProfilePicture = null, senderBio = null) {
+async function handleLocationMessage(msg, remoteJid, senderJid = null, senderProfilePicture = null, senderBio = null, senderLid = null) {
     try {
         const location = msg.message.locationMessage;
         logger.debug({ remoteJid, location }, 'Processing location message');
@@ -819,7 +935,9 @@ async function handleLocationMessage(msg, remoteJid, senderJid = null, senderPro
         const messageData = {
             from: remoteJid,
             chat: remoteJid,
+            sender: senderJid || remoteJid,
             senderJid: senderJid || undefined,
+            senderLid: senderLid || undefined,
             type: 'location',
             body: location.name || 'Shared Location',
             latitude: location.degreesLatitude,
@@ -830,7 +948,7 @@ async function handleLocationMessage(msg, remoteJid, senderJid = null, senderPro
             messageTimestamp: msg.messageTimestamp,
             messageId: msg.key.id,
             senderProfilePictureUrl: senderProfilePicture || undefined,
-            senderBio: senderBio || undefined
+            senderBio: (senderBio ?? undefined)
         };
         
         logger.debug({ 
@@ -856,10 +974,11 @@ async function handleLocationMessage(msg, remoteJid, senderJid = null, senderPro
 
 /**
  * Handles reaction messages.
+ * @param {import('@whiskeysockets/baileys').WASocket} sock - The socket instance.
  * @param {object} msg - The message object.
- * @param {string} remoteJid - The sender's JID.
+ * @param {string} remoteJid - The chat JID.
  */
-async function handleReactionMessage(msg, remoteJid) {
+async function handleReactionMessage(sock, msg, remoteJid) {
     try {
         const reaction = msg.message.reactionMessage;
         logger.debug({ remoteJid, reaction }, 'Processing reaction message');
@@ -867,8 +986,27 @@ async function handleReactionMessage(msg, remoteJid) {
         // Extract the message ID that was reacted to
         const reactedMessageId = reaction.key?.id;
         const emoji = reaction.text || ''; // Empty string means reaction removed
-        let senderJid = reaction.key?.participant || remoteJid;
-        // Note: We don't have socket context in this function to convert LID
+        const isGroup = typeof remoteJid === 'string' && remoteJid.endsWith('@g.us');
+
+        // Reactor identity: for group reactions this is msg.key.participant
+        const senderLid = isGroup ? (msg.key?.participant || msg.participant || undefined) : undefined;
+        let senderJid = isGroup ? senderLid : remoteJid;
+
+        // Convert @lid to phone JID when possible
+        if (isGroup && typeof senderJid === 'string' && senderJid.endsWith('@lid')) {
+            const pn = msg?.key?.participantPn;
+            if (typeof pn === 'string' && pn.endsWith('@s.whatsapp.net')) {
+                try {
+                    recordLidToPhone(senderJid, pn);
+                } catch (_) {}
+                senderJid = pn;
+            } else {
+                try {
+                    const converted = await convertLidToPhoneJid(sock, senderJid);
+                    if (converted) senderJid = converted;
+                } catch (_) {}
+            }
+        }
 
         if (!reactedMessageId) {
             logger.warn({ remoteJid }, 'Reaction message missing target message ID');
@@ -877,10 +1015,13 @@ async function handleReactionMessage(msg, remoteJid) {
 
         const messageData = {
             from: remoteJid,
+            chat: remoteJid,
             type: 'reaction',
             reactedMessageId: reactedMessageId,
             emoji: emoji,
+            sender: senderJid,
             senderJid: senderJid,
+            senderLid: senderLid || undefined,
             messageTimestamp: msg.messageTimestamp,
             messageId: msg.key.id
         };
@@ -1019,8 +1160,9 @@ async function handleProtocolMessage(msg, remoteJid) {
  * @param {string} [senderJid] - The sender's JID (for groups).
  * @param {string} [senderProfilePicture] - The sender's profile picture URL.
  * @param {string} [senderBio] - The sender's bio/status.
+ * @param {string} [senderLid] - The sender's LID (for groups).
  */
-async function handlePollMessage(msg, remoteJid, senderJid = null, senderProfilePicture = null, senderBio = null) {
+async function handlePollMessage(msg, remoteJid, senderJid = null, senderProfilePicture = null, senderBio = null, senderLid = null) {
     try {
         const pollData = msg.message.pollCreationMessageV3;
         const messageId = msg.key.id;
@@ -1065,12 +1207,14 @@ async function handlePollMessage(msg, remoteJid, senderJid = null, senderProfile
         const messageData = {
             from: remoteJid,
             chat: remoteJid,
+            sender: senderJid || remoteJid,
             senderJid: senderJid || undefined,
+            senderLid: senderLid || undefined,
             type: 'poll',
             body: content,
             messageId: messageId,
             senderProfilePictureUrl: senderProfilePicture || undefined,
-            senderBio: senderBio || undefined,
+            senderBio: (senderBio ?? undefined),
             pollData: pollInfo
         };
         

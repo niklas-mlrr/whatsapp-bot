@@ -21,6 +21,10 @@ class ChatController extends Controller
      */
     private function formatPhoneNumberForDisplay(string $jid): string
     {
+        if (str_contains($jid, '@') && !str_ends_with($jid, '@s.whatsapp.net')) {
+            return $jid;
+        }
+        
         // Extract phone number from JID (remove @s.whatsapp.net or similar)
         $phoneNumber = preg_replace('/@.*$/', '', $jid);
         
@@ -126,6 +130,15 @@ class ChatController extends Controller
                 $participants = json_decode($chat->participants, true) ?? [];
                 $cleanParticipants = [];
                 foreach ($participants as $participant) {
+                    if (!is_string($participant)) {
+                        continue;
+                    }
+
+                    $participantLower = strtolower($participant);
+                    if (str_contains($participantLower, 'promise') || str_contains($participantLower, '[object')) {
+                        continue;
+                    }
+
                     if ($participant === 'me') {
                         $cleanParticipants[] = 'me';
                     } else {
@@ -261,7 +274,7 @@ class ChatController extends Controller
                     
                     // If the name looks like a WhatsApp JID, format it as a phone number
                     $displayName = $validated['name'];
-                    if (preg_match('/^(\d+)@/', $displayName, $matches)) {
+                    if (preg_match('/^(\d+)@s\.whatsapp\.net$/', $displayName, $matches)) {
                         // It's a WhatsApp JID, format as +number
                         $displayName = '+' . $matches[1];
                     }
@@ -895,6 +908,9 @@ class ChatController extends Controller
                             m.chat_id,
                             m.created_at,
                             m.updated_at,
+                            m.delivered_at,
+                            m.read_at,
+                            m.read_by,
                             m.type,
                             'inbound' as direction,
                             m.status,
@@ -955,6 +971,9 @@ class ChatController extends Controller
                         m.chat_id,
                         m.created_at,
                         m.updated_at,
+                        m.delivered_at,
+                        m.read_at,
+                        m.read_by,
                         m.type,
                         'inbound' as direction,
                         m.status,
@@ -980,6 +999,27 @@ class ChatController extends Controller
             // Load poll votes without using JSON aggregation (more compatible with MariaDB/MySQL variants)
             $pollVotesByMessageId = [];
             $messageIds = array_values(array_unique(array_map(fn ($row) => (int) $row->id, $rows)));
+
+            $receiptStatusesByMessageId = [];
+            if (!empty($messageIds)) {
+                $placeholders = implode(',', array_fill(0, count($messageIds), '?'));
+                $receiptRows = DB::select(
+                    "SELECT message_id, participant_id, delivered_at, read_at FROM message_receipts WHERE message_id IN ($placeholders)",
+                    $messageIds
+                );
+                foreach ($receiptRows as $r) {
+                    $mid = (int) $r->message_id;
+                    if (!isset($receiptStatusesByMessageId[$mid])) {
+                        $receiptStatusesByMessageId[$mid] = [];
+                    }
+                    $receiptStatusesByMessageId[$mid][] = [
+                        'participant_id' => (string) $r->participant_id,
+                        'delivered_at' => $r->delivered_at,
+                        'read_at' => $r->read_at,
+                    ];
+                }
+            }
+
             if (!empty($messageIds)) {
                 $placeholders = implode(',', array_fill(0, count($messageIds), '?'));
                 $votes = DB::select(
@@ -1000,11 +1040,19 @@ class ChatController extends Controller
                 }
             }
 
-        $formatted = array_map(function ($m) use ($currentUserId, $pollVotesByMessageId) {
+        $formatted = array_map(function ($m) use ($currentUserId, $pollVotesByMessageId, $receiptStatusesByMessageId) {
             // Decode metadata if it's a JSON string
             $metadata = isset($m->metadata) && is_string($m->metadata) ? json_decode($m->metadata, true) : [];
             if (!is_array($metadata)) {
                 $metadata = [];
+            }
+
+            $readBy = [];
+            if (isset($m->read_by)) {
+                $readBy = is_string($m->read_by) ? json_decode($m->read_by, true) : $m->read_by;
+                if (!is_array($readBy)) {
+                    $readBy = [];
+                }
             }
             
             // Debug logging for poll messages
@@ -1119,11 +1167,18 @@ class ChatController extends Controller
                 ", [$m->reply_to_message_id]);
                 
                 if ($quoted) {
+                    $quotedSender = $quoted->sender ?? null;
+                    if (is_string($quotedSender)) {
+                        $quotedSenderLower = strtolower($quotedSender);
+                        if (str_contains($quotedSenderLower, 'promise') || str_contains($quotedSenderLower, '[object')) {
+                            $quotedSender = null;
+                        }
+                    }
                     $quotedMessage = [
                         'id' => (string) $quoted->id,
                         'content' => $quoted->content,
                         'type' => $quoted->type,
-                        'sender' => $quoted->sender ?? 'Unknown',
+                        'sender' => $quotedSender ?? 'Unknown',
                         'sender_name' => $quoted->sender_name,
                     ];
                 }
@@ -1145,15 +1200,30 @@ class ChatController extends Controller
             $senderAvatarUrl = $m->sender_profile_picture_url
                 ?? ($metadata['senderProfilePictureUrl'] ?? ($metadata['sender_profile_picture_url'] ?? ($metadata['sender_avatar_url'] ?? ($metadata['profile_picture_url'] ?? null))));
 
+            $senderPhone = $m->sender_phone ?? null;
+            if (is_string($senderPhone)) {
+                $senderPhoneLower = strtolower($senderPhone);
+                if (str_contains($senderPhoneLower, 'promise') || str_contains($senderPhoneLower, '[object')) {
+                    $senderPhone = null;
+                }
+            }
+
+            if (!$senderPhone && (is_string($senderName) && (strtolower($senderName) === 'whatsapp user' || strtolower($senderName) === 'temporary user'))) {
+                $senderName = 'Unknown';
+            }
+
             return [
                 'id' => (string) $m->id,
                 'content' => $m->content,
                 'sender_id' => (string) $m->sender_id,
                 'sender_name' => $senderName,
-                'sender_phone' => $m->sender_phone ?? null,
+                'sender_phone' => $senderPhone,
                 'chat_id' => (string) $m->chat_id,
                 'created_at' => $m->created_at,
                 'updated_at' => $m->updated_at,
+                'delivered_at' => $m->delivered_at ?? null,
+                'read_at' => $m->read_at ?? null,
+                'read_by' => $readBy,
                 'type' => $m->type,
                 'direction' => $m->direction,
                 'status' => $m->status ?? 'sent',
@@ -1169,6 +1239,7 @@ class ChatController extends Controller
                 'quoted_message' => $quotedMessage,
                 'sender_avatar_url' => $senderAvatarUrl,
                 'poll_votes' => $pollVotes,
+                'receipt_statuses' => $receiptStatusesByMessageId[(int) $m->id] ?? [],
             ];
         }, $rows);
 
@@ -1276,6 +1347,9 @@ class ChatController extends Controller
                             m.chat_id,
                             m.created_at,
                             m.updated_at,
+                            m.delivered_at,
+                            m.read_at,
+                            m.read_by,
                             m.deleted_at,
                             m.edited_at,
                             CASE WHEN m.deleted_at IS NOT NULL THEN 'deleted' ELSE m.type END as type,
@@ -1311,6 +1385,9 @@ class ChatController extends Controller
                         m.chat_id,
                         m.created_at,
                         m.updated_at,
+                        m.delivered_at,
+                        m.read_at,
+                        m.read_by,
                         m.deleted_at,
                         m.edited_at,
                         CASE WHEN m.deleted_at IS NOT NULL THEN 'deleted' ELSE m.type END as type,
@@ -1336,6 +1413,26 @@ class ChatController extends Controller
             // Load poll votes without using JSON aggregation (more compatible with MariaDB/MySQL variants)
             $pollVotesByMessageId = [];
             $messageIds = array_values(array_unique(array_map(fn ($row) => (int) $row->id, $rows)));
+
+            $receiptStatusesByMessageId = [];
+            if (!empty($messageIds)) {
+                $placeholders = implode(',', array_fill(0, count($messageIds), '?'));
+                $receiptRows = DB::select(
+                    "SELECT message_id, participant_id, delivered_at, read_at FROM message_receipts WHERE message_id IN ($placeholders)",
+                    $messageIds
+                );
+                foreach ($receiptRows as $r) {
+                    $mid = (int) $r->message_id;
+                    if (!isset($receiptStatusesByMessageId[$mid])) {
+                        $receiptStatusesByMessageId[$mid] = [];
+                    }
+                    $receiptStatusesByMessageId[$mid][] = [
+                        'participant_id' => (string) $r->participant_id,
+                        'delivered_at' => $r->delivered_at,
+                        'read_at' => $r->read_at,
+                    ];
+                }
+            }
             if (!empty($messageIds)) {
                 $placeholders = implode(',', array_fill(0, count($messageIds), '?'));
                 $votes = DB::select(
@@ -1357,11 +1454,19 @@ class ChatController extends Controller
             }
 
             // Format messages (already in correct order)
-            $formattedMessages = array_map(function ($m) use ($currentUserId, $pollVotesByMessageId) {
+            $formattedMessages = array_map(function ($m) use ($currentUserId, $pollVotesByMessageId, $receiptStatusesByMessageId) {
                 // Decode metadata if it's a JSON string
                 $metadata = is_string($m->metadata) ? json_decode($m->metadata, true) : [];
                 if (!is_array($metadata)) {
                     $metadata = [];
+                }
+
+                $readBy = [];
+                if (isset($m->read_by)) {
+                    $readBy = is_string($m->read_by) ? json_decode($m->read_by, true) : $m->read_by;
+                    if (!is_array($readBy)) {
+                        $readBy = [];
+                    }
                 }
                 
                 // Decode reactions if it's a JSON string
@@ -1469,11 +1574,18 @@ class ChatController extends Controller
                     ", [$m->reply_to_message_id]);
                     
                     if ($quoted) {
+                        $quotedSender = $quoted->sender ?? null;
+                        if (is_string($quotedSender)) {
+                            $quotedSenderLower = strtolower($quotedSender);
+                            if (str_contains($quotedSenderLower, 'promise') || str_contains($quotedSenderLower, '[object')) {
+                                $quotedSender = null;
+                            }
+                        }
                         $quotedMessage = [
                             'id' => (string) $quoted->id,
                             'content' => $quoted->content,
                             'type' => $quoted->type,
-                            'sender' => $quoted->sender ?? 'Unknown',
+                            'sender' => $quotedSender ?? 'Unknown',
                             'sender_name' => $quoted->sender_name,
                         ];
                     }
@@ -1495,15 +1607,30 @@ class ChatController extends Controller
                 $senderAvatarUrl = $m->sender_profile_picture_url
                     ?? ($metadata['senderProfilePictureUrl'] ?? ($metadata['sender_profile_picture_url'] ?? ($metadata['sender_avatar_url'] ?? ($metadata['profile_picture_url'] ?? null))));
 
+                $senderPhone = $m->sender_phone ?? null;
+                if (is_string($senderPhone)) {
+                    $senderPhoneLower = strtolower($senderPhone);
+                    if (str_contains($senderPhoneLower, 'promise') || str_contains($senderPhoneLower, '[object')) {
+                        $senderPhone = null;
+                    }
+                }
+
+                if (!$senderPhone && (is_string($senderName) && (strtolower($senderName) === 'whatsapp user' || strtolower($senderName) === 'temporary user'))) {
+                    $senderName = 'Unknown';
+                }
+
                 return [
                     'id' => (string) $m->id,
                     'content' => $m->content,
                     'sender_id' => (string) $m->sender_id,
                     'sender_name' => $senderName,
-                    'sender_phone' => $m->sender_phone ?? null,
+                    'sender_phone' => $senderPhone,
                     'chat_id' => (string) $m->chat_id,
                     'created_at' => $m->created_at,
                     'updated_at' => $m->updated_at,
+                    'delivered_at' => $m->delivered_at ?? null,
+                    'read_at' => $m->read_at ?? null,
+                    'read_by' => $readBy,
                     'type' => $m->type,
                     'direction' => $m->direction,
                     'status' => $m->status ?? 'sent',
@@ -1518,6 +1645,7 @@ class ChatController extends Controller
                     'quoted_message' => $quotedMessage,
                     'sender_avatar_url' => $senderAvatarUrl,
                     'poll_votes' => $pollVotes,
+                    'receipt_statuses' => $receiptStatusesByMessageId[(int) $m->id] ?? [],
                 ];
             }, $rows);
 
@@ -1625,6 +1753,10 @@ class ChatController extends Controller
             $members = [];
             
             foreach ($participants as $participant) {
+                if (!is_string($participant)) {
+                    continue;
+                }
+
                 // Skip 'me' participant
                 if ($participant === 'me') {
                     $members[] = [
@@ -1635,6 +1767,11 @@ class ChatController extends Controller
                     ];
                     continue;
                 }
+
+                $participantLower = strtolower($participant);
+                if (str_contains($participantLower, 'promise') || str_contains($participantLower, '[object')) {
+                    continue;
+                }
                 
                 // Normalize phone number - handle different formats
                 $phoneNumber = preg_replace('/@.*$/', '', $participant);
@@ -1642,12 +1779,6 @@ class ChatController extends Controller
                 
                 // Skip obviously fake or invalid phone numbers
                 if (strlen($phoneNumber) < 7 || strlen($phoneNumber) > 15) {
-                    $members[] = [
-                        'id' => $phoneNumber,
-                        'name' => 'Unknown User',
-                        'phone' => $participant,
-                        'avatar_url' => null
-                    ];
                     continue;
                 }
                 
