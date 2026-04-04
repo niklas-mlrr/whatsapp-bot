@@ -160,8 +160,8 @@ class WebSocketService
                 $userName = (string) $userId;
             }
 
-            // Broadcast with event name matching frontend expectation (.message.reaction)
-            Broadcast::event('chat.' . $message->chat_id, '.message.reaction', [
+            // Broadcast with event name matching frontend expectation (message.reaction)
+            Broadcast::event('chat.' . $message->chat_id, 'message.reaction', [
                 'message_id' => $message->id,
                 'chat_id' => $message->chat_id,
                 'user' => [
@@ -179,7 +179,7 @@ class WebSocketService
                 'user_id' => $userId,
                 'user_name' => $userName,
                 'reaction' => $reaction,
-                'event' => '.message.reaction',
+                'event' => 'message.reaction',
             ]);
         } catch (\Exception $e) {
             Log::channel('whatsapp')->error('Failed to send reaction update', [
