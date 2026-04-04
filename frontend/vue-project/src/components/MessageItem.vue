@@ -1478,52 +1478,24 @@ function getTotalVotes(): number {
 
 function hasUserVotedForOption(optionIndex: number): boolean {
   if (props.message.type !== 'poll') return false
-  
+
   const currentUserId = getCurrentUserId()
   if (!currentUserId) return false
-  
+
   // Check if current user has voted for this option in the poll votes
   const pollVotes = (props.message as any).poll_votes || []
-  
-  // Debug logging
-  console.log('Vote detection debug:', {
-    currentUserId,
-    currentUserIdType: typeof currentUserId,
-    pollVotes,
-    optionIndex
-  })
-  
+
   return pollVotes.some((vote: any) => {
     const voteUserId = vote.user_id || vote.userId
     const voteOptionIndex = vote.option_index || vote.optionIndex
-    
-    // Debug each vote
-    console.log('Checking vote:', {
-      vote,
-      voteUserId,
-      voteUserIdType: typeof voteUserId,
-      voteOptionIndex,
-      optionIndex,
-      userIdMatch: String(voteUserId) === String(currentUserId),
-      optionMatch: Number(voteOptionIndex) === Number(optionIndex)
-    })
-    
+
     return String(voteUserId) === String(currentUserId) && Number(voteOptionIndex) === Number(optionIndex)
   })
 }
 
 function getPollSelectionType(): string {
   if (props.message.type !== 'poll') return 'single'
-  
-  // Debug: Log the entire message structure
-  console.log('Full poll message:', {
-    id: props.message.id,
-    type: props.message.type,
-    metadata: props.message.metadata,
-    metadataType: typeof props.message.metadata,
-    metadataKeys: props.message.metadata ? Object.keys(props.message.metadata) : []
-  })
-  
+
   // First try to get from metadata
   const metadata = props.message.metadata
   if (metadata) {
@@ -1538,32 +1510,20 @@ function getPollSelectionType(): string {
     } else {
       pollData = metadata.poll_data
     }
-    
-    // Debug logging
-    console.log('Poll selection type check:', {
-      messageId: props.message.id,
-      pollData,
-      selectableOptionsCount: pollData?.selectableOptionsCount,
-      type: typeof pollData?.selectableOptionsCount
-    })
-    
+
     // Interpret selectableOptionsCount from WhatsApp semantics:
     // 1 = single choice; 0 = multiple (unlimited); >=2 = multiple (limit)
     if (pollData && 'selectableOptionsCount' in pollData) {
       const count = Number(pollData.selectableOptionsCount)
-      const result = count === 1 ? 'single' : 'multiple'
-      console.log('Poll selection type result:', { count, result })
-      return result
+      return count === 1 ? 'single' : 'multiple'
     }
   }
-  
+
   // Default to single selection
   return 'single'
 }
 
 async function handlePollVote(optionIndex: number) {
-  console.log('Vote clicked for option:', optionIndex)
-  
   try {
     const response = await fetch(`${API_CONFIG.BASE_URL}/messages/${props.message.id}/vote`, {
       method: 'POST',
@@ -1576,8 +1536,6 @@ async function handlePollVote(optionIndex: number) {
       })
     })
 
-    console.log('Vote API response status:', response.status)
-    
     if (!response.ok) {
       const errorData = await response.json()
       console.error('Vote API error:', errorData)
@@ -1585,8 +1543,7 @@ async function handlePollVote(optionIndex: number) {
     }
 
     const result = await response.json()
-    console.log('Vote API success:', result)
-    
+
     // The API returns the full message in result.data
     if (result.data) {
       // Emit event to parent to update message with the full data from server
@@ -1594,7 +1551,6 @@ async function handlePollVote(optionIndex: number) {
     }
   } catch (error) {
     console.error('Error voting in poll:', error)
-    // You could show a toast notification here
   }
 }
 

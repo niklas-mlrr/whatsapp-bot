@@ -257,8 +257,6 @@ const fetchContacts = async () => {
       has_chat: contact.has_chat,
       chat_id: contact.chat_id
     }))
-    
-    console.log('Fetched contacts:', contacts.value)
   } catch (error) {
     console.error('Error fetching contacts:', error)
   } finally {

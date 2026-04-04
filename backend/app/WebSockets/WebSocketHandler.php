@@ -4,6 +4,7 @@ namespace App\WebSockets;
 
 use Ratchet\MessageComponentInterface;
 use Ratchet\ConnectionInterface;
+use Illuminate\Support\Facades\Log;
 
 class WebSocketHandler implements MessageComponentInterface
 {
@@ -17,7 +18,7 @@ class WebSocketHandler implements MessageComponentInterface
     public function onOpen(ConnectionInterface $conn)
     {
         $this->clients->attach($conn);
-        echo "New connection! ({$conn->resourceId})\n";
+        Log::info("WebSocket connection opened", ['resourceId' => $conn->resourceId]);
     }
 
     public function onMessage(ConnectionInterface $from, $msg)
@@ -33,12 +34,12 @@ class WebSocketHandler implements MessageComponentInterface
     public function onClose(ConnectionInterface $conn)
     {
         $this->clients->detach($conn);
-        echo "Connection {$conn->resourceId} has disconnected\n";
+        Log::info("WebSocket connection closed", ['resourceId' => $conn->resourceId]);
     }
 
     public function onError(ConnectionInterface $conn, \Exception $e)
     {
-        echo "An error has occurred: {$e->getMessage()}\n";
+        Log::error("WebSocket error", ['error' => $e->getMessage(), 'resourceId' => $conn->resourceId]);
         $conn->close();
     }
 }
