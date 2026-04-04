@@ -79,15 +79,12 @@ class Chat extends Model
 
     /**
      * The accessors to append to the model's array form.
+     * Note: Expensive accessors are NOT appended by default.
+     * Use $chat->append('avatar_url', 'contact_info') when needed.
      *
      * @var array
      */
-    protected $appends = [
-        'last_message',
-        'avatar_url',
-        'display_name',
-        'contact_info',
-    ];
+    protected $appends = [];
 
     /**
      * The default values for attributes.

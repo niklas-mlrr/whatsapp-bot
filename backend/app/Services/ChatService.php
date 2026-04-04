@@ -75,37 +75,39 @@ class ChatService
     {
         $formatted = [];
 
+        // Preload contacts for all direct chats to avoid N+1 queries
+        $phoneNumbers = [];
         foreach ($chats as $chat) {
-            $chatModel = new Chat();
-            $chatModel->forceFill([
-                'id' => $chat->id,
-                'name' => $chat->name,
-                'is_group' => $chat->is_group,
-                'type' => $chat->type,
-                'unread_count' => $chat->unread_count,
-                'participants' => json_decode($chat->participants, true) ?? [],
-                'metadata' => json_decode($chat->metadata, true) ?? [],
-                'is_archived' => $chat->is_archived,
-                'is_muted' => $chat->is_muted,
-                'created_by' => $chat->created_by,
-                'created_at' => $chat->created_at,
-                'updated_at' => $chat->updated_at,
-            ]);
+            $participants = json_decode($chat->participants, true) ?? [];
+            if (!$chat->is_group && !empty($participants[0])) {
+                $phoneNumbers[] = $participants[0];
+            }
+        }
 
-            $displayName = $this->formatDisplayName($chat->name, json_decode($chat->metadata, true) ?? []);
-            $participants = $this->formatParticipants(json_decode($chat->participants, true) ?? []);
+        $contactsByPhone = $this->loadContactsByPhone($user->id, $phoneNumbers);
+
+        foreach ($chats as $chat) {
+            $metadata = json_decode($chat->metadata, true) ?? [];
+            $participants = json_decode($chat->participants, true) ?? [];
+
+            $displayName = $this->formatDisplayName($chat->name, $metadata);
+            $formattedParticipants = $this->formatParticipants($participants);
             $lastMessagePreview = $this->getLastMessagePreview($chat);
+
+            // Compute avatar and contact info without model accessor queries
+            $avatarUrl = $this->getAvatarUrl($chat, $metadata, $participants);
+            $contactInfo = $this->getContactInfo($chat, $metadata, $participants, $contactsByPhone);
 
             $formatted[] = [
                 'id' => $chat->id,
                 'name' => $displayName,
-                'original_name' => $chatModel->metadata['whatsapp_id'] ?? $chat->name,
+                'original_name' => $metadata['whatsapp_id'] ?? $chat->name,
                 'is_group' => $chat->is_group,
-                'participants' => $participants,
-                'metadata' => $chatModel->metadata,
-                'avatar_url' => $chatModel->avatar_url,
-                'contact_info' => $chatModel->contact_info,
-                'contact_info_updated_at' => $chatModel->contact_info_updated_at ?? null,
+                'participants' => $formattedParticipants,
+                'metadata' => $metadata,
+                'avatar_url' => $avatarUrl,
+                'contact_info' => $contactInfo,
+                'contact_info_updated_at' => $contactInfo['updated_at'] ?? null,
                 'updated_at' => $chat->updated_at,
                 'created_at' => $chat->created_at,
                 'description' => null,
@@ -120,6 +122,85 @@ class ChatService
         }
 
         return $formatted;
+    }
+
+    /**
+     * Load contacts by phone numbers to avoid N+1 queries.
+     */
+    private function loadContactsByPhone(int $userId, array $phoneNumbers): array
+    {
+        if (empty($phoneNumbers)) {
+            return [];
+        }
+
+        $contacts = \App\Models\Contact::where('user_id', $userId)
+            ->whereIn('phone', $phoneNumbers)
+            ->get();
+
+        $byPhone = [];
+        foreach ($contacts as $contact) {
+            $byPhone[$contact->phone] = $contact;
+        }
+
+        return $byPhone;
+    }
+
+    /**
+     * Get avatar URL for a chat without triggering model accessors.
+     */
+    private function getAvatarUrl($chat, array $metadata, array $participants): ?string
+    {
+        if ($chat->is_group) {
+            return $metadata['avatar_url'] ?? null;
+        }
+
+        // For direct chats, avatar comes from contact
+        $phoneNumber = $participants[0] ?? null;
+        if (!$phoneNumber) {
+            return null;
+        }
+
+        // Avatar will be set from contact_info
+        return null;
+    }
+
+    /**
+     * Get contact info without triggering model accessors.
+     */
+    private function getContactInfo($chat, array $metadata, array $participants, array $contactsByPhone): array
+    {
+        if ($chat->is_group) {
+            return [
+                'profile_picture_url' => $metadata['profile_picture_url'] ?? null,
+                'description' => $metadata['description'] ?? null,
+                'type' => 'group',
+            ];
+        }
+
+        $phoneNumber = $participants[0] ?? $metadata['whatsapp_id'] ?? null;
+        if (!$phoneNumber) {
+            return [
+                'profile_picture_url' => null,
+                'description' => null,
+                'type' => 'unknown',
+            ];
+        }
+
+        $contact = $contactsByPhone[$phoneNumber] ?? null;
+        if ($contact) {
+            return [
+                'profile_picture_url' => $contact->profile_picture_url,
+                'description' => $contact->bio,
+                'type' => 'contact',
+                'updated_at' => $contact->updated_at?->toIso8601String(),
+            ];
+        }
+
+        return [
+            'profile_picture_url' => null,
+            'description' => null,
+            'type' => 'unknown',
+        ];
     }
 
     /**
