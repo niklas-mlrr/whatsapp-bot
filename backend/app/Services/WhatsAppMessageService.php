@@ -1443,17 +1443,28 @@ class WhatsAppMessageService
         $message->update([
             'reactions' => empty($reactions) ? null : $reactions
         ]);
-        
-        // Skip broadcasting for now to prevent job failures
-        // TODO: Fix broadcasting configuration to enable real-time reaction updates
-        Log::channel('whatsapp')->info('Reaction saved successfully, broadcasting disabled', [
-            'message_id' => $message->id,
-            'chat_id' => $message->chat_id,
-            'user_id' => $data->sender_id,
-            'emoji' => $data->emoji ?? '',
-            'added' => !empty($data->emoji)
-        ]);
-        
+
+        // Broadcast reaction update via WebSocket
+        try {
+            $this->webSocketService->messageReactionUpdated(
+                $message,
+                $data->sender_id,
+                $data->emoji ?? ''
+            );
+            Log::channel('whatsapp')->info('Reaction broadcast completed', [
+                'message_id' => $message->id,
+                'chat_id' => $message->chat_id,
+                'user_id' => $data->sender_id,
+                'emoji' => $data->emoji ?? '',
+            ]);
+        } catch (\Exception $e) {
+            Log::channel('whatsapp')->error('Failed to broadcast reaction update', [
+                'error' => $e->getMessage(),
+                'message_id' => $message->id,
+                'chat_id' => $message->chat_id,
+            ]);
+        }
+
         // Return null because reactions don't create new messages
         return null;
     }

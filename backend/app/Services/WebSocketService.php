@@ -140,34 +140,53 @@ class WebSocketService
         }
     }
 
-    public function messageReactionUpdated(WhatsAppMessage $message, string $userId, ?string $reaction): void
+    public function messageReactionUpdated(WhatsAppMessage $message, int $userId, ?string $reaction, ?string $userName = null): void
     {
         try {
-            // Fetch user information for the reaction
+            // Fetch user information
             $user = \App\Models\User::find($userId);
-            $userName = null;
-            if ($user) {
-                // Prefer name if it's not a placeholder, otherwise use formatted phone
+
+            if ($userName === null && $user) {
                 if ($user->name && strtolower($user->name) !== 'whatsapp user') {
                     $userName = $user->name;
                 } elseif ($user->phone) {
-                    // Format phone number: remove domain and add + prefix
                     $phone = preg_replace('/@.*$/', '', $user->phone);
                     $userName = preg_match('/^\d+$/', $phone) ? '+' . $phone : $phone;
                 }
             }
-            
-            Broadcast::event('chat.' . $message->chat_id, 'message-reaction-updated', [
+
+            // Fallback to user ID if still no name
+            if ($userName === null) {
+                $userName = (string) $userId;
+            }
+
+            // Broadcast with event name matching frontend expectation (.message.reaction)
+            Broadcast::event('chat.' . $message->chat_id, '.message.reaction', [
                 'message_id' => $message->id,
+                'chat_id' => $message->chat_id,
+                'user' => [
+                    'id' => (string) $userId,
+                    'name' => $userName,
+                ],
+                'reaction' => $reaction,
+                'added' => !empty($reaction),
+                'timestamp' => now()->toIso8601String(),
+            ]);
+
+            Log::channel('whatsapp')->info('Reaction update broadcast sent', [
+                'message_id' => $message->id,
+                'chat_id' => $message->chat_id,
                 'user_id' => $userId,
                 'user_name' => $userName,
                 'reaction' => $reaction,
-                'event' => 'message-reaction-updated',
+                'event' => '.message.reaction',
             ]);
         } catch (\Exception $e) {
-            Log::error('Failed to send reaction update', [
+            Log::channel('whatsapp')->error('Failed to send reaction update', [
                 'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
                 'message_id' => $message->id,
+                'chat_id' => $message->chat_id,
             ]);
         }
     }
