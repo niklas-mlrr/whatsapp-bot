@@ -16,7 +16,7 @@ Route::get('/test-broadcast', function (Request $request) {
             $user = new User();
             $user->name = 'Test User';
             $user->email = 'test@example.com';
-            $user->password = bcrypt('password');
+            $user->password = bcrypt(env('TEST_USER_PASSWORD', \Illuminate\Support\Str::random(32)));
             $user->phone = '1234567890';
             $user->save();
         }

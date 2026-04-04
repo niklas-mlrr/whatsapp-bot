@@ -79,27 +79,29 @@ Route::match(['get', 'post'], '/register', function () {
     return redirect('/login');
 });
 
-// Include test routes
-$testRoutes = [
-    'test-routes.php',
-    'test-auth.php',
-    'test-connection.php',
-    'test-broadcast.php',
-    'test-event.php',
-    'test-websocket.php',
-    'test-bypass.php',
-    'websockets.php',
-    'test-trigger.php',
-    'test.php',
-    'test2.php',
-    'test3.php',
-    'db-test.php', // Include our test routes
-    'test-memory.php' // Include memory test routes
-];
+// Include test routes (only in local/development environment)
+if (app()->environment('local')) {
+    $testRoutes = [
+        'test-routes.php',
+        'test-auth.php',
+        'test-connection.php',
+        'test-broadcast.php',
+        'test-event.php',
+        'test-websocket.php',
+        'test-bypass.php',
+        'websockets.php',
+        'test-trigger.php',
+        'test.php',
+        'test2.php',
+        'test3.php',
+        'db-test.php',
+        'test-memory.php'
+    ];
 
-foreach ($testRoutes as $routeFile) {
-    $path = __DIR__ . '/' . $routeFile;
-    if (file_exists($path)) {
-        require $path;
+    foreach ($testRoutes as $routeFile) {
+        $path = __DIR__ . '/' . $routeFile;
+        if (file_exists($path)) {
+            require $path;
+        }
     }
 }

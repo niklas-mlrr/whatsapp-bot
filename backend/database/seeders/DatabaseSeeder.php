@@ -15,6 +15,14 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
+        // Get passwords from environment variables, with secure defaults for production
+        $defaultPassword = env('SEED_DEFAULT_PASSWORD', env('APP_KEY'));
+        $adminPassword = env('SEED_ADMIN_PASSWORD', env('APP_KEY'));
+
+        if (empty($defaultPassword) || empty($adminPassword)) {
+            $this->command->warn('Warning: No password configured for seed users. Set SEED_DEFAULT_PASSWORD and SEED_ADMIN_PASSWORD in .env');
+        }
+
         // Ensure a few baseline users exist
         $users = [
             ['name' => 'Test User', 'phone' => '+10000000001'],
@@ -27,17 +35,17 @@ class DatabaseSeeder extends Seeder
                 ['name' => $u['name']],
                 [
                     'phone' => $u['phone'],
-                    'password' => Hash::make('password'),
+                    'password' => Hash::make($defaultPassword),
                 ]
             );
         }
 
-        // Ensure an Admin user with known credentials exists
+        // Ensure an Admin user with configured credentials exists
         User::firstOrCreate(
             ['name' => 'Admin'],
             [
                 'phone' => '+10000000000',
-                'password' => Hash::make('admin123'),
+                'password' => Hash::make($adminPassword),
             ]
         );
 

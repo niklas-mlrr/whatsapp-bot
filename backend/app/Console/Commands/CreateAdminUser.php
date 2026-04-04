@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Hash;
 
 class CreateAdminUser extends Command
 {
-    protected $signature = 'user:create-admin {--name=Admin} {--phone=+10000000000} {--password=admin123}';
+    protected $signature = 'user:create-admin {--name=Admin} {--phone=+10000000000} {--password=}';
     protected $description = 'Create an admin user with specified credentials';
 
     public function handle()
@@ -16,6 +16,15 @@ class CreateAdminUser extends Command
         $name = $this->option('name');
         $phone = $this->option('phone');
         $password = $this->option('password');
+
+        // Require password to be provided
+        if (empty($password)) {
+            $password = $this->secret('Enter password for the admin user');
+            if (empty($password)) {
+                $this->error('Password is required.');
+                return 1;
+            }
+        }
 
         // Check if user already exists
         $existingUser = User::where('name', $name)->orWhere('phone', $phone)->first();
