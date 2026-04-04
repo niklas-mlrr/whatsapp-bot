@@ -188,7 +188,9 @@ async function handleMessages(sock, m) {
                         try {
                             // Already imported at top: recordLidToPhone
                             recordLidToPhone(resolvedSenderJid, msg.key.participantPn);
-                        } catch (_) {}
+                        } catch (err) {
+                            logger.debug({ error: err.message, senderJid: resolvedSenderJid }, 'Failed to record LID to phone mapping, continuing');
+                        }
                         resolvedSenderJid = msg.key.participantPn;
                     } else if (resolvedSenderJid.endsWith('@lid')) {
                         // Try contact store conversion as fallback
@@ -1003,13 +1005,17 @@ async function handleReactionMessage(sock, msg, remoteJid) {
             if (typeof pn === 'string' && pn.endsWith('@s.whatsapp.net')) {
                 try {
                     recordLidToPhone(senderJid, pn);
-                } catch (_) {}
+                } catch (err) {
+                    logger.debug({ error: err.message, senderJid }, 'Failed to record LID mapping, continuing');
+                }
                 senderJid = pn;
             } else {
                 try {
                     const converted = await convertLidToPhoneJid(sock, senderJid);
                     if (converted) senderJid = converted;
-                } catch (_) {}
+                } catch (err) {
+                    logger.debug({ error: err.message, senderJid }, 'LID conversion failed, using original JID');
+                }
             }
         }
 
