@@ -1,49 +1,8 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import apiClient from '@/services/api';
-
-// Import types from chat.service.ts
-type Message = {
-  id: string;
-  chat_id: string;
-  sender_id: string;
-  sender_phone?: string;
-  recipient_phone?: string;
-  content: string;
-  type: string;
-  status: string;
-  created_at: string;
-  updated_at: string;
-  read_by?: string[];
-  isSending?: boolean;
-  temp_id?: string;
-  isMe?: boolean;
-  isFailed?: boolean;
-  sender?: string;
-};
-
-type Chat = {
-  id: string;
-  name: string;
-  is_group: boolean;
-  created_at: string;
-  updated_at: string;
-  last_message?: string;
-  last_message_at?: string;
-  unread_count: number;
-  is_muted: boolean;
-  is_archived: boolean;
-  is_blocked: boolean;
-  participants: any[];
-  admin_ids?: string[];
-  metadata?: Record<string, any>;
-  avatar_url?: string;
-  description?: string;
-  isTyping?: boolean;
-  isSelected?: boolean;
-  isOnline?: boolean;
-  lastSeen?: string;
-};
+import type { Message } from '@/types/message';
+import type { Chat } from '@/types/chat';
 
 export const useChatStore = defineStore('chat', () => {
   // State

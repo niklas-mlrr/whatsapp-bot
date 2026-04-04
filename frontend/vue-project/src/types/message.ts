@@ -30,4 +30,8 @@ export interface Message {
     [emoji: string]: string[]; // user IDs who reacted with this emoji
   };
   metadata?: Record<string, any>;
+  // UI-only fields
+  isMe?: boolean;
+  isFailed?: boolean;
+  sender?: string;
 }
