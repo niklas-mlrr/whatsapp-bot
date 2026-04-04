@@ -185,25 +185,12 @@ class WhatsAppMessageController extends Controller
             // Send delete request to WhatsApp (delete for everyone)
             if ($whatsappMessageId) {
                 try {
-                    $receiverUrl = config('app.receiver_url', env('RECEIVER_URL', 'http://127.0.0.1:3000'));
-                    $receiverUrl = rtrim($receiverUrl, '/');
-                    
-                    $http = \Illuminate\Support\Facades\Http::timeout(10)
-                        ->withHeaders([
-                            'Accept' => 'application/json',
-                            'Content-Type' => 'application/json',
-                            'X-API-Key' => config('app.receiver_api_key', ''),
-                        ]);
-                    
-                    $isHttps = str_starts_with(strtolower($receiverUrl), 'https://');
-                    $allowInsecure = (bool) env('RECEIVER_TLS_INSECURE', false);
-                    if ($isHttps && $allowInsecure) {
-                        $http = $http->withoutVerifying();
-                    }
-                    
+                    $http = $this->getReceiverHttpClient();
+                    $receiverUrl = $this->getReceiverUrl();
+
                     // Get chat JID from message metadata
                     $chatJid = $message->metadata['chat'] ?? null;
-                    
+
                     $response = $http->post("{$receiverUrl}/delete-message", [
                         'messageId' => $whatsappMessageId,
                         'chatJid' => $chatJid,
@@ -273,31 +260,18 @@ class WhatsAppMessageController extends Controller
             // Send edit request to WhatsApp
             if ($whatsappMessageId) {
                 try {
-                    $receiverUrl = config('app.receiver_url', env('RECEIVER_URL', 'http://127.0.0.1:3000'));
-                    $receiverUrl = rtrim($receiverUrl, '/');
-                    
-                    $http = \Illuminate\Support\Facades\Http::timeout(10)
-                        ->withHeaders([
-                            'Accept' => 'application/json',
-                            'Content-Type' => 'application/json',
-                            'X-API-Key' => config('app.receiver_api_key', ''),
-                        ]);
-                    
-                    $isHttps = str_starts_with(strtolower($receiverUrl), 'https://');
-                    $allowInsecure = (bool) env('RECEIVER_TLS_INSECURE', false);
-                    if ($isHttps && $allowInsecure) {
-                        $http = $http->withoutVerifying();
-                    }
-                    
+                    $http = $this->getReceiverHttpClient();
+                    $receiverUrl = $this->getReceiverUrl();
+
                     // Get chat JID from message metadata
                     $chatJid = $message->metadata['chat'] ?? null;
-                    
+
                     $response = $http->post("{$receiverUrl}/edit-message", [
                         'messageId' => $whatsappMessageId,
                         'chatJid' => $chatJid,
                         'newContent' => $validated['content']
                     ]);
-                    
+
                     if (!$response->successful()) {
                         \Log::warning('Failed to edit message on WhatsApp', [
                             'message_id' => $whatsappMessageId,
@@ -648,7 +622,7 @@ class WhatsAppMessageController extends Controller
 
         // Send to receiver
         try {
-            $receiverUrl = config('app.receiver_url', env('RECEIVER_URL', 'http://127.0.0.1:3000'));
+            $receiverUrl = $this->getReceiverUrl();
 
             if (empty($receiverUrl)) {
                 \Log::error('Receiver URL is not configured.');
@@ -657,8 +631,7 @@ class WhatsAppMessageController extends Controller
                     'message' => 'Receiver URL not configured',
                 ], 500);
             }
-            $receiverUrl = rtrim($receiverUrl, '/');
-            
+
             \Log::info('Sending message to receiver', [
                 'receiver_url' => $receiverUrl,
                 'data' => $data
@@ -1585,30 +1558,17 @@ class WhatsAppMessageController extends Controller
         try {
             $chatJid = $message->chat->metadata['whatsapp_id'] ?? $message->chat;
             $pollMessageId = $message->metadata['message_id'] ?? null;
-            
+
             if ($chatJid && $pollMessageId) {
-                $receiverUrl = config('app.receiver_url', env('RECEIVER_URL', 'http://127.0.0.1:3000'));
-                $receiverUrl = rtrim($receiverUrl, '/');
-                
-                $http = \Illuminate\Support\Facades\Http::timeout(10)
-                    ->withHeaders([
-                        'Content-Type' => 'application/json',
-                        'Accept' => 'application/json',
-                        'X-API-Key' => config('app.receiver_api_key', ''),
-                    ]);
-                
-                $isHttps = str_starts_with(strtolower($receiverUrl), 'https://');
-                $allowInsecure = (bool) env('RECEIVER_TLS_INSECURE', false);
-                if ($isHttps && $allowInsecure) {
-                    $http = $http->withoutVerifying();
-                }
-                
+                $http = $this->getReceiverHttpClient();
+                $receiverUrl = $this->getReceiverUrl();
+
                 $response = $http->post("{$receiverUrl}/send-poll-vote", [
                     'chatJid' => $chatJid,
                     'pollMessageId' => $pollMessageId,
                     'selectedOptions' => [$optionIndex], // Array of selected option indices
                 ]);
-                
+
                 if ($response->successful()) {
                     \Log::info('Poll vote sent to WhatsApp successfully', [
                         'message_id' => $message->id,
@@ -1719,5 +1679,38 @@ class WhatsAppMessageController extends Controller
                 'sender' => $data['sender'] ?? null,
             ]);
         }
+    }
+
+    /**
+     * Create a configured HTTP client for the receiver service.
+     * Handles timeout, headers, and optional TLS verification.
+     */
+    private function getReceiverHttpClient(): \Illuminate\Http\Client\PendingRequest
+    {
+        $http = Http::timeout(10)
+            ->withHeaders([
+                'Accept' => 'application/json',
+                'Content-Type' => 'application/json',
+                'X-API-Key' => config('app.receiver_api_key', ''),
+            ]);
+
+        // Allow insecure TLS for self-signed certs in development
+        $receiverUrl = $this->getReceiverUrl();
+        $isHttps = str_starts_with(strtolower($receiverUrl), 'https://');
+        $allowInsecure = (bool) env('RECEIVER_TLS_INSECURE', false);
+
+        if ($isHttps && $allowInsecure) {
+            $http = $http->withoutVerifying();
+        }
+
+        return $http;
+    }
+
+    /**
+     * Get the configured receiver URL (trimmed of trailing slashes).
+     */
+    private function getReceiverUrl(): string
+    {
+        return rtrim(config('app.receiver_url', env('RECEIVER_URL', 'http://127.0.0.1:3000')), '/');
     }
 }

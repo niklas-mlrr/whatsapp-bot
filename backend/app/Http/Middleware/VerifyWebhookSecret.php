@@ -17,10 +17,19 @@ class VerifyWebhookSecret
     public function handle(Request $request, Closure $next): Response
     {
         $webhookSecret = config('app.webhook_secret');
-        
-        // If no webhook secret is configured, log a warning but allow the request
-        // This is for backward compatibility during migration
+
+        // If no webhook secret is configured
         if (empty($webhookSecret)) {
+            // In production, reject requests without a configured secret
+            if (app()->environment('production')) {
+                Log::error('SECURITY ERROR: No webhook secret configured in production. Set WEBHOOK_SECRET in .env');
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Server configuration error',
+                ], 500);
+            }
+
+            // In development, log a warning but allow the request
             Log::warning('SECURITY WARNING: No webhook secret configured. Set WEBHOOK_SECRET in .env');
             return $next($request);
         }

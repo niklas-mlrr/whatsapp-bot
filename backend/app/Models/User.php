@@ -8,7 +8,9 @@ use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
-// use App\Models\Chat;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use App\Models\Chat;
 use Illuminate\Support\Str;
 
 class User extends Authenticatable
@@ -78,19 +80,19 @@ class User extends Authenticatable
     /**
      * The chats that the user belongs to.
      */
-    public function chats()
+    public function chats(): BelongsToMany
     {
-        // Temporarily disabled to avoid circular dependency issues
-        return null;
+        return $this->belongsToMany(Chat::class, 'chat_user', 'user_id', 'chat_id')
+            ->withTimestamps()
+            ->withPivot(['role', 'joined_at', 'left_at']);
     }
 
     /**
      * The chats created by the user.
      */
-    public function createdChats()
+    public function createdChats(): HasMany
     {
-        // Temporarily disabled to avoid circular dependency issues
-        return null;
+        return $this->hasMany(Chat::class, 'created_by');
     }
 
     /**
@@ -136,15 +138,29 @@ class User extends Authenticatable
         
         // Fall back to the first user in the database
         $user = static::first();
-        
+
         // If no user exists at all, create a default admin user
+        // Password must be set via INITIAL_ADMIN_PASSWORD env variable
+        // If not set, generate a random password and log it
         if (!$user) {
+            $adminPassword = env('INITIAL_ADMIN_PASSWORD');
+
+            if (empty($adminPassword)) {
+                // Generate a secure random password if none provided
+                $adminPassword = Str::random(24);
+                \Illuminate\Support\Facades\Log::info('Initial admin user created', [
+                    'password' => $adminPassword,
+                    'note' => 'Store this password securely or set INITIAL_ADMIN_PASSWORD in .env'
+                ]);
+            }
+
             $user = static::create([
                 'name' => 'Admin',
-                'password' => Hash::make('admin123'),
+                'password' => Hash::make($adminPassword),
+                'phone' => '+0000000000',
             ]);
         }
-        
+
         return $user;
     }
 }

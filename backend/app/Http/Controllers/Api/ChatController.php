@@ -5,36 +5,17 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Chat;
 use App\Models\User;
+use App\Services\ChatService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class ChatController extends Controller
 {
-    public function __construct()
-    {
-        // Middleware is applied in routes/api.php
-    }
+    protected ChatService $chatService;
 
-    /**
-     * Format WhatsApp JID to display phone number
-     * Converts "4917646765869@s.whatsapp.net" to "+4917646765869"
-     */
-    private function formatPhoneNumberForDisplay(string $jid): string
+    public function __construct(ChatService $chatService)
     {
-        if (str_contains($jid, '@') && !str_ends_with($jid, '@s.whatsapp.net')) {
-            return $jid;
-        }
-        
-        // Extract phone number from JID (remove @s.whatsapp.net or similar)
-        $phoneNumber = preg_replace('/@.*$/', '', $jid);
-        
-        // Add + prefix if it's a phone number (contains only digits)
-        if (preg_match('/^\d+$/', $phoneNumber)) {
-            return '+' . $phoneNumber;
-        }
-        
-        // Return as-is if it's not a phone number format
-        return $jid;
+        $this->chatService = $chatService;
     }
 
     /**
@@ -43,163 +24,18 @@ class ChatController extends Controller
     public function index(Request $request)
     {
         try {
-            // Prefer the authenticated user; if unavailable, use the single app user
-            $authUser = $request->user();
-            $user = $authUser ?: \App\Models\User::getFirstUser();
+            $user = $request->user() ?: User::getFirstUser();
+            $chats = $this->chatService->getChatsForUser($user);
 
-            // Helper to fetch chats for a given user id
-            $fetchChatsForUser = function($userId) {
-                $likePattern = '%"' . $userId . '"%';
-                return DB::select("
-                SELECT 
-                    c.id, 
-                    c.name, 
-                    c.is_group, 
-                    c.updated_at,
-                    c.created_at,
-                    c.is_archived,
-                    c.is_muted,
-                    c.pending_approval,
-                    c.metadata,
-                    c.type,
-                    c.unread_count,
-                    c.participants,
-                    c.created_by
-                FROM chats c
-                LEFT JOIN chat_user cu ON c.id = cu.chat_id AND cu.user_id = ?
-                WHERE (
-                    cu.user_id = ?
-                    OR c.created_by = ?
-                    OR (c.participants IS NOT NULL AND c.participants LIKE ?)
-                )
-                AND (c.is_archived = 0 OR c.is_archived IS NULL)
-                ORDER BY c.updated_at DESC
-            ", [$userId, $userId, $userId, $likePattern]);
-            };
-
-            // Attempt with current user
-            $chats = $fetchChatsForUser($user->id);
-
-            // If none found, fallback to any user with memberships
-            if (count($chats) === 0) {
-                $fallback = DB::select("SELECT user_id FROM chat_user GROUP BY user_id ORDER BY MIN(created_at) ASC LIMIT 1");
-                if (!empty($fallback)) {
-                    $fallbackUserId = $fallback[0]->user_id;
-                    $chats = $fetchChatsForUser($fallbackUserId);
-                    // Update $user reference for logging/formatting context
-                    $user = \App\Models\User::find($fallbackUserId) ?: $user;
-                }
-            }
-            
             \Log::info('Chats fetched for user', [
                 'user_id' => $user->id,
                 'chats_count' => count($chats),
-                'chats' => $chats
             ]);
-            
-            $formattedChats = [];
-            foreach ($chats as $chat) {
-                // Create a Chat model instance to access computed attributes
-                $chatModel = new \App\Models\Chat();
-                $chatModel->forceFill([
-                    'id' => $chat->id,
-                    'name' => $chat->name,
-                    'is_group' => $chat->is_group,
-                    'type' => $chat->type,
-                    'unread_count' => $chat->unread_count,
-                    'participants' => json_decode($chat->participants, true) ?? [],
-                    'metadata' => json_decode($chat->metadata, true) ?? [],
-                    'is_archived' => $chat->is_archived,
-                    'is_muted' => $chat->is_muted,
-                    'created_by' => $chat->created_by,
-                    'created_at' => $chat->created_at,
-                    'updated_at' => $chat->updated_at,
-                ]);
-                
-                // Format display name for phone numbers
-                $displayName = $chat->name;
-                $metadata = json_decode($chat->metadata, true) ?? [];
-                
-                // If this chat has a whatsapp_id in metadata and the name equals the whatsapp_id,
-                // it means it's an auto-generated name from the JID, so format it nicely
-                if (isset($metadata['whatsapp_id']) && $chat->name === $metadata['whatsapp_id']) {
-                    $displayName = $this->formatPhoneNumberForDisplay($chat->name);
-                }
-                
-                // Parse participants array and clean it for display
-                $participants = json_decode($chat->participants, true) ?? [];
-                $cleanParticipants = [];
-                foreach ($participants as $participant) {
-                    if (!is_string($participant)) {
-                        continue;
-                    }
-
-                    $participantLower = strtolower($participant);
-                    if (str_contains($participantLower, 'promise') || str_contains($participantLower, '[object')) {
-                        continue;
-                    }
-
-                    if ($participant === 'me') {
-                        $cleanParticipants[] = 'me';
-                    } else {
-                        // Remove @s.whatsapp.net suffix for cleaner display
-                        $cleanParticipants[] = preg_replace('/@.*$/', '', $participant);
-                    }
-                }
-                
-                // Get last message preview for pending chats
-                $lastMessagePreview = null;
-                if ($chat->pending_approval) {
-                    $lastMsg = DB::selectOne("
-                        SELECT content, type, created_at 
-                        FROM whatsapp_messages 
-                        WHERE chat_id = ? 
-                        ORDER BY created_at DESC 
-                        LIMIT 1
-                    ", [$chat->id]);
-                    
-                    if ($lastMsg) {
-                        $preview = $lastMsg->content;
-                        if ($lastMsg->type !== 'text') {
-                            $preview = ucfirst($lastMsg->type); // e.g., "Image", "Video", "Document"
-                        }
-                        // Truncate to 50 characters
-                        if (strlen($preview) > 50) {
-                            $preview = substr($preview, 0, 50) . '...';
-                        }
-                        $lastMessagePreview = $preview;
-                    }
-                }
-                
-                $formattedChats[] = [
-                    'id' => $chat->id,
-                    'name' => $displayName, // Use formatted display name
-                    'original_name' => isset($metadata['whatsapp_id']) ? $metadata['whatsapp_id'] : $chat->name, // Full JID for technical operations
-                    'is_group' => $chat->is_group,
-                    'participants' => $cleanParticipants, // Clean phone numbers without @s.whatsapp.net
-                    'metadata' => $metadata,
-                    'avatar_url' => $chatModel->avatar_url,
-                    // Expose contact info (profile picture + bio/description) to frontend
-                    'contact_info' => $chatModel->contact_info,
-                    'contact_info_updated_at' => $chatModel->contact_info_updated_at,
-                    'updated_at' => $chat->updated_at,
-                    'created_at' => $chat->created_at,
-                    // Legacy field kept for backward compatibility; prefer contact_info.description/bio
-                    'description' => null,
-                    'is_archived' => $chat->is_archived,
-                    'is_muted' => $chat->is_muted,
-                    'pending_approval' => (bool)($chat->pending_approval ?? false),
-                    'unread_count' => $chat->unread_count,
-                    'users' => [],
-                    'last_message' => null,
-                    'last_message_preview' => $lastMessagePreview
-                ];
-            }
 
             return response()->json([
-                'data' => $formattedChats,
-                'total' => count($formattedChats),
-                'per_page' => count($formattedChats),
+                'data' => $chats,
+                'total' => count($chats),
+                'per_page' => count($chats),
                 'current_page' => 1,
                 'last_page' => 1
             ]);
@@ -208,7 +44,7 @@ class ChatController extends Controller
                 'user_id' => $request->user()->id ?? 'unknown',
                 'trace' => $e->getTraceAsString()
             ]);
-            
+
             return response()->json([
                 'error' => 'Failed to fetch chats',
                 'message' => $e->getMessage()

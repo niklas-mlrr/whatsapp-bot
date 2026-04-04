@@ -11,6 +11,197 @@ use Illuminate\Support\Str;
 class ChatService
 {
     /**
+     * Get all chats for a user with formatted data.
+     */
+    public function getChatsForUser(?User $user): array
+    {
+        if (!$user) {
+            $user = User::getFirstUser();
+        }
+
+        $chats = $this->fetchChatsForUserId($user->id);
+
+        // If no chats found, try fallback user
+        if (count($chats) === 0) {
+            $fallback = DB::select("SELECT user_id FROM chat_user GROUP BY user_id ORDER BY MIN(created_at) ASC LIMIT 1");
+            if (!empty($fallback)) {
+                $fallbackUserId = $fallback[0]->user_id;
+                $user = User::find($fallbackUserId) ?: $user;
+                $chats = $this->fetchChatsForUserId($fallbackUserId);
+            }
+        }
+
+        return $this->formatChats($chats, $user);
+    }
+
+    /**
+     * Fetch chats for a specific user ID.
+     */
+    private function fetchChatsForUserId(int $userId): array
+    {
+        $likePattern = '%"' . $userId . '"%';
+
+        return DB::select("
+            SELECT
+                c.id,
+                c.name,
+                c.is_group,
+                c.updated_at,
+                c.created_at,
+                c.is_archived,
+                c.is_muted,
+                c.pending_approval,
+                c.metadata,
+                c.type,
+                c.unread_count,
+                c.participants,
+                c.created_by
+            FROM chats c
+            LEFT JOIN chat_user cu ON c.id = cu.chat_id AND cu.user_id = ?
+            WHERE (
+                cu.user_id = ?
+                OR c.created_by = ?
+                OR (c.participants IS NOT NULL AND c.participants LIKE ?)
+            )
+            AND (c.is_archived = 0 OR c.is_archived IS NULL)
+            ORDER BY c.updated_at DESC
+        ", [$userId, $userId, $userId, $likePattern]);
+    }
+
+    /**
+     * Format chats for API response.
+     */
+    private function formatChats(array $chats, User $user): array
+    {
+        $formatted = [];
+
+        foreach ($chats as $chat) {
+            $chatModel = new Chat();
+            $chatModel->forceFill([
+                'id' => $chat->id,
+                'name' => $chat->name,
+                'is_group' => $chat->is_group,
+                'type' => $chat->type,
+                'unread_count' => $chat->unread_count,
+                'participants' => json_decode($chat->participants, true) ?? [],
+                'metadata' => json_decode($chat->metadata, true) ?? [],
+                'is_archived' => $chat->is_archived,
+                'is_muted' => $chat->is_muted,
+                'created_by' => $chat->created_by,
+                'created_at' => $chat->created_at,
+                'updated_at' => $chat->updated_at,
+            ]);
+
+            $displayName = $this->formatDisplayName($chat->name, json_decode($chat->metadata, true) ?? []);
+            $participants = $this->formatParticipants(json_decode($chat->participants, true) ?? []);
+            $lastMessagePreview = $this->getLastMessagePreview($chat);
+
+            $formatted[] = [
+                'id' => $chat->id,
+                'name' => $displayName,
+                'original_name' => $chatModel->metadata['whatsapp_id'] ?? $chat->name,
+                'is_group' => $chat->is_group,
+                'participants' => $participants,
+                'metadata' => $chatModel->metadata,
+                'avatar_url' => $chatModel->avatar_url,
+                'contact_info' => $chatModel->contact_info,
+                'contact_info_updated_at' => $chatModel->contact_info_updated_at ?? null,
+                'updated_at' => $chat->updated_at,
+                'created_at' => $chat->created_at,
+                'description' => null,
+                'is_archived' => $chat->is_archived,
+                'is_muted' => $chat->is_muted,
+                'pending_approval' => (bool)($chat->pending_approval ?? false),
+                'unread_count' => $chat->unread_count,
+                'users' => [],
+                'last_message' => null,
+                'last_message_preview' => $lastMessagePreview,
+            ];
+        }
+
+        return $formatted;
+    }
+
+    /**
+     * Format display name for a chat.
+     */
+    private function formatDisplayName(string $name, array $metadata): string
+    {
+        if (isset($metadata['whatsapp_id']) && $name === $metadata['whatsapp_id']) {
+            return $this->formatPhoneNumberForDisplay($name);
+        }
+        return $name;
+    }
+
+    /**
+     * Format WhatsApp JID to display phone number.
+     */
+    private function formatPhoneNumberForDisplay(string $jid): string
+    {
+        if (!str_contains($jid, '@') || str_ends_with($jid, '@s.whatsapp.net')) {
+            $phoneNumber = preg_replace('/@.*$/', '', $jid);
+            if (preg_match('/^\d+$/', $phoneNumber)) {
+                return '+' . $phoneNumber;
+            }
+        }
+        return $jid;
+    }
+
+    /**
+     * Format and clean participants list.
+     */
+    private function formatParticipants(array $participants): array
+    {
+        $clean = [];
+        foreach ($participants as $participant) {
+            if (!is_string($participant)) {
+                continue;
+            }
+
+            $participantLower = strtolower($participant);
+            if (str_contains($participantLower, 'promise') || str_contains($participantLower, '[object')) {
+                continue;
+            }
+
+            if ($participant === 'me') {
+                $clean[] = 'me';
+            } else {
+                $clean[] = preg_replace('/@.*$/', '', $participant);
+            }
+        }
+        return $clean;
+    }
+
+    /**
+     * Get last message preview for pending chats.
+     */
+    private function getLastMessagePreview($chat): ?string
+    {
+        if (!$chat->pending_approval) {
+            return null;
+        }
+
+        $lastMsg = DB::selectOne("
+            SELECT content, type, created_at
+            FROM whatsapp_messages
+            WHERE chat_id = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+        ", [$chat->id]);
+
+        if (!$lastMsg) {
+            return null;
+        }
+
+        $preview = $lastMsg->content;
+        if ($lastMsg->type !== 'text') {
+            $preview = ucfirst($lastMsg->type);
+        }
+
+        return strlen($preview) > 50 ? substr($preview, 0, 50) . '...' : $preview;
+    }
+
+    /**
      * Create a new direct chat between two users.
      */
     public function createDirectChat(string $user1Id, string $user2Id): Chat

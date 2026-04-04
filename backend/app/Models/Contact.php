@@ -61,23 +61,15 @@ class Contact extends Model
 
     /**
      * Get the chat associated with this contact (if any).
+     * Optimized to use a single query instead of loading all chats.
      */
     public function chat()
     {
-        // Find a direct chat where this contact's phone is a participant
+        $phoneNumber = preg_replace('/@.*$/', '', $this->phone);
+
         return Chat::where('is_group', false)
-            ->get()
-            ->first(function($chat) {
-                $phoneNumber = preg_replace('/@.*$/', '', $this->phone);
-                $metadata = is_string($chat->metadata) ? json_decode($chat->metadata, true) : $chat->metadata;
-                
-                if (!$metadata || !isset($metadata['whatsapp_id'])) {
-                    return false;
-                }
-                
-                $storedPhone = preg_replace('/@.*$/', '', $metadata['whatsapp_id']);
-                return $storedPhone === $phoneNumber;
-            });
+            ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.whatsapp_id')) LIKE ?", ["%{$phoneNumber}%"])
+            ->first();
     }
 
     /**
