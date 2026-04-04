@@ -62,11 +62,22 @@ type MessageDeletedEvent = {
   deleted_at: string;
 };
 
+type PollVote = {
+  user_id: string;
+  option_index: number;
+  voted_at?: string;
+};
+
+type PollData = {
+  selectableOptionsCount?: number;
+  options?: Array<{ optionName: string }>;
+};
+
 type PollUpdateEvent = {
   message_id: string;
   chat_id: string;
-  poll_votes: any[];
-  metadata: any;
+  poll_votes: PollVote[];
+  metadata: PollData;
 };
 
 type ContactUpdateEvent = {
@@ -105,7 +116,7 @@ const pollUpdateCallbacks: Map<string, Set<(event: PollUpdateEvent) => void>> = 
 const contactUpdateCallbacks: Set<(event: ContactUpdateEvent) => void> = new Set();
 
 // Cache for private channels per chat to avoid re-subscribing
-const privateChannels: Map<string, any> = new Map();
+const privateChannels: Map<string, ReturnType<Echo<'reverb'>['private']>> = new Map();
 
 // Track which event listeners have been set up for each channel
 const channelListenersSetup: Map<string, Set<string>> = new Map();

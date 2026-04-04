@@ -9,7 +9,13 @@ A full-stack WhatsApp bot dashboard that allows receiving and sending WhatsApp m
 ├── backend/               # Laravel backend
 ├── frontend/              # Vue 3 frontend
 ├── receiver/              # Node.js WhatsApp client
-├── ENV_EXAMPLE.md         # Environment variables documentation
+├── docs/                  # Documentation
+│   ├── DEPLOYMENT.md      # Production deployment guide
+│   ├── ENVIRONMENT.md     # Environment variables
+│   ├── SECURITY.md        # Security implementation details
+│   ├── WEBSOCKET.md       # WebSocket setup
+│   ├── QUEUE.md           # Queue/worker setup
+│   └── archive/           # Historical documentation
 └── README.md              # This file
 ```
 
@@ -59,7 +65,7 @@ A full-stack WhatsApp bot dashboard that allows receiving and sending WhatsApp m
 
 ## Environment Configuration
 
-See [ENV_EXAMPLE.md](ENV_EXAMPLE.md) for detailed environment variable configuration.
+See [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md) for detailed environment variable configuration.
 
 ## Logging
 
@@ -78,16 +84,15 @@ See [ENV_EXAMPLE.md](ENV_EXAMPLE.md) for detailed environment variable configura
 
 ## Deployment
 
-### Production Deployment
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for comprehensive production deployment instructions.
+
+### Quick Start
 1. Set up a production database
 2. Configure environment variables in `.env` files
 3. Run database migrations
 4. Build the frontend assets
 5. Set up a process manager (PM2, systemd, etc.) for the receiver
 6. Configure a reverse proxy (Nginx, Apache) for the backend and frontend
-
-### Containerization (Docker)
-Docker support can be added by creating appropriate `Dockerfile` and `docker-compose.yml` files.
 
 ## Security
 
@@ -101,14 +106,14 @@ Docker support can be added by creating appropriate `Dockerfile` and `docker-com
    ```powershell
    # Windows
    .\generate-secrets.ps1
-   
+
    # Linux/Mac
    bash generate-secrets.sh
    ```
 
 2. **Review Security Documentation**:
-   - Read [SECURITY_FIXES_SUMMARY.md](SECURITY_FIXES_SUMMARY.md) for all security improvements
-   - Follow [PRODUCTION_DEPLOYMENT_GUIDE.md](PRODUCTION_DEPLOYMENT_GUIDE.md) step-by-step
+   - Read [docs/SECURITY.md](docs/SECURITY.md) for security implementation details
+   - Follow [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) step-by-step
 
 3. **Critical Configuration**:
    - Set `APP_DEBUG=false` in backend `.env`
@@ -119,14 +124,14 @@ Docker support can be added by creating appropriate `Dockerfile` and `docker-com
 
 ### Security Features Implemented
 
-✅ **Webhook Authentication** - Prevents unauthorized message injection  
-✅ **API Key Protection** - Secures receiver service endpoints  
-✅ **Input Sanitization** - Prevents XSS and injection attacks  
-✅ **CORS Configuration** - Restricts cross-origin requests  
-✅ **Rate Limiting** - Protects against brute force and DDoS  
-✅ **File Upload Validation** - Prevents malicious file uploads  
-✅ **SQL Injection Prevention** - Uses parameterized queries  
-✅ **HTTPS/TLS Support** - Encrypted communications  
+✅ **Webhook Authentication** - Prevents unauthorized message injection
+✅ **API Key Protection** - Secures receiver service endpoints
+✅ **Input Sanitization** - Prevents XSS and injection attacks
+✅ **CORS Configuration** - Restricts cross-origin requests
+✅ **Rate Limiting** - Protects against brute force and DDoS
+✅ **File Upload Validation** - Prevents malicious file uploads
+✅ **SQL Injection Prevention** - Uses parameterized queries
+✅ **HTTPS/TLS Support** - Encrypted communications
 
 ### Security Checklist
 
@@ -143,7 +148,11 @@ Before going live, ensure:
 - [ ] Logs monitored
 - [ ] Backups configured
 
-See [PRODUCTION_DEPLOYMENT_GUIDE.md](PRODUCTION_DEPLOYMENT_GUIDE.md) for complete details.
+## Additional Documentation
+
+- [WebSocket Setup](docs/WEBSOCKET.md) - Real-time messaging configuration
+- [Queue/Worker Setup](docs/QUEUE.md) - Background job processing
+- [Security Details](docs/SECURITY.md) - Security implementation overview
 
 ## License
 
