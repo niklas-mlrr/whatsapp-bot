@@ -15,10 +15,22 @@
     "pino": "^10.0.0",
     "pino-pretty": "^10.2.3"
   },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js"
   },
   "engines": {
     "node": ">=20.0.0"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/__tests__/**/*.test.js",
+      "**/*.test.js"
+    ],
+    "transform": {}
   }
 }
