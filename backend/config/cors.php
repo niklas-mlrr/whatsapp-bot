@@ -9,7 +9,7 @@ return [
     'allowed_origins' => explode(',', env('CORS_ALLOWED_ORIGINS', '*')),
     
     'allowed_origins_patterns' => [],
-    'allowed_headers' => ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+    'allowed_headers' => ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'X-CSRF-TOKEN', 'X-Socket-ID'],
     'exposed_headers' => [],
     'max_age' => 3600,
     'supports_credentials' => true,

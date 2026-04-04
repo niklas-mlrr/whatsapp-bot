@@ -1,753 +1,592 @@
-import { ref, onUnmounted, type Ref } from 'vue';
+/**
+ * Unified WebSocket service using Laravel Echo
+ * Consolidates connection management and chat operations.
+ */
+
 import Echo from 'laravel-echo';
-import type { EchoOptions } from 'laravel-echo';
 import Pusher from 'pusher-js';
-import axios from 'axios';
-import { useAuthStore } from '@/stores/auth';
+import { ref, onUnmounted, type Ref } from 'vue';
 import { websocketConfig } from '@/config/websocket';
-
-// Type definitions for our WebSocket events
-type MessageEvent = {
-  id: string;
-  chat_id: string;
-  user_id: string;
-  content: string;
-  created_at: string;
-  updated_at: string;
-  status?: 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
-};
-
-type TypingEvent = {
-  user_id: string;
-  is_typing: boolean;
-  chat_id: string;
-};
-
-type ReadReceiptEvent = {
-  message_id: string;
-  user_id: string;
-  chat_id: string;
-};
-
-type ReactionEvent = {
-  message_id: string;
-  user: {
-    id: string;
-    name: string;
-  };
-  reaction: string;
-  added: boolean;
-  chat_id: string;
-};
-
-type MessageEditedEvent = {
-  message_id: string;
-  chat_id: string;
-  content: string;
-  edited_at: string;
-  user: {
-    id: string;
-    name: string;
-  };
-};
-
-type MessageDeletedEvent = {
-  message_id: string;
-  chat_id: string;
-  user: {
-    id: string;
-    name: string;
-  };
-  for_everyone: boolean;
-  deleted_at: string;
-};
-
-type PollVote = {
-  user_id: string;
-  option_index: number;
-  voted_at?: string;
-};
-
-type PollData = {
-  selectableOptionsCount?: number;
-  options?: Array<{ optionName: string }>;
-};
-
-type PollUpdateEvent = {
-  message_id: string;
-  chat_id: string;
-  poll_votes: PollVote[];
-  metadata: PollData;
-};
-
-type ContactUpdateEvent = {
-  contact: {
-    id: number;
-    phone: string;
-    name: string;
-    profile_picture_url: string | null;
-    bio: string | null;
-    updated_at: string;
-  };
-};
-
-// Extended Window interface for Pusher and Echo
-declare global {
-  interface Window {
-    Pusher: any;
-    Echo: any;
-  }
-}
+import type { MessageEvent, TypingEvent, ReadReceiptEvent, EchoInstance, PrivateChannel } from '@/types';
 
 // Make Pusher available globally for Laravel Echo
-if (!window.Pusher) {
+if (typeof window !== 'undefined' && !window.Pusher) {
   window.Pusher = Pusher;
 }
 
-// Local registries for callbacks and channels
-// Maps chatId -> Set of callbacks for each event type
-const messageCallbacks: Map<string, Set<(message: MessageEvent) => void>> = new Map();
-const typingCallbacks: Map<string, Set<(event: TypingEvent) => void>> = new Map();
-const readReceiptCallbacks: Map<string, Set<(event: ReadReceiptEvent) => void>> = new Map();
-const reactionCallbacks: Map<string, Set<(event: ReactionEvent) => void>> = new Map();
-const messageEditedCallbacks: Map<string, Set<(event: MessageEditedEvent) => void>> = new Map();
-const messageDeletedCallbacks: Map<string, Set<(event: MessageDeletedEvent) => void>> = new Map();
-const pollUpdateCallbacks: Map<string, Set<(event: PollUpdateEvent) => void>> = new Map();
-const contactUpdateCallbacks: Set<(event: ContactUpdateEvent) => void> = new Set();
+// Singleton state
+let echoInstance: EchoInstance | null = null;
+const isConnected: Ref<boolean> = ref(false);
+const socketId: Ref<string | null> = ref(null);
 
-// Cache for private channels per chat to avoid re-subscribing
-const privateChannels: Map<string, ReturnType<Echo<'reverb'>['private']>> = new Map();
+// Channel tracking
+const activeChannels = new Set<string>();
+const messageCallbacks = new Map<string, (message: MessageEvent) => void>();
+const typingCallbacks = new Map<string, (data: TypingEvent) => void>();
+const readReceiptCallbacks = new Map<string, (data: ReadReceiptEvent) => void>();
+const connectionCallbacks = new Set<() => void>();
 
-// Track which event listeners have been set up for each channel
-const channelListenersSetup: Map<string, Set<string>> = new Map();
+// Callback types for additional events
+type ReactionEvent = {
+  message_id: string;
+  chat_id: string;
+  user: { id: string; name: string; avatar_url?: string };
+  reaction: string;
+  added: boolean;
+  timestamp: string;
+};
+type MessageEditedCallback = (message: MessageEvent) => void;
+type MessageDeletedCallback = (messageId: string) => void;
+type PollUpdateCallback = (pollId: string, votes: unknown[]) => void;
 
-// Type for our WebSocket service return value
-export interface WebSocketService {
-  isConnected: boolean;
-  socketId: string | null;
-  connect(): Promise<boolean>;
-  disconnect(): void;
-  listenForNewMessages(chatId: string, callback: (message: MessageEvent) => void): () => void;
-  listenForTyping(chatId: string, callback: (event: TypingEvent) => void): () => void;
-  listenForReadReceipts(chatId: string, callback: (event: ReadReceiptEvent) => void): () => void;
-  listenForReactionUpdates(chatId: string, callback: (event: ReactionEvent) => void): () => void;
-  listenForMessageEdited(chatId: string, callback: (event: MessageEditedEvent) => void): () => void;
-  listenForMessageDeleted(chatId: string, callback: (event: MessageDeletedEvent) => void): () => void;
-  listenForPollUpdates(chatId: string, callback: (event: PollUpdateEvent) => void): () => void;
-  listenForContactUpdates(callback: (event: ContactUpdateEvent) => void): () => void;
-  notifyTyping(chatId: string, isTyping: boolean): Promise<void>;
-  markAsRead(chatId: string, messageIds: string[]): Promise<void>;
-  getSocketId(): string | null;
+const reactionCallbacks = new Map<string, (event: unknown) => void>();
+const messageEditedCallbacks = new Map<string, MessageEditedCallback>();
+const messageDeletedCallbacks = new Map<string, MessageDeletedCallback>();
+const pollUpdateCallbacks = new Map<string, PollUpdateCallback>();
+
+/**
+ * Initialize the Echo instance and connect to WebSocket server.
+ */
+async function initEcho(): Promise<EchoInstance | null> {
+  if (echoInstance) {
+    return echoInstance;
+  }
+
+  // Get authentication token
+  const token = localStorage.getItem('token');
+  if (!token) {
+    console.error('No authentication token found');
+    return null;
+  }
+
+  try {
+    const echo = new Echo({
+      broadcaster: websocketConfig.broadcaster,
+      key: websocketConfig.key,
+      wsHost: websocketConfig.wsHost,
+      wsPort: websocketConfig.wsPort,
+      wssPort: websocketConfig.wssPort,
+      forceTLS: websocketConfig.forceTLS,
+      enabledTransports: [...websocketConfig.enabledTransports] as ('ws' | 'wss')[],
+      disableStats: websocketConfig.disableStats,
+      cluster: websocketConfig.cluster,
+      auth: {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'X-CSRF-TOKEN': document.head.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
+        },
+      },
+      authEndpoint: websocketConfig.authEndpoint,
+    }) as unknown as EchoInstance;
+
+    echoInstance = echo;
+
+    // Set up connection state handling
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pusher = (echo as unknown as { connector: { pusher: { connection: { bind: (event: string, cb: (...args: unknown[]) => void) => void; socket_id: string } } } }).connector.pusher;
+
+    pusher.connection.bind('connected', () => {
+      isConnected.value = true;
+      socketId.value = pusher.connection.socket_id;
+      connectionCallbacks.forEach(callback => {
+        try {
+          callback();
+        } catch (error) {
+          console.error('Error in connection callback:', error);
+        }
+      });
+    });
+
+    pusher.connection.bind('disconnected', () => {
+      isConnected.value = false;
+      socketId.value = null;
+    });
+
+    pusher.connection.bind('error', (error: unknown) => {
+      console.error('WebSocket error:', error);
+      isConnected.value = false;
+    });
+
+    return echo;
+  } catch (error) {
+    console.error('Failed to initialize WebSocket connection:', error);
+    isConnected.value = false;
+    return null;
+  }
 }
 
-// Initialize Echo instance
-let echo: Echo<any> | null = null;
-
-export function useWebSocket() {
-  const isConnected = ref(false);
-  const socketId = ref<string | null>(null);
-  const authStore = useAuthStore();
-  let retryTimeoutId: number | null = null;
-
-  const getConnectionDebugInfo = () => {
-    const wsScheme = websocketConfig.forceTLS ? 'wss' : 'ws';
-    const port = websocketConfig.forceTLS ? websocketConfig.wssPort : websocketConfig.wsPort;
-    const host = websocketConfig.wsHost;
-    const key = websocketConfig.key;
-    const authEndpoint = websocketConfig.authEndpoint;
-    return {
-      wsScheme,
-      host,
-      port,
-      key,
-      authEndpoint,
-      url: `${wsScheme}://${host}:${port}`,
-    };
-  };
-
-  const formatPusherError = (error: any) => {
-    const base: Record<string, any> = {
-      message: error?.message,
-      type: error?.type,
-    };
-
-    if (error?.error) {
-      base.error = {
-        type: error.error.type,
-        data: error.error.data,
-        code: error.error.code,
-        message: error.error.message,
-      };
+/**
+ * Connect to WebSocket server.
+ */
+async function connect(): Promise<boolean> {
+  try {
+    if (!echoInstance) {
+      echoInstance = await initEcho();
     }
 
-    if (error?.data) {
-      base.data = error.data;
+    if (!isConnected.value && echoInstance) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (echoInstance as unknown as { connector: { pusher: { connection: { connect: () => void } } } }).connector.pusher.connection.connect();
+      isConnected.value = true;
     }
 
-    return base;
-  };
-
-  // Connect to WebSocket server
-  const connect = async (retryCount = 0, maxRetries = 3): Promise<boolean> => {
-    try {
-      if (echo) {
-        echo.disconnect();
-      }
-
-      const token = authStore.token;
-      if (!token) {
-        console.error('No authentication token available');
-        return false;
-      }
-
-      const connectionInfo = getConnectionDebugInfo();
-      console.info('WebSocket connecting with config:', connectionInfo);
-
-      echo = new Echo<'reverb'>({
-        ...websocketConfig,
-        // make enabledTransports mutable to match type expectations
-        enabledTransports: ['ws', 'wss'],
-        auth: {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        },
-      } as any);
-
-      // Wait for connection with timeout
-      await new Promise<void>((resolve, reject) => {
-        if (!echo) return reject('Echo not initialized');
-
-        const timeoutId = setTimeout(() => {
-          reject(new Error('WebSocket connection timeout'));
-        }, 10000); // 10 second timeout
-
-        echo.connector.pusher.connection.bind('connected', () => {
-          clearTimeout(timeoutId);
-          isConnected.value = true;
-          socketId.value = echo?.socketId() || null;
-          resolve();
-        });
-
-        echo.connector.pusher.connection.bind('error', (error: any) => {
-          clearTimeout(timeoutId);
-          console.error('WebSocket connection error:', {
-            connectionInfo,
-            error: formatPusherError(error),
-          });
-          reject(error);
-        });
-
-        echo.connector.pusher.connection.bind('unavailable', () => {
-          clearTimeout(timeoutId);
-          console.warn('WebSocket connection unavailable - server may not be running');
-          // Don't reject immediately, give it time to retry
-        });
-
-        echo.connector.pusher.connection.bind('disconnected', () => {
-          // Connection lost
-        });
-
-        echo.connector.pusher.connection.bind('failed', () => {
-          clearTimeout(timeoutId);
-          console.error('WebSocket connection failed');
-          reject(new Error('WebSocket connection failed - server may not be running'));
-        });
-      });
-
-      return true;
-    } catch (error) {
-      console.error('WebSocket connection error:', {
-        connectionInfo: getConnectionDebugInfo(),
-        error,
-      });
-      
-      // Retry logic
-      if (retryCount < maxRetries) {
-        const delay = Math.min(1000 * Math.pow(2, retryCount), 10000); // Exponential backoff, max 10s
-        
-        return new Promise((resolve) => {
-          retryTimeoutId = setTimeout(async () => {
-            const result = await connect(retryCount + 1, maxRetries);
-            resolve(result);
-          }, delay);
-        });
-      }
-      
-      // Return false instead of throwing, allowing the app to continue
-      return false;
-    }
-  };
-
-  // Disconnect from WebSocket server
-  const disconnect = () => {
-    // Clear any pending retry attempts
-    if (retryTimeoutId) {
-      clearTimeout(retryTimeoutId);
-      retryTimeoutId = null;
-    }
-    
-    if (echo) {
-      echo.disconnect();
-      echo = null;
-    }
+    return true;
+  } catch (error) {
+    console.error('Error connecting to WebSocket:', error);
     isConnected.value = false;
-    socketId.value = null;
-  };
+    throw error;
+  }
+}
 
-  // Listen for new messages in a chat
-  const listenForNewMessages = (
-    chatId: string,
-    callback: (message: MessageEvent) => void
-  ): (() => void) => {
-    if (!messageCallbacks.has(chatId)) {
-      messageCallbacks.set(chatId, new Set());
-    }
-
-    const callbacks = messageCallbacks.get(chatId)!;
-    callbacks.add(callback);
-
-    // Get or create the channel
-    let channel = privateChannels.get(chatId);
-    if (!channel) {
-      channel = echo?.private(`chat.${chatId}`);
-      if (channel) {
-        privateChannels.set(chatId, channel);
+/**
+ * Disconnect from WebSocket server.
+ */
+function disconnect(): void {
+  if (echoInstance) {
+    // Leave all channels
+    activeChannels.forEach(channel => {
+      try {
+        echoInstance?.leave(channel);
+      } catch (error) {
+        console.error(`Failed to leave channel ${channel}:`, error);
       }
-    }
+    });
 
-    // Set up listeners only if not already done for this channel
-    if (channel) {
-      if (!channelListenersSetup.has(chatId)) {
-        channelListenersSetup.set(chatId, new Set());
-      }
-      
-      const listenersSetup = channelListenersSetup.get(chatId)!;
-      
-      if (!listenersSetup.has('new-messages')) {
-        channel.listen('.message.sent', (data: any) => {
-          const callbacks = messageCallbacks.get(chatId);
-          if (callbacks) {
-            callbacks.forEach(cb => cb(data.message));
-          }
-        });
-        listenersSetup.add('new-messages');
-      }
-    }
+    echoInstance.disconnect();
+    echoInstance = null;
+    isConnected.value = false;
+    activeChannels.clear();
+    messageCallbacks.clear();
+    typingCallbacks.clear();
+    readReceiptCallbacks.clear();
+    reactionCallbacks.clear();
+    messageEditedCallbacks.clear();
+    messageDeletedCallbacks.clear();
+    pollUpdateCallbacks.clear();
+  }
+}
 
-    // Return cleanup function
-    return () => {
-      const callbacks = messageCallbacks.get(chatId);
-      if (callbacks) {
-        callbacks.delete(callback);
-        if (callbacks.size === 0) {
-          messageCallbacks.delete(chatId);
-          // Consider leaving the channel if no more callbacks
-        }
-      }
-    };
-  };
+/**
+ * Get current socket ID.
+ */
+function getSocketId(): string {
+  return echoInstance?.socketId() || '';
+}
 
-  // Listen for typing indicators in a chat
-  const listenForTyping = (
-    chatId: string,
-    callback: (event: TypingEvent) => void
-  ): (() => void) => {
-    if (!typingCallbacks.has(chatId)) {
-      typingCallbacks.set(chatId, new Set());
-    }
-
-    const callbacks = typingCallbacks.get(chatId)!;
-    callbacks.add(callback);
-
-    // Set up the channel if not already done
-    if (!privateChannels.has(chatId)) {
-      const channel = echo?.private(`chat.${chatId}`);
-      if (channel) {
-        privateChannels.set(chatId, channel);
-
-        // Listen for broadcast typing events from backend
-        channel.listen('.user.typing', (data: any) => {
-          const callbacks = typingCallbacks.get(chatId);
-          if (callbacks) {
-            // Extract user_id from the user object if needed
-            const typingEvent: TypingEvent = {
-              user_id: data.user?.id || data.user_id,
-              is_typing: data.is_typing,
-              chat_id: data.chat_id || chatId
-            };
-            callbacks.forEach(cb => cb(typingEvent));
-          }
-        });
-      }
-    }
-
-    // Return cleanup function
-    return () => {
-      const callbacks = typingCallbacks.get(chatId);
-      if (callbacks) {
-        callbacks.delete(callback);
-        if (callbacks.size === 0) {
-          typingCallbacks.delete(chatId);
-        }
-      }
-    };
-  };
-
-  // Listen for read receipts in a chat
-  const listenForReadReceipts = (
-    chatId: string,
-    callback: (event: ReadReceiptEvent) => void
-  ): (() => void) => {
-    if (!readReceiptCallbacks.has(chatId)) {
-      readReceiptCallbacks.set(chatId, new Set());
-    }
-
-    const callbacks = readReceiptCallbacks.get(chatId)!;
-    callbacks.add(callback);
-
-    // Get or create the channel
-    let channel = privateChannels.get(chatId);
-    if (!channel) {
-      channel = echo?.private(`chat.${chatId}`);
-      if (channel) {
-        privateChannels.set(chatId, channel);
-      }
-    }
-
-    // Set up listeners only if not already done for this channel
-    if (channel) {
-      if (!channelListenersSetup.has(chatId)) {
-        channelListenersSetup.set(chatId, new Set());
-      }
-      
-      const listenersSetup = channelListenersSetup.get(chatId)!;
-      
-      if (!listenersSetup.has('read-receipts')) {
-        // Listen for message status updates (includes read receipts)
-        const handleReceiptEvent = (data: any) => {
-          const payload = (data && typeof data === 'object' && 'data' in data && data.data) ? data.data : data;
-          const callbacks = readReceiptCallbacks.get(chatId);
-          if (callbacks) {
-            callbacks.forEach(cb => cb(payload));
-          } else {
-            console.warn('[WebSocket] No callbacks registered for read receipts in chat:', chatId);
-          }
-        };
-
-        channel.listen('.message-status-updated', handleReceiptEvent);
-        channel.listen('message-status-updated', handleReceiptEvent);
-        
-        // Also listen for legacy .message.read events for backward compatibility
-        channel.listen('.message.read', handleReceiptEvent);
-        channel.listen('message.read', handleReceiptEvent);
-        
-        listenersSetup.add('read-receipts');
-      }
-    }
-
-    // Return cleanup function
-    return () => {
-      const callbacks = readReceiptCallbacks.get(chatId);
-      if (callbacks) {
-        callbacks.delete(callback);
-        if (callbacks.size === 0) {
-          readReceiptCallbacks.delete(chatId);
-        }
-      }
-    };
-  };
-
-  // Notify others that user is typing
-  const notifyTyping = async (chatId: string, isTyping: boolean): Promise<void> => {
-    if (!echo || !isConnected.value) {
-      // Silently skip if not connected - typing indicators are not critical
-      return;
-    }
-
+/**
+ * Leave a specific channel.
+ */
+function leaveChannel(channelName: string): void {
+  if (echoInstance && activeChannels.has(channelName)) {
     try {
-      const channel = privateChannels.get(chatId) || echo.private(`chat.${chatId}`);
-      if (!privateChannels.has(chatId)) {
-        privateChannels.set(chatId, channel);
+      echoInstance.leave(channelName);
+      activeChannels.delete(channelName);
+    } catch (error) {
+      console.error(`Failed to leave channel ${channelName}:`, error);
+    }
+  }
+}
+
+/**
+ * Add a connection state callback.
+ */
+function onConnection(callback: () => void): () => void {
+  connectionCallbacks.add(callback);
+  return () => {
+    connectionCallbacks.delete(callback);
+  };
+}
+
+/**
+ * Listen for new messages in a chat channel.
+ */
+function listenForNewMessages(chatId: string, callback: (message: MessageEvent) => void): () => void {
+  if (!chatId) return () => {};
+
+  const channelName = `chat.${chatId}`;
+  const listenerId = `${chatId}_${Date.now()}`;
+
+  messageCallbacks.set(listenerId, callback);
+
+  const subscribe = async () => {
+    try {
+      if (!echoInstance) {
+        await connect();
       }
 
-      await channel.whisper('typing', {
-        user_id: authStore.user?.id,
+      if (!activeChannels.has(channelName)) {
+        echoInstance!.private(channelName)
+          .listen('.message.sent', (data: unknown) => {
+            const msgData = data as { message: MessageEvent };
+            messageCallbacks.forEach(listener => {
+              if (typeof listener === 'function') {
+                listener(msgData.message);
+              }
+            });
+          });
+
+        activeChannels.add(channelName);
+      }
+    } catch (error) {
+      console.error(`Failed to subscribe to chat ${chatId}:`, error);
+    }
+  };
+
+  subscribe();
+
+  return () => {
+    messageCallbacks.delete(listenerId);
+
+    if (messageCallbacks.size === 0) {
+      leaveChannel(channelName);
+    }
+  };
+}
+
+/**
+ * Listen for typing indicators in a chat.
+ */
+function listenForTyping(chatId: string, callback: (userId: string, isTyping: boolean) => void): () => void {
+  if (!chatId) return () => {};
+
+  const channelName = `chat.${chatId}`;
+  const listenerId = `typing_${chatId}_${Date.now()}`;
+
+  // Wrap the user callback to receive the full event and extract the values
+  const wrappedCallback = (data: TypingEvent) => {
+    callback(data.user_id, data.is_typing);
+  };
+
+  typingCallbacks.set(listenerId, wrappedCallback);
+
+  const subscribe = async () => {
+    try {
+      if (!echoInstance) {
+        await connect();
+      }
+
+      if (!activeChannels.has(channelName)) {
+        echoInstance!.private(channelName)
+          .listenForWhisper('typing', ((data: unknown) => {
+            const typingData = data as TypingEvent;
+            typingCallbacks.forEach(listener => {
+              if (typeof listener === 'function') {
+                listener(typingData);
+              }
+            });
+          }) as (data: unknown) => void);
+
+        activeChannels.add(channelName);
+      }
+    } catch (error) {
+      console.error(`Failed to subscribe to typing events for chat ${chatId}:`, error);
+    }
+  };
+
+  subscribe();
+
+  return () => {
+    typingCallbacks.delete(listenerId);
+  };
+}
+
+/**
+ * Listen for message read receipts.
+ */
+function listenForReadReceipts(chatId: string, callback: (messageId: string, userId: string) => void): () => void {
+  if (!chatId) return () => {};
+
+  const channelName = `chat.${chatId}`;
+
+  const subscribe = async () => {
+    try {
+      if (!echoInstance) {
+        await connect();
+      }
+
+      if (!activeChannels.has(`read.${channelName}`)) {
+        echoInstance!.private(channelName)
+          .listen('.message.read', (data: unknown) => {
+            const readData = data as ReadReceiptEvent;
+            callback(readData.message_id, readData.user_id);
+          });
+
+        activeChannels.add(`read.${channelName}`);
+      }
+    } catch (error) {
+      console.error(`Failed to subscribe to read receipts for chat ${chatId}:`, error);
+    }
+  };
+
+  subscribe();
+
+  return () => {
+    // Cleanup handled by leaveChannel
+  };
+}
+
+/**
+ * Listen for message reaction updates.
+ */
+function listenForReactionUpdates(chatId: string, callback: (event: unknown) => void): () => void {
+  if (!chatId) return () => {};
+
+  const channelName = `chat.${chatId}`;
+  const listenerId = `reaction_${chatId}_${Date.now()}`;
+
+  reactionCallbacks.set(listenerId, callback);
+
+  const subscribe = async () => {
+    try {
+      if (!echoInstance) {
+        await connect();
+      }
+
+      if (!activeChannels.has(`reaction.${channelName}`)) {
+        echoInstance!.private(channelName)
+          .listen('.message.reaction', (data: unknown) => {
+            // Pass the full event data to the callback
+            reactionCallbacks.forEach(listener => {
+              if (typeof listener === 'function') {
+                listener(data);
+              }
+            });
+          });
+
+        activeChannels.add(`reaction.${channelName}`);
+      }
+    } catch (error) {
+      console.error(`Failed to subscribe to reaction events for chat ${chatId}:`, error);
+    }
+  };
+
+  subscribe();
+
+  return () => {
+    reactionCallbacks.delete(listenerId);
+  };
+}
+
+/**
+ * Listen for message edits.
+ */
+function listenForMessageEdited(chatId: string, callback: MessageEditedCallback): () => void {
+  if (!chatId) return () => {};
+
+  const channelName = `chat.${chatId}`;
+  const listenerId = `edited_${chatId}_${Date.now()}`;
+
+  messageEditedCallbacks.set(listenerId, callback);
+
+  const subscribe = async () => {
+    try {
+      if (!echoInstance) {
+        await connect();
+      }
+
+      if (!activeChannels.has(`edited.${channelName}`)) {
+        echoInstance!.private(channelName)
+          .listen('.message.edited', (data: unknown) => {
+            const editData = data as { message: MessageEvent };
+            messageEditedCallbacks.forEach(listener => {
+              if (typeof listener === 'function') {
+                listener(editData.message);
+              }
+            });
+          });
+
+        activeChannels.add(`edited.${channelName}`);
+      }
+    } catch (error) {
+      console.error(`Failed to subscribe to edit events for chat ${chatId}:`, error);
+    }
+  };
+
+  subscribe();
+
+  return () => {
+    messageEditedCallbacks.delete(listenerId);
+  };
+}
+
+/**
+ * Listen for message deletions.
+ */
+function listenForMessageDeleted(chatId: string, callback: MessageDeletedCallback): () => void {
+  if (!chatId) return () => {};
+
+  const channelName = `chat.${chatId}`;
+  const listenerId = `deleted_${chatId}_${Date.now()}`;
+
+  messageDeletedCallbacks.set(listenerId, callback);
+
+  const subscribe = async () => {
+    try {
+      if (!echoInstance) {
+        await connect();
+      }
+
+      if (!activeChannels.has(`deleted.${channelName}`)) {
+        echoInstance!.private(channelName)
+          .listen('.message.deleted', (data: unknown) => {
+            const deleteData = data as { message_id: string };
+            messageDeletedCallbacks.forEach(listener => {
+              if (typeof listener === 'function') {
+                listener(deleteData.message_id);
+              }
+            });
+          });
+
+        activeChannels.add(`deleted.${channelName}`);
+      }
+    } catch (error) {
+      console.error(`Failed to subscribe to delete events for chat ${chatId}:`, error);
+    }
+  };
+
+  subscribe();
+
+  return () => {
+    messageDeletedCallbacks.delete(listenerId);
+  };
+}
+
+/**
+ * Listen for poll updates.
+ */
+function listenForPollUpdates(chatId: string, callback: PollUpdateCallback): () => void {
+  if (!chatId) return () => {};
+
+  const channelName = `chat.${chatId}`;
+  const listenerId = `poll_${chatId}_${Date.now()}`;
+
+  pollUpdateCallbacks.set(listenerId, callback);
+
+  const subscribe = async () => {
+    try {
+      if (!echoInstance) {
+        await connect();
+      }
+
+      if (!activeChannels.has(`poll.${channelName}`)) {
+        echoInstance!.private(channelName)
+          .listen('.poll.updated', (data: unknown) => {
+            const pollData = data as { poll_id: string; votes: unknown[] };
+            pollUpdateCallbacks.forEach(listener => {
+              if (typeof listener === 'function') {
+                listener(pollData.poll_id, pollData.votes);
+              }
+            });
+          });
+
+        activeChannels.add(`poll.${channelName}`);
+      }
+    } catch (error) {
+      console.error(`Failed to subscribe to poll events for chat ${chatId}:`, error);
+    }
+  };
+
+  subscribe();
+
+  return () => {
+    pollUpdateCallbacks.delete(listenerId);
+  };
+}
+
+/**
+ * Send typing indicator to a chat.
+ */
+async function notifyTyping(chatId: string, isTyping: boolean): Promise<void> {
+  if (!chatId) return;
+
+  try {
+    if (!echoInstance) {
+      await connect();
+    }
+
+    const channelName = `chat.${chatId}`;
+
+    // Get user ID from localStorage (stored during login)
+    const userId = localStorage.getItem('user_id') || localStorage.getItem('userId') || '';
+
+    if (isConnected.value && echoInstance) {
+      (echoInstance.private(channelName) as PrivateChannel).whisper('typing', {
+        user_id: userId,
         is_typing: isTyping,
-        chat_id: chatId
-      });
-    } catch (error) {
-      console.error('Error sending typing indicator:', error);
+        timestamp: Date.now()
+      } as unknown);
     }
-  };
+  } catch (error) {
+    console.error('Failed to send typing notification:', error);
+  }
+}
 
-  // Mark messages as read
-  const markAsRead = async (chatId: string, messageIds: string[]): Promise<void> => {
-    if (!echo || !isConnected.value) {
-      // Silently skip if not connected
-      return;
-    }
+/**
+ * Mark messages as read.
+ */
+async function markAsRead(chatId: string, messageIds: string[]): Promise<void> {
+  if (!chatId || !messageIds.length) return;
 
-    try {
-      const channel = privateChannels.get(chatId) || echo.private(`chat.${chatId}`);
-      if (!privateChannels.has(chatId)) {
-        privateChannels.set(chatId, channel);
-      }
+  try {
+    const token = localStorage.getItem('token');
+    if (!token) return;
 
-      await channel.whisper('read', {
-        message_ids: messageIds,
-        user_id: authStore.user?.id,
-        chat_id: chatId
-      });
-    } catch (error) {
-      console.error('Error marking messages as read:', error);
-    }
-  };
+    // Make API call to mark messages as read
+    const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8001/api';
+    await fetch(`${apiUrl}/chats/${chatId}/messages/read`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({ message_ids: messageIds }),
+    });
+  } catch (error) {
+    console.error('Failed to mark messages as read:', error);
+    throw error;
+  }
+}
 
-  // Get socket ID
-  const getSocketId = (): string | null => {
-    return socketId.value;
-  };
-
-  // Listen for reaction updates in a chat
-  const listenForReactionUpdates = (
-    chatId: string,
-    callback: (event: ReactionEvent) => void
-  ): (() => void) => {
-    if (!reactionCallbacks.has(chatId)) {
-      reactionCallbacks.set(chatId, new Set());
-    }
-
-    const callbacks = reactionCallbacks.get(chatId)!;
-    callbacks.add(callback);
-
-    // Get or create the channel
-    let channel = privateChannels.get(chatId);
-    if (!channel) {
-      channel = echo?.private(`chat.${chatId}`);
-      if (channel) {
-        privateChannels.set(chatId, channel);
-      }
-    }
-
-    // Always add the listener (Echo handles duplicates)
-    if (channel) {
-      channel.listen('.message.reaction', (data: any) => {
-        const callbacks = reactionCallbacks.get(chatId);
-        if (callbacks) {
-          callbacks.forEach(cb => cb(data));
-        }
-      });
-
-      // Also listen to direct websocket service events (non-Laravel broadcast)
-      channel.listen('message.reaction_updated', (data: any) => {
-        // Normalize payload to ReactionEvent shape expected by UI
-        const normalized: ReactionEvent = {
-          message_id: String(data.message_id ?? data.messageId ?? ''),
-          chat_id: String(data.chat_id ?? chatId),
-          user: {
-            id: String(data.user?.id ?? data.user_id ?? ''),
-            name: String(data.user?.name ?? data.user_name ?? ''),
-          },
-          reaction: String(data.reaction ?? ''),
-          added: Boolean(data.reaction)
-        };
-
-        const callbacks = reactionCallbacks.get(chatId);
-        if (callbacks) {
-          callbacks.forEach(cb => cb(normalized));
-        }
-      });
-    }
-
-    // Return cleanup function
-    return () => {
-      const callbacks = reactionCallbacks.get(chatId);
-      if (callbacks) {
-        callbacks.delete(callback);
-        if (callbacks.size === 0) {
-          reactionCallbacks.delete(chatId);
-        }
-      }
-    };
-  };
-
-  // Listen for message edited events
-  const listenForMessageEdited = (
-    chatId: string,
-    callback: (event: MessageEditedEvent) => void
-  ): (() => void) => {
-    if (!messageEditedCallbacks.has(chatId)) {
-      messageEditedCallbacks.set(chatId, new Set());
-    }
-
-    const callbacks = messageEditedCallbacks.get(chatId)!;
-    callbacks.add(callback);
-
-    // Get or create the channel
-    let channel = privateChannels.get(chatId);
-    if (!channel) {
-      channel = echo?.private(`chat.${chatId}`);
-      if (channel) {
-        privateChannels.set(chatId, channel);
-      }
-    }
-
-    // Add the listener
-    if (channel) {
-      channel.listen('.message.edited', (data: any) => {
-        const callbacks = messageEditedCallbacks.get(chatId);
-        if (callbacks) {
-          callbacks.forEach(cb => cb(data));
-        }
-      });
-    }
-
-    // Return cleanup function
-    return () => {
-      const callbacks = messageEditedCallbacks.get(chatId);
-      if (callbacks) {
-        callbacks.delete(callback);
-        if (callbacks.size === 0) {
-          messageEditedCallbacks.delete(chatId);
-        }
-      }
-    };
-  };
-
-  // Listen for message deleted events
-  const listenForMessageDeleted = (
-    chatId: string,
-    callback: (event: MessageDeletedEvent) => void
-  ): (() => void) => {
-    if (!messageDeletedCallbacks.has(chatId)) {
-      messageDeletedCallbacks.set(chatId, new Set());
-    }
-    messageDeletedCallbacks.get(chatId)!.add(callback);
-
-    // Get or create the channel
-    let channel = privateChannels.get(chatId);
-    if (!channel) {
-      channel = echo?.private(`chat.${chatId}`);
-      if (channel) {
-        privateChannels.set(chatId, channel);
-      }
-    }
-
-    // Add the listener
-    if (channel) {
-      channel.listen('.message.deleted', (data: any) => {
-        const callbacks = messageDeletedCallbacks.get(chatId);
-        if (callbacks) {
-          callbacks.forEach(cb => cb(data));
-        }
-      });
-    }
-
-    // Return cleanup function
-    return () => {
-      const callbacks = messageDeletedCallbacks.get(chatId);
-      if (callbacks) {
-        callbacks.delete(callback);
-        if (callbacks.size === 0) {
-          messageDeletedCallbacks.delete(chatId);
-        }
-      }
-    };
-  };
-
-  // Listen for poll update events
-  const listenForPollUpdates = (
-    chatId: string,
-    callback: (event: PollUpdateEvent) => void
-  ): (() => void) => {
-    if (!pollUpdateCallbacks.has(chatId)) {
-      pollUpdateCallbacks.set(chatId, new Set());
-    }
-    pollUpdateCallbacks.get(chatId)!.add(callback);
-
-    // Get or create the channel
-    let channel = privateChannels.get(chatId);
-    if (!channel) {
-      channel = echo?.private(`chat.${chatId}`);
-      if (channel) {
-        privateChannels.set(chatId, channel);
-      }
-    }
-
-    // Add the listener
-    if (channel) {
-      channel.listen('.message.poll_updated', (data: any) => {
-        const callbacks = pollUpdateCallbacks.get(chatId);
-        if (callbacks) {
-          callbacks.forEach(cb => cb(data));
-        }
-      });
-    }
-
-    // Return cleanup function
-    return () => {
-      const callbacks = pollUpdateCallbacks.get(chatId);
-      if (callbacks) {
-        callbacks.delete(callback);
-        if (callbacks.size === 0) {
-          pollUpdateCallbacks.delete(chatId);
-        }
-      }
-    };
-  };
-
-  // Listen for contact updates (global channel)
-  const listenForContactUpdates = (
-    callback: (event: ContactUpdateEvent) => void
-  ): (() => void) => {
-    contactUpdateCallbacks.add(callback);
-
-    // Subscribe to global contacts channel
-    if (echo && !privateChannels.has('contacts')) {
-      const channel = echo.channel('contacts');
-      privateChannels.set('contacts', channel);
-
-      // Listen for contact.updated events
-      channel.listen('.contact.updated', (data: any) => {
-        contactUpdateCallbacks.forEach(cb => cb(data));
-      });
-    }
-
-    // Return cleanup function
-    return () => {
-      contactUpdateCallbacks.delete(callback);
-      if (contactUpdateCallbacks.size === 0) {
-        // Optionally leave the channel if no more callbacks
-        const channel = privateChannels.get('contacts');
-        if (channel) {
-          echo?.leave('contacts');
-          privateChannels.delete('contacts');
-        }
-      }
-    };
-  };
-
+/**
+ * Export the composable for Vue components.
+ */
+export function useWebSocket() {
+  // Auto-disconnect when component unmounts
   onUnmounted(() => {
-    disconnect();
+    // Don't disconnect on unmount - other components may be using it
+    // Only disconnect when explicitly requested
   });
 
   return {
-    isConnected: isConnected.value,
-    socketId: socketId.value,
+    // State
+    isConnected,
+    socketId,
+
+    // Connection management
     connect,
     disconnect,
+    getSocketId,
+    onConnection,
+
+    // Channel management
+    leaveChannel,
+
+    // Message handling
     listenForNewMessages,
+
+    // Typing indicators
     listenForTyping,
+    notifyTyping,
+
+    // Read receipts
     listenForReadReceipts,
+    markAsRead,
+
+    // Additional events
     listenForReactionUpdates,
     listenForMessageEdited,
     listenForMessageDeleted,
     listenForPollUpdates,
-    listenForContactUpdates,
-    notifyTyping,
-    markAsRead,
-    getSocketId
   };
 }
 

@@ -2,11 +2,9 @@ import { downloadMediaMessage, proto } from '@whiskeysockets/baileys';
 import { logger } from './logger.js';
 import { sendToPHP, sendGroupMetadata } from './apiClient.js';
 import config from './config.js';
-import { pollMessagesStore, pollUpdatesStore } from '../index.js';
+import { pollMessagesStore, pollUpdatesStore } from './stores.js';
 import { fetchContactProfilePicture, fetchContactStatus, recordLidToPhone, convertLidToPhoneJid, addEditMessageId, addProtocolMessageId, shouldSendGroupMetadata } from './whatsappClient.js';
 import * as apiClient from './apiClient.js';
-
-// Note: Avoid importing from whatsappClient at top-level to prevent circular dependency
 
 function withTimeout(promise, timeoutMs, label = 'operation') {
     let t;
