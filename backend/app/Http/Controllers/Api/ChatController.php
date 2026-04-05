@@ -1749,4 +1749,18 @@ class ChatController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Format WhatsApp JID to display phone number.
+     */
+    private function formatPhoneNumberForDisplay(string $jid): string
+    {
+        if (!str_contains($jid, '@') || str_ends_with($jid, '@s.whatsapp.net')) {
+            $phoneNumber = preg_replace('/@.*$/', '', $jid);
+            if (preg_match('/^\d+$/', $phoneNumber)) {
+                return '+' . $phoneNumber;
+            }
+        }
+        return $jid;
+    }
 }
