@@ -7,6 +7,36 @@ import { createChildLogger } from './logger.js';
 
 const logger = createChildLogger('apiClient');
 
+// Helper: Extract base URL without the webhook path
+function getBaseUrl() {
+    return config.backend.apiUrl.replace(/\/api\/whatsapp[-/]webhook\/?$/, '');
+}
+
+// Helper: Get webhook secret
+function getWebhookSecret() {
+    return process.env.WEBHOOK_SECRET || config.backend.webhookSecret || '';
+}
+
+// Helper: Get headers with webhook secret
+function getWebhookHeaders() {
+    return {
+        'Content-Type': 'application/json',
+        'X-Webhook-Secret': getWebhookSecret(),
+    };
+}
+
+// Helper: Filter sensitive headers from logs
+function filterSensitiveHeaders(headers) {
+    const filtered = { ...headers };
+    if (filtered['X-Webhook-Secret']) {
+        filtered['X-Webhook-Secret'] = '[REDACTED]';
+    }
+    if (filtered['Authorization']) {
+        filtered['Authorization'] = '[REDACTED]';
+    }
+    return filtered;
+}
+
 function isBadJidString(value) {
     if (typeof value !== 'string') return true;
     const lower = value.toLowerCase();
@@ -29,7 +59,7 @@ const apiClient = axios.create({
     timeout: config.backend.timeoutMs,
     headers: {
         'Content-Type': 'application/json',
-        'X-Webhook-Secret': process.env.WEBHOOK_SECRET || config.backend.webhookSecret || '',
+        'X-Webhook-Secret': getWebhookSecret(),
         'User-Agent': `WhatsAppBot/${process.env.npm_package_version || '1.0.0'}`,
     },
     maxContentLength: config.media.maxSizeMB * 1024 * 1024, // Convert MB to bytes
@@ -43,10 +73,10 @@ apiClient.interceptors.request.use(
         logger.debug({
             method: config.method.toUpperCase(),
             url: config.url,
-            headers: config.headers,
+            headers: filterSensitiveHeaders(config.headers),
             data: config.data ? '[...]' : undefined, // Don't log full request body
         }, 'Outgoing API request');
-        
+
         return config;
     },
     (error) => {
@@ -64,7 +94,7 @@ apiClient.interceptors.response.use(
             url: response.config.url,
             data: response.data,
         }, 'API response');
-        
+
         return response;
     },
     (error) => {
@@ -85,7 +115,7 @@ apiClient.interceptors.response.use(
                 status: error.response.status,
                 statusText: error.response.statusText,
                 data: error.response.data,
-                headers: error.response.headers,
+                headers: filterSensitiveHeaders(error.response.headers),
             };
         } else if (error.request) {
             // The request was made but no response was received
@@ -115,35 +145,35 @@ const sendToBackend = async (data, options = {}) => {
 
     try {
         const response = await apiClient.post('', data);
-        
+
         // Handle non-2xx status codes
         if (response.status >= 400) {
             throw new Error(`Request failed with status ${response.status}: ${response.statusText}`);
         }
-        
+
         return response.data;
     } catch (error) {
         // Check if we should retry
-        const shouldRetry = 
-            retryCount < maxRetries && 
+        const shouldRetry =
+            retryCount < maxRetries &&
             (!error.response || (error.response.status >= 500 && error.response.status < 600));
-        
+
         if (shouldRetry) {
             const nextRetry = retryCount + 1;
             const delay = retryDelay * Math.pow(2, nextRetry - 1);
-            
+
             logger.warn({
                 attempt: nextRetry,
                 maxAttempts: maxRetries,
                 delayMs: delay,
                 error: error.message,
             }, 'Retrying failed request');
-            
+
             // Wait before retrying
             await new Promise(resolve => setTimeout(resolve, delay));
             return sendToBackend(data, { ...options, retryCount: nextRetry });
         }
-        
+
         // If we're not retrying, rethrow the error
         throw error;
     }
@@ -156,14 +186,10 @@ const sendToBackend = async (data, options = {}) => {
  */
 const syncContacts = async (contacts) => {
     try {
-        const baseUrl = config.backend.apiUrl.replace(/\/api\/whatsapp[-/]webhook\/?$/, '');
-        const response = await axios.post(`${baseUrl}/api/whatsapp-contacts/sync`, {
+        const response = await axios.post(`${getBaseUrl()}/api/whatsapp-contacts/sync`, {
             contacts: Array.isArray(contacts) ? contacts : [],
         }, {
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Webhook-Secret': process.env.WEBHOOK_SECRET || config.backend.webhookSecret || '',
-            },
+            headers: getWebhookHeaders(),
             timeout: config.backend.timeoutMs,
             validateStatus: (status) => status >= 200 && status < 500,
         });
@@ -190,11 +216,11 @@ const sendMessage = async (message) => {
     try {
         // Send message directly without wrapping - backend expects exact fields
         const response = await sendToBackend(message);
-        
+
         return response;
     } catch (error) {
-        logger.error({ 
-            error: error.message, 
+        logger.error({
+            error: error.message,
             stack: error.stack,
             messageId: message.messageId,
         }, 'Failed to send message to backend');
@@ -211,20 +237,20 @@ const sendMessage = async (message) => {
 const uploadFile = async (filePath, metadata = {}) => {
     try {
         const formData = new FormData();
-        
+
         // Add file
         formData.append('file', fs.createReadStream(filePath), {
             filename: path.basename(filePath),
             contentType: metadata.mimetype || 'application/octet-stream',
         });
-        
+
         // Add metadata
         Object.entries(metadata).forEach(([key, value]) => {
             if (value !== undefined) {
                 formData.append(key, value);
             }
         });
-        
+
         const response = await apiClient.post('/upload', formData, {
             headers: {
                 ...formData.getHeaders(),
@@ -233,11 +259,11 @@ const uploadFile = async (filePath, metadata = {}) => {
             maxContentLength: config.media.maxSizeMB * 1024 * 1024,
             maxBodyLength: config.media.maxSizeMB * 1024 * 1024,
         });
-        
+
         return response.data;
     } catch (error) {
-        logger.error({ 
-            error: error.message, 
+        logger.error({
+            error: error.message,
             stack: error.stack,
             filePath,
             metadata,
@@ -252,15 +278,15 @@ const sendToPHP = async (payload) => {
     if (logPayload.media) {
         logPayload.media = `[Base64 Data of ${logPayload.mimetype}, length: ${payload.media.length}]`;
     }
-    
-    logger.debug({ 
+
+    logger.debug({
         payload: {
             ...logPayload,
             senderProfilePictureUrl: logPayload.senderProfilePictureUrl ? '[URL present]' : null,
             senderBio: logPayload.senderBio ? '[Bio present]' : null
         }
     }, 'Sending message to backend');
-    
+
     try {
         const candidateSender = payload.sender || payload.senderJid || payload.from;
         const safeSender = isValidSenderJid(candidateSender)
@@ -273,8 +299,8 @@ const sendToPHP = async (payload) => {
             chat: payload.chat || payload.from,        // Prefer explicit chat JID (group) when provided
             type: payload.type,
             content: payload.body !== undefined ? String(payload.body) : '', // Ensure string content
-            sending_time: payload.messageTimestamp 
-                ? new Date(payload.messageTimestamp * 1000).toISOString() 
+            sending_time: payload.messageTimestamp
+                ? new Date(payload.messageTimestamp * 1000).toISOString()
                 : new Date().toISOString(), // Convert timestamp to ISO string
             media: payload.media || null,
             mimetype: payload.mimetype || null,
@@ -291,23 +317,23 @@ const sendToPHP = async (payload) => {
             pollData: payload.pollData || null,  // Poll data for poll messages
             pollMessageId: payload.pollMessageId || null,  // Poll message ID for poll updates
         };
-        
-        logger.debug({ 
-            messageData: { 
-                ...messageData, 
+
+        logger.debug({
+            messageData: {
+                ...messageData,
                 media: messageData.media ? '[base64 data]' : null,
                 senderProfilePictureUrl: messageData.senderProfilePictureUrl ? '[URL present]' : null,
                 senderBio: messageData.senderBio ? '[Bio present]' : null
             }
         }, 'Sending message data to backend');
-        
+
         const response = await sendMessage(messageData);
-        
-        logger.debug({ 
+
+        logger.debug({
             status: response.status,
             hasProfileData: !!messageData.senderProfilePictureUrl || !!messageData.senderBio
         }, 'Message sent to backend successfully');
-        
+
         return true;
     } catch (error) {
         logger.error({
@@ -327,44 +353,38 @@ const sendToPHP = async (payload) => {
  */
 const updateMessageStatus = async (whatsappMessageId, status, participant = null) => {
     try {
-        logger.debug({ 
-            whatsappMessageId, 
+        logger.debug({
+            whatsappMessageId,
             status,
             participant,
             timestamp: new Date().toISOString()
         }, 'Sending message status update to backend');
-        
-        // Extract base URL without the webhook path
-        const baseUrl = config.backend.apiUrl.replace(/\/api\/whatsapp[-/]webhook\/?$/, '');
-        
+
         // Find the message by WhatsApp message ID and update its status
-        const response = await axios.post(`${baseUrl}/api/messages/update-status`, {
+        const response = await axios.post(`${getBaseUrl()}/api/messages/update-status`, {
             whatsapp_message_id: whatsappMessageId,
             status: status,
             participant: participant || undefined,
         }, {
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Webhook-Secret': process.env.WEBHOOK_SECRET || config.backend.webhookSecret || '',
-            },
+            headers: getWebhookHeaders(),
             timeout: config.backend.timeoutMs,
             validateStatus: (status) => status >= 200 && status < 500,
         });
-        
+
         if (response.status >= 400) {
             // 404 is expected for edit/protocol messages which generate new IDs
             // Log these at debug level for debugging
             if (response.status === 404) {
-                logger.debug({ 
-                    whatsappMessageId, 
+                logger.debug({
+                    whatsappMessageId,
                     status,
                     responseStatus: response.status,
                     responseData: response.data,
                     timestamp: new Date().toISOString()
                 }, 'Message not found for status update (expected for edit/protocol messages)');
             } else {
-                logger.error({ 
-                    whatsappMessageId, 
+                logger.error({
+                    whatsappMessageId,
                     status,
                     responseStatus: response.status,
                     responseData: response.data,
@@ -373,7 +393,7 @@ const updateMessageStatus = async (whatsappMessageId, status, participant = null
             }
             return null;
         }
-        
+
         // Backend may intentionally ignore unknown IDs (e.g. reactions/edit/protocol generated IDs)
         if (response?.data?.message === 'Message not found (ignored)') {
             logger.debug({
@@ -385,8 +405,8 @@ const updateMessageStatus = async (whatsappMessageId, status, participant = null
             return null;
         }
 
-        logger.info({ 
-            whatsappMessageId, 
+        logger.info({
+            whatsappMessageId,
             status,
             responseStatus: response.status,
             responseData: response.data,
@@ -394,8 +414,8 @@ const updateMessageStatus = async (whatsappMessageId, status, participant = null
         }, 'Message status updated successfully');
         return response.data;
     } catch (error) {
-        logger.error({ 
-            error: error.message, 
+        logger.error({
+            error: error.message,
             stack: error.stack,
             whatsappMessageId,
             status,
@@ -417,25 +437,20 @@ const updateMessageStatus = async (whatsappMessageId, status, participant = null
 const notifyMessageEdited = async (whatsappMessageId, newContent) => {
     try {
         logger.info({ whatsappMessageId, newContent }, 'Notifying backend of message edit');
-        
-        const baseUrl = config.backend.apiUrl.replace(/\/api\/whatsapp[-/]webhook\/?$/, '');
-        
-        const response = await axios.post(`${baseUrl}/api/messages/notify-edit`, {
+
+        const response = await axios.post(`${getBaseUrl()}/api/messages/notify-edit`, {
             whatsapp_message_id: whatsappMessageId,
             content: newContent,
         }, {
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Webhook-Secret': process.env.WEBHOOK_SECRET || config.backend.webhookSecret || '',
-            },
+            headers: getWebhookHeaders(),
             timeout: config.backend.timeoutMs,
         });
-        
+
         logger.debug({ whatsappMessageId }, 'Message edit notification sent successfully');
         return response.data;
     } catch (error) {
-        logger.error({ 
-            error: error.message, 
+        logger.error({
+            error: error.message,
             whatsappMessageId,
             newContent,
             responseStatus: error.response?.status,
@@ -453,24 +468,19 @@ const notifyMessageEdited = async (whatsappMessageId, newContent) => {
 const notifyMessageDeleted = async (whatsappMessageId) => {
     try {
         logger.info({ whatsappMessageId }, 'Notifying backend of message deletion');
-        
-        const baseUrl = config.backend.apiUrl.replace(/\/api\/whatsapp[-/]webhook\/?$/, '');
-        
-        const response = await axios.post(`${baseUrl}/api/messages/notify-delete`, {
+
+        const response = await axios.post(`${getBaseUrl()}/api/messages/notify-delete`, {
             whatsapp_message_id: whatsappMessageId,
         }, {
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Webhook-Secret': process.env.WEBHOOK_SECRET || config.backend.webhookSecret || '',
-            },
+            headers: getWebhookHeaders(),
             timeout: config.backend.timeoutMs,
         });
-        
+
         logger.debug({ whatsappMessageId }, 'Message deletion notification sent successfully');
         return response.data;
     } catch (error) {
-        logger.error({ 
-            error: error.message, 
+        logger.error({
+            error: error.message,
             whatsappMessageId,
         }, 'Error notifying message deletion');
         return null;
@@ -484,8 +494,6 @@ const notifyMessageDeleted = async (whatsappMessageId) => {
  */
 const sendGroupMetadata = async (groupData) => {
     try {
-        const baseUrl = config.backend.apiUrl.replace(/\/api\/whatsapp[-/]webhook\/?$/, '');
-        
         const payload = {
             group_id: groupData.groupId,
             name: groupData.groupName,
@@ -497,25 +505,22 @@ const sendGroupMetadata = async (groupData) => {
             payload.participants = groupData.participants;
         }
 
-        const response = await axios.post(`${baseUrl}/api/whatsapp-groups/create`, payload, {
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Webhook-Secret': process.env.WEBHOOK_SECRET || config.backend.webhookSecret || '',
-            },
+        const response = await axios.post(`${getBaseUrl()}/api/whatsapp-groups/create`, payload, {
+            headers: getWebhookHeaders(),
             timeout: config.backend.timeoutMs,
             validateStatus: (status) => status >= 200 && status < 500,
         });
-        
+
         if (response.status >= 400) {
             logger.warn({ status: response.status, data: response.data }, 'Group metadata endpoint returned error');
             return null;
         }
-        
+
         logger.info({ groupId: groupData.groupId }, 'Group metadata sent successfully');
         return response.data;
     } catch (error) {
-        logger.error({ 
-            error: error.message, 
+        logger.error({
+            error: error.message,
             stack: error.stack,
             groupId: groupData.groupId,
         }, 'Error sending group metadata to backend');
@@ -523,9 +528,46 @@ const sendGroupMetadata = async (groupData) => {
     }
 };
 
-export { 
-    sendToBackend, 
-    sendMessage, 
+/**
+ * Stores a LID-to-phone mapping in the backend database.
+ * This allows resolving LIDs to phone numbers for community group participants.
+ * @param {string} lidJid - The LID (e.g., '123456789@lid')
+ * @param {string} phoneJid - The phone JID (e.g., '491234567890@s.whatsapp.net')
+ * @param {string} [displayName] - Optional display name for the contact
+ * @returns {Promise<boolean>} True if stored successfully
+ */
+const storeLidMapping = async (lidJid, phoneJid, displayName = null) => {
+    try {
+        if (!lidJid || !phoneJid) return false;
+        if (!lidJid.endsWith('@lid')) return false;
+        if (!phoneJid.endsWith('@s.whatsapp.net')) return false;
+
+        const response = await axios.post(`${getBaseUrl()}/api/lid-mappings`, {
+            lid_jid: lidJid,
+            phone_jid: phoneJid,
+            display_name: displayName,
+        }, {
+            headers: getWebhookHeaders(),
+            timeout: config.backend.timeoutMs,
+            validateStatus: (status) => status >= 200 && status < 500,
+        });
+
+        if (response.status >= 400) {
+            logger.debug({ status: response.status, lidJid }, 'LID mapping endpoint returned error');
+            return false;
+        }
+
+        logger.debug({ lidJid, phoneJid }, 'LID mapping stored successfully');
+        return true;
+    } catch (error) {
+        logger.debug({ error: error.message, lidJid }, 'Error storing LID mapping');
+        return false;
+    }
+};
+
+export {
+    sendToBackend,
+    sendMessage,
     uploadFile,
     sendToPHP,
     updateMessageStatus,
@@ -533,5 +575,9 @@ export {
     notifyMessageDeleted,
     sendGroupMetadata,
     syncContacts,
+    storeLidMapping,
     apiClient,
+    getBaseUrl,
+    getWebhookHeaders,
+    getWebhookSecret,
 };

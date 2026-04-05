@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Chat;
+use App\Models\LidMapping;
 use App\Models\User;
 use App\Services\ChatService;
 use Illuminate\Http\Request;
@@ -1635,14 +1636,22 @@ class ChatController extends Controller
                 $resolvedJid = $isPhoneJid ? $participantJid : null;
                 if ($isLid) {
                     try {
-                        $mapping = DB::table('chat_user')
-                            ->where('whatsapp_id', $participantJid)
-                            ->first();
-                        if ($mapping && isset($mapping->user_id)) {
-                            $mappedUser = User::find($mapping->user_id);
-                            if ($mappedUser && is_string($mappedUser->phone) && trim($mappedUser->phone) !== '') {
-                                $mappedPhone = trim($mappedUser->phone);
-                                $resolvedJid = str_contains($mappedPhone, '@') ? $mappedPhone : ($mappedPhone . '@s.whatsapp.net');
+                        // First, check lid_mappings table (primary source for LID-to-phone mappings)
+                        $lidMapping = LidMapping::where('lid_jid', $participantJid)->first();
+                        if ($lidMapping && $lidMapping->phone_jid) {
+                            $resolvedJid = $lidMapping->phone_jid;
+                        }
+                        // Fallback: check chat_user table (legacy)
+                        else {
+                            $mapping = DB::table('chat_user')
+                                ->where('whatsapp_id', $participantJid)
+                                ->first();
+                            if ($mapping && isset($mapping->user_id)) {
+                                $mappedUser = User::find($mapping->user_id);
+                                if ($mappedUser && is_string($mappedUser->phone) && trim($mappedUser->phone) !== '') {
+                                    $mappedPhone = trim($mappedUser->phone);
+                                    $resolvedJid = str_contains($mappedPhone, '@') ? $mappedPhone : ($mappedPhone . '@s.whatsapp.net');
+                                }
                             }
                         }
                     } catch (\Throwable $e) {

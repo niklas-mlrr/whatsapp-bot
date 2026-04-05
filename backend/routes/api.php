@@ -236,6 +236,9 @@ Route::middleware(['throttle:120,1'])->group(function () {
 
     // Sync contacts from receiver (called by receiver)
     Route::post('/whatsapp-contacts/sync', [\App\Http\Controllers\Api\WhatsAppContactSyncController::class, 'sync']);
+
+    // Store LID-to-phone mappings (called by receiver)
+    Route::post('/lid-mappings', [\App\Http\Controllers\Api\LidMappingController::class, 'store']);
 });
 
 // Protected routes (require authentication + rate limiting)

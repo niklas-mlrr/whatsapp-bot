@@ -436,6 +436,11 @@ function recordLidToPhone(lidJid, phoneJid) {
             logger.debug({ lidJid: lid, phoneJid: phone }, 'Recording LID to phone JID mapping');
         }
         lidToPhoneMap.set(lid, phone);
+
+        // Also persist to backend database for community group member resolution
+        apiClient.storeLidMapping(lid, phone).catch(err => {
+            logger.debug({ err: err.message, lidJid: lid }, 'Failed to persist LID mapping to backend');
+        });
     } catch (err) {
         logger.debug({ err: err.message, lidJid, phoneJid }, 'Failed to record LID mapping');
     }
