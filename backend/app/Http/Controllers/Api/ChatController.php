@@ -363,16 +363,7 @@ class ChatController extends Controller
                 
                 // Delete messages associated with this chat
                 DB::delete("DELETE FROM whatsapp_messages WHERE chat_id = ?", [$chatId]);
-                
-                // Delete legacy messages if any
-                $chat = DB::selectOne("SELECT metadata FROM chats WHERE id = ?", [$chatId]);
-                if ($chat && $chat->metadata) {
-                    $metadata = json_decode($chat->metadata, true);
-                    if (isset($metadata['whatsapp_id'])) {
-                        DB::delete("DELETE FROM messages WHERE chat = ?", [$metadata['whatsapp_id']]);
-                    }
-                }
-                
+
                 // Get users associated with this chat before deleting relationships
                 $chatUsers = DB::select("SELECT user_id FROM chat_user WHERE chat_id = ?", [$chatId]);
                 $chatUserIds = array_column($chatUsers, 'user_id');
@@ -556,17 +547,7 @@ class ChatController extends Controller
                 
                 // Delete messages associated with this chat
                 DB::delete("DELETE FROM whatsapp_messages WHERE chat_id = ?", [$chatId]);
-                
-                // Delete legacy messages if any (using chat field as string identifier)
-                // Get the chat to find its WhatsApp ID
-                $chat = DB::selectOne("SELECT metadata FROM chats WHERE id = ?", [$chatId]);
-                if ($chat && $chat->metadata) {
-                    $metadata = json_decode($chat->metadata, true);
-                    if (isset($metadata['whatsapp_id'])) {
-                        DB::delete("DELETE FROM messages WHERE chat = ?", [$metadata['whatsapp_id']]);
-                    }
-                }
-                
+
                 // Get users associated with this chat before deleting relationships
                 $chatUsers = DB::select("SELECT user_id FROM chat_user WHERE chat_id = ?", [$chatId]);
                 $chatUserIds = array_column($chatUsers, 'user_id');

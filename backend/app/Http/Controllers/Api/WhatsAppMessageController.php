@@ -850,7 +850,7 @@ class WhatsAppMessageController extends Controller
                     'type as last_message_type',
                     'status as last_message_status',
                     'read_at as last_message_read_at',
-                    \DB::raw('(SELECT COUNT(*) FROM messages AS unread_messages WHERE unread_messages.chat = messages.chat AND unread_messages.read_at IS NULL) as unread_count'),
+                    \DB::raw('(SELECT COUNT(*) FROM whatsapp_messages AS unread_messages WHERE unread_messages.chat = whatsapp_messages.chat AND unread_messages.read_at IS NULL) as unread_count'),
                 ])
                 ->whereIn('id', $latestMessages)
                 ->orderBy('sending_time', 'desc');
