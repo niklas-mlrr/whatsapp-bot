@@ -6,7 +6,7 @@ On your production server, run:
 
 ```bash
 # Check which config file is being used
-sudo nginx -T | grep "server_name lukas-whatsapp.cloud" -B 20
+sudo nginx -T | grep "server_name lukas-messenger.de" -B 20
 
 # Or list all site configs
 ls -la /etc/nginx/sites-available/
@@ -15,8 +15,8 @@ ls -la /etc/nginx/sites-enabled/
 
 Common locations:
 - `/etc/nginx/sites-available/default`
-- `/etc/nginx/sites-available/lukas-whatsapp.cloud`
-- `/etc/nginx/conf.d/lukas-whatsapp.cloud.conf`
+- `/etc/nginx/sites-available/lukas-messenger.de`
+- `/etc/nginx/conf.d/lukas-messenger.de.conf`
 
 ## Step 2: Backup Current Configuration
 
@@ -134,7 +134,7 @@ php artisan user:create-admin
 ## Step 9: Test Login Endpoint
 
 ```bash
-curl -X POST https://lukas-whatsapp.cloud/api/login \
+curl -X POST https://lukas-messenger.de/api/login \
   -H "Content-Type: application/json" \
   -d '{"phone":"+10000000000","password":"admin123"}'
 ```
@@ -162,7 +162,7 @@ Expected response:
 
 2. **Verify CORS headers are being sent:**
    ```bash
-   curl -I -X OPTIONS https://lukas-whatsapp.cloud/api/login
+   curl -I -X OPTIONS https://lukas-messenger.de/api/login
    ```
    
    Should show:
