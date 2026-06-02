@@ -18,6 +18,7 @@ ini_set('memory_limit', $memoryLimit);
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Http\Request;
 use Laravel\Reverb\ReverbServiceProvider;
 
 return Application::configure(basePath: dirname(__DIR__))
@@ -33,6 +34,16 @@ return Application::configure(basePath: dirname(__DIR__))
     ])
 
     ->withMiddleware(function (Middleware $middleware) {
+        // Trust the local nginx reverse proxy so X-Forwarded-Proto (https) is
+        // honored. Without this, Laravel sees the proxied request as http and
+        // generates http:// URLs/redirects behind our TLS-terminating nginx.
+        // PHP runs on 127.0.0.1:8000 (nginx-only), so trusting loopback is safe.
+        $middleware->trustProxies(at: ['127.0.0.1', '::1'], headers:
+            Request::HEADER_X_FORWARDED_FOR |
+            Request::HEADER_X_FORWARDED_HOST |
+            Request::HEADER_X_FORWARDED_PORT |
+            Request::HEADER_X_FORWARDED_PROTO);
+
         $middleware->alias([
             'throttle' => \Illuminate\Routing\Middleware\ThrottleRequests::class,
             'auth.sanctum' => \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class,
