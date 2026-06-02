@@ -39,3 +39,15 @@ pnpm-debug.log*
 /receiver/baileys_pairing_test_auth/
 /receiver/.env
 nginx-whatsapp-bot-complete.conf
+# Project-root WhatsApp session credentials (separate from /receiver/baileys_auth_info/)
+/baileys_auth_info/
+# Project-root logs
+/logs/
+# ACME challenge webroot (transient certbot files)
+/.well-known/
+# Backup .env files (contain secrets) — e.g. "backup - 28.10.25.env"
+*backup*.env
+*.env.backup*
+*.env.bak
+# phpinfo / debug endpoints — never expose in web root
+/backend/public/info.php
