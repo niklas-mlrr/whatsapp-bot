@@ -41,6 +41,7 @@ pnpm-debug.log*
 nginx-whatsapp-bot-complete.conf
 # Project-root WhatsApp session credentials (separate from /receiver/baileys_auth_info/)
 /baileys_auth_info/
+/baileys_auth_info.backup-*/
 # Project-root logs
 /logs/
 # ACME challenge webroot (transient certbot files)
