@@ -799,7 +799,16 @@ async function connectToWhatsApp() {
                 const deviceRemoved = isDeviceRemovedConflict(lastDisconnect);
 
                 const isUnauthorized = statusCode === 401;
-                const isNotRegistered = sock?.authState?.creds ? !sock.authState.creds.registered : null;
+                // Baileys only sets creds.registered=true on the pairing-code flow; QR-paired
+                // sessions (used here) never get that flag set, so it stays false forever even
+                // once fully linked. creds.me.id is populated on successful pairing regardless
+                // of method and persists across reconnects, so it's the reliable "have we ever
+                // paired" signal. Without this, DisconnectReason.connectionLost (a routine
+                // network timeout on an already-paired session) is indistinguishable from
+                // DisconnectReason.timedOut (QR never scanned) — both share statusCode 408 —
+                // and every transient network blip gets hard-locked as if pairing had failed.
+                const isPaired = Boolean(sock?.authState?.creds?.me?.id);
+                const isNotRegistered = sock?.authState?.creds ? !isPaired : null;
                 const shouldHardResetAuth = statusCode === DisconnectReason.loggedOut || (isUnauthorized && deviceRemoved);
                 const isQrTimeout = statusCode === DisconnectReason.timedOut && isNotRegistered === true;
 
