@@ -108,7 +108,19 @@ const config = {
         rateLimitWindowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS, 10) || 900000, // 15 minutes
         rateLimitMaxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS, 10) || 100,
         webhookSecret: process.env.WEBHOOK_SECRET || '',
-        corsOrigins: (process.env.CORS_ORIGINS || '*').split(',').map(o => o.trim()),
+        // In production, CORS_ORIGINS must be explicitly set (no wildcard default)
+        // In development, default to localhost for convenience
+        corsOrigins: (() => {
+            if (process.env.CORS_ORIGINS) {
+                return process.env.CORS_ORIGINS.split(',').map(o => o.trim());
+            }
+            if (process.env.NODE_ENV === 'production') {
+                console.error('[CONFIG ERROR] CORS_ORIGINS must be explicitly set in production');
+                process.exit(1);
+            }
+            // Development default: allow common localhost ports
+            return ['http://localhost:5173', 'http://localhost:3000', 'http://127.0.0.1:5173', 'http://127.0.0.1:3000'];
+        })(),
         enableCors: process.env.ENABLE_CORS !== 'false',
         enableRateLimit: process.env.ENABLE_RATE_LIMIT !== 'false',
     },

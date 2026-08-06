@@ -140,7 +140,9 @@ async function sendTextMessage(sock, chatJid, content, quotedMessage) {
             const protoLike = sentMessage?.message || { conversation: content || '' };
             storeSentMessage(id, protoLike);
         }
-    } catch (_) {}
+    } catch (storeErr) {
+        console.warn('Failed to store sent message for retry:', { messageId: sentMessage?.key?.id, error: storeErr.message });
+    }
 
     return sentMessage;
 }

@@ -2,6 +2,7 @@
  * Tests for messageHandler utility functions
  * Note: These tests mock the WhatsApp socket and logger dependencies
  */
+import { jest } from '@jest/globals';
 
 // Mock dependencies before importing
 const mockLogger = {

@@ -4,6 +4,29 @@ import apiClient from '@/services/api';
 import type { Message } from '@/types/message';
 import type { Chat } from '@/types/chat';
 
+interface ApiError {
+  response?: {
+    data?: {
+      message?: string;
+    };
+  };
+  message: string;
+}
+
+function isApiError(error: unknown): error is ApiError {
+  return typeof error === 'object' && error !== null && 'message' in error;
+}
+
+interface SendMessageOptions {
+  senderId?: string;
+  type?: 'text' | 'image' | 'video' | 'audio' | 'document';
+  media?: string;
+  mimetype?: string;
+  filename?: string;
+  tempId?: string;
+  quotedMessageId?: string;
+}
+
 export const useChatStore = defineStore('chat', () => {
   // State
   const chats = ref<Chat[]>([]);
@@ -49,8 +72,9 @@ export const useChatStore = defineStore('chat', () => {
       const response = await apiClient.get('/chats');
       chats.value = response.data.data || [];
       error.value = null;
-    } catch (err: any) {
-      error.value = err.response?.data?.message || 'Failed to fetch chats';
+    } catch (err: unknown) {
+      const message = isApiError(err) ? err.response?.data?.message : 'Failed to fetch chats';
+      error.value = message || 'Failed to fetch chats';
       console.error('Error fetching chats:', err);
     } finally {
       loading.value = false;
@@ -59,21 +83,22 @@ export const useChatStore = defineStore('chat', () => {
 
   const fetchMessages = async (chatId: string) => {
     if (!chatId) return;
-    
+
     try {
       loading.value = true;
       const response = await apiClient.get(`/chats/${chatId}/messages`);
       messages.value[chatId] = response.data.data || [];
       error.value = null;
-    } catch (err: any) {
-      error.value = err.response?.data?.message || 'Failed to fetch messages';
+    } catch (err: unknown) {
+      const message = isApiError(err) ? err.response?.data?.message : 'Failed to fetch messages';
+      error.value = message || 'Failed to fetch messages';
       console.error('Error fetching messages:', err);
     } finally {
       loading.value = false;
     }
   };
 
-  const sendMessage = async (chatId: string, content: string, options: any = {}) => {
+  const sendMessage = async (chatId: string, content: string, options: SendMessageOptions = {}) => {
     try {
       const tempId = `temp_${Date.now()}`;
       const tempMessage: Message = {
@@ -119,7 +144,7 @@ export const useChatStore = defineStore('chat', () => {
       updateLastMessage(chatId, response.data.data);
       
       return response.data.data;
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error sending message:', err);
       
       // Mark message as failed

@@ -2,7 +2,12 @@ const axios = require('axios');
 
 // Configuration
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8000/api/whatsapp-webhook';
-const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || 'your-webhook-secret-here';
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
+if (!WEBHOOK_SECRET) {
+    console.error('ERROR: WEBHOOK_SECRET environment variable is required');
+    console.error('Usage: WEBHOOK_SECRET=your-secret node load-test-queue.js');
+    process.exit(1);
+}
 const TEST_PHONE = process.env.TEST_PHONE || '1234567890@s.whatsapp.net';
 
 // Test message templates
@@ -217,14 +222,10 @@ async function runAllTests() {
     console.log('\nConfiguration:');
     console.log(`  Backend URL: ${BACKEND_URL}`);
     console.log(`  Test Phone: ${TEST_PHONE}`);
-    console.log(`  Webhook Secret: ${WEBHOOK_SECRET === 'your-webhook-secret-here' ? '⚠️  NOT CONFIGURED' : '✓ Configured'}`);
+    console.log('  Webhook Secret: ✓ Configured');
     console.log('\nIMPORTANT: Make sure queue workers are running!');
     console.log('Run: php artisan queue:work --verbose\n');
-    
-    if (WEBHOOK_SECRET === 'your-webhook-secret-here') {
-        console.log('⚠️  WARNING: Please set WEBHOOK_SECRET environment variable or update the script!\n');
-    }
-    
+
     await new Promise(resolve => setTimeout(resolve, 3000));
 
     const allResults = [];

@@ -9,30 +9,63 @@ export interface WhatsAppMessage {
   created_at: string;
 }
 
-export interface PaginatedResponse<T> {
-  data: T[];
-  links: any;
-  meta: any;
+export interface PaginationLinks {
+  first: string;
+  last: string;
+  prev: string | null;
+  next: string | null;
 }
 
-export const fetchMessages = (params: Record<string, any>) =>
-  apiClient.get<PaginatedResponse<WhatsAppMessage>>('/messages', { params });
+export interface PaginationMeta {
+  current_page: number;
+  from: number;
+  last_page: number;
+  per_page: number;
+  to: number;
+  total: number;
+}
 
-export const fetchChats = () =>
-  apiClient.get<{ data: any[] }>('/chats');
+export interface PaginatedResponse<T> {
+  data: T[];
+  links: PaginationLinks;
+  meta: PaginationMeta;
+}
 
-export const sendMessage = (data: {
-  sender: string;
-  chat: string;
-  type: string;
+export interface PollOption {
+  optionName: string;
+}
+
+export interface PollData {
+  name: string;
+  options: PollOption[] | string[];
+  selectableOptionsCount?: number;
+  pollType?: string;
+  pollContentType?: string;
+}
+
+export interface SendMessageParams {
+  sender?: string;
+  chat?: string;
+  type?: string;
   content?: string;
   media?: string;
   mimetype?: string;
   sending_time?: string;
   filename?: string;
   size?: number;
-  pollData?: any;
-}) =>
+  pollData?: PollData;
+  quoted_message_whatsapp_id?: string;
+  quoted_message_content?: string;
+  quoted_message_from_me?: boolean;
+}
+
+export const fetchMessages = (params: Record<string, string | number | undefined>) =>
+  apiClient.get<PaginatedResponse<WhatsAppMessage>>('/messages', { params });
+
+export const fetchChats = () =>
+  apiClient.get<{ data: import('@/types/chat').Chat[] }>('/chats');
+
+export const sendMessage = (data: SendMessageParams) =>
   apiClient.post('/messages', data);
 
 export const uploadFile = (file: File) => {

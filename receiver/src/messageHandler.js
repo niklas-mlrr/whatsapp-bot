@@ -157,13 +157,18 @@ async function handleMessages(sock, m) {
                 let actualMessage = msg.message;
                 if (msg.message?.messageContextInfo && !msg.message?.conversation && !msg.message?.extendedTextMessage) {
                     // Check if there's an actual message within messageContextInfo
+                    // Defensive check: ensure msg.message is a valid object before Object.keys()
+                    if (!msg.message || typeof msg.message !== 'object') {
+                        logger.debug('Skipping message with invalid message object');
+                        continue;
+                    }
                     const contextKeys = Object.keys(msg.message);
-                    const nonContextKey = contextKeys.find(key => 
-                        key !== 'messageContextInfo' && 
-                        key !== 'deviceListMetadata' && 
+                    const nonContextKey = contextKeys.find(key =>
+                        key !== 'messageContextInfo' &&
+                        key !== 'deviceListMetadata' &&
                         key !== 'deviceListMetadataVersion'
                     );
-                    
+
                     if (nonContextKey) {
                         // Use the non-context key as the actual message
                         actualMessage = { [nonContextKey]: msg.message[nonContextKey] };
