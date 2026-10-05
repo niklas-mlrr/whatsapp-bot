@@ -339,6 +339,10 @@
           @keydown.enter.exact.prevent="sendMessageHandler"
           :class="textareaClasses"
         ></textarea>
+        <button type="button" @click="insertLineBreak" @mousedown.prevent :disabled="!selectedChat" title="Zeilenumbruch einfügen"
+          class="shrink-0 h-10 px-2 rounded-full border border-gray-300 dark:border-zinc-600 text-gray-600 dark:text-gray-300 font-mono text-sm hover:bg-gray-100 dark:hover:bg-zinc-700 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed">
+          &lt;br&gt;
+        </button>
         <div class="relative">
           <button type="button" @click="openMenu" :disabled="!selectedChat"
             class="inline-block w-10 h-10 bg-green-500 dark:bg-green-600 rounded-full flex items-center justify-center text-white ml-2 focus:outline-none disabled:bg-gray-200 dark:disabled:bg-zinc-700 hover:bg-green-600 dark:hover:bg-green-500">
@@ -1809,6 +1813,19 @@ onMounted(async () => {
     }
   }, 5000) // Poll every 5 seconds
 })
+
+// Insert a newline at the cursor position (for devices without Shift+Enter)
+const insertLineBreak = async () => {
+  const textarea = messageInput.value
+  if (!textarea) return
+  const start = textarea.selectionStart ?? input.value.length
+  const end = textarea.selectionEnd ?? input.value.length
+  input.value = input.value.slice(0, start) + '\n' + input.value.slice(end)
+  await nextTick()
+  textarea.focus()
+  textarea.setSelectionRange(start + 1, start + 1)
+  adjustTextareaHeight()
+}
 
 // Method to adjust textarea height based on content
 const adjustTextareaHeight = () => {
