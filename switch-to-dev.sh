@@ -27,8 +27,11 @@ echo "Starting DEV services..."
 
 cd /home/openclaw/projects/whatsapp_dev
 
-# Stop any existing DEV PM2 processes to avoid duplicates
-pm2 delete all 2>/dev/null || true
+# Stop existing DEV PM2 processes by name to avoid duplicates.
+# Not `pm2 delete all`: that would also kill unrelated user processes (agent-monitor dashboard).
+for name in dev-backend dev-receiver dev-queue dev-frontend dev-reverb; do
+    pm2 delete "$name" >/dev/null 2>&1 || true
+done
 
 # Start PM2 services (backend, receiver, queue, reverb)
 pm2 start ecosystem.config.cjs

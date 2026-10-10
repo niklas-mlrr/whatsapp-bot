@@ -9,8 +9,11 @@ echo "=== Switching to PROD environment ==="
 # Stop DEV services
 echo "Stopping DEV services..."
 
-# Stop all user PM2 processes
-pm2 delete all 2>/dev/null || echo "No DEV PM2 processes running"
+# Stop DEV PM2 processes by name.
+# Not `pm2 delete all`: that would also kill unrelated user processes (agent-monitor dashboard).
+for name in dev-backend dev-receiver dev-queue dev-frontend dev-reverb; do
+    pm2 delete "$name" >/dev/null 2>&1 || echo "$name not running"
+done
 
 # Kill any remaining dev frontend process
 pkill -f "vite.*5173" 2>/dev/null || true
