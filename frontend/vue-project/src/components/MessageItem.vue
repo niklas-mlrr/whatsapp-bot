@@ -535,16 +535,6 @@
       </button>
     </div>
     
-    <!-- Sender avatar (right side for sent messages) -->
-    <div 
-      v-if="isMe && isGroupChat"
-      class="flex-shrink-0 w-8 h-8 rounded-full overflow-hidden bg-green-100 flex items-center justify-center text-green-700 font-bold text-sm ml-2 shadow-sm"
-      :title="message.sender || 'You'"
-    >
-      <img v-if="senderAvatarUrl" :src="senderAvatarUrl" alt="Avatar" class="w-8 h-8 object-cover" referrerpolicy="no-referrer" />
-      <span v-else>{{ senderInitials }}</span>
-    </div>
-    
     <!-- Message context menu (future feature) -->
     <!-- <div class="absolute right-0 top-0 opacity-0 group-hover:opacity-100 transition-opacity">
       <button class="p-1 text-gray-400 hover:text-gray-600">

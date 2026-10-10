@@ -21,7 +21,9 @@ export function createApp(options = {}) {
     const app = express();
 
     // Parse JSON bodies with increased limit for media
-    app.use(bodyParser.json({ limit: '10mb' }));
+    // Must cover base64-encoded media incl. overhead (4/3) for files up to
+    // Laravel's 50 MB upload limit -> ~67 MB, plus headroom.
+    app.use(bodyParser.json({ limit: '75mb' }));
 
     // Mount all routes
     mountRoutes(app, {
