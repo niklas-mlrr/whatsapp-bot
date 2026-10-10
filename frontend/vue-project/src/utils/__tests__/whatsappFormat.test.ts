@@ -4,6 +4,9 @@ import {
   hasWhatsAppFormatting,
   toggleInlineFormat,
   toggleLinePrefix,
+  insertNewline,
+  shiftIndent,
+  renumberLists,
 } from '../whatsappFormat'
 
 describe('renderWhatsAppText', () => {
@@ -61,10 +64,10 @@ describe('renderWhatsAppText', () => {
   it('renders quotes and lists', () => {
     expect(renderWhatsAppText('> zitat\n> zwei')).toBe('<span class="wa-quote">zitat<br/>zwei</span>')
     expect(renderWhatsAppText('- a\n- *b*')).toBe(
-      '<span class="wa-list"><span class="wa-li"><span class="wa-li-marker">•</span><span>a</span></span>' +
-        '<span class="wa-li"><span class="wa-li-marker">•</span><span><strong>b</strong></span></span></span>',
+      '<span class="wa-list"><span class="wa-li"><span class="wa-li-marker" style="min-width:1ch">•</span><span>a</span></span>' +
+        '<span class="wa-li"><span class="wa-li-marker" style="min-width:1ch">•</span><span><strong>b</strong></span></span></span>',
     )
-    expect(renderWhatsAppText('1. eins\n2. zwei')).toContain('<span class="wa-li-marker">2.</span>')
+    expect(renderWhatsAppText('1. eins\n2. zwei')).toContain('<span class="wa-li-marker" style="min-width:2ch">2.</span>')
   })
 
   it('keeps line breaks and legacy <br>', () => {
@@ -144,5 +147,90 @@ describe('toggleLinePrefix', () => {
 
   it('quotes an empty line', () => {
     expect(toggleLinePrefix('', 0, 0, 'quote')).toEqual({ text: '> ', selStart: 2, selEnd: 2 })
+  })
+})
+
+describe('indentation and list rendering', () => {
+  it('aligns numbered markers with tabular width per level', () => {
+    const html = renderWhatsAppText('9. a\n10. b')
+    expect(html).toContain('<span class="wa-li-marker" style="min-width:3ch">9.</span>')
+    expect(html).toContain('<span class="wa-li-marker" style="min-width:3ch">10.</span>')
+  })
+
+  it('renders nested list items with padding', () => {
+    const html = renderWhatsAppText('1. a\n    - sub\n2. b')
+    expect(html).toContain('<span class="wa-li" style="padding-left:1.50em"><span class="wa-li-marker" style="min-width:1ch">•</span><span>sub</span></span>')
+    expect(html.match(/class="wa-list"/g)).toHaveLength(1)
+  })
+
+  it('renders indented plain text with a spacer', () => {
+    expect(renderWhatsAppText('a\n    b')).toBe('a<br/><span class="wa-indent" style="width:1.50em"></span>b')
+  })
+})
+
+describe('insertNewline', () => {
+  it('continues numbered lists and renumbers following items', () => {
+    const text = '1. a\n2. b'
+    expect(insertNewline(text, 4, 4)).toEqual({ text: '1. a\n2. \n3. b', selStart: 8, selEnd: 8 })
+  })
+
+  it('continues bullets, quotes and indentation', () => {
+    expect(insertNewline('- a', 3, 3)).toEqual({ text: '- a\n- ', selStart: 6, selEnd: 6 })
+    expect(insertNewline('> a', 3, 3).text).toBe('> a\n> ')
+    expect(insertNewline('    text', 8, 8)).toEqual({ text: '    text\n    ', selStart: 13, selEnd: 13 })
+    expect(insertNewline('    - a', 7, 7).text).toBe('    - a\n    - ')
+  })
+
+  it('ends the list on an empty item', () => {
+    expect(insertNewline('1. a\n2. ', 8, 8)).toEqual({ text: '1. a\n', selStart: 5, selEnd: 5 })
+  })
+
+  it('moves an empty nested item one level out first', () => {
+    const r = insertNewline('1. a\n    1. ', 12, 12)
+    expect(r.text).toBe('1. a\n2. ')
+  })
+
+  it('is a plain line break for plain text', () => {
+    expect(insertNewline('ab', 1, 1)).toEqual({ text: 'a\nb', selStart: 2, selEnd: 2 })
+  })
+
+  it('keeps the caret right after the new prefix when earlier numbers change', () => {
+    const r = insertNewline('1. a\n1. b', 9, 9)
+    expect(r.text).toBe('1. a\n2. b\n3. ')
+    expect(r.selStart).toBe(r.text.length)
+  })
+})
+
+describe('shiftIndent', () => {
+  it('indents and outdents the cursor line', () => {
+    const r = shiftIndent('- a', 3, 3, 1)
+    expect(r).toEqual({ text: '    - a', selStart: 7, selEnd: 7 })
+    expect(shiftIndent(r.text, r.selStart, r.selEnd, -1)).toEqual({ text: '- a', selStart: 3, selEnd: 3 })
+  })
+
+  it('starts a sub-list at 1 and renumbers the parent list', () => {
+    expect(shiftIndent('1. a\n2. b\n3. c', 6, 6, 1).text).toBe('1. a\n    1. b\n2. c')
+  })
+
+  it('fits an outdented item back into the parent numbering', () => {
+    expect(shiftIndent('1. a\n    1. b\n2. c', 12, 12, -1).text).toBe('1. a\n2. b\n3. c')
+  })
+
+  it('indents all selected lines but skips empty ones', () => {
+    expect(shiftIndent('a\n\nb', 0, 4, 1).text).toBe('    a\n\n    b')
+  })
+
+  it('does nothing when outdenting an unindented line', () => {
+    expect(shiftIndent('a', 1, 1, -1)).toEqual({ text: 'a', selStart: 1, selEnd: 1 })
+  })
+})
+
+describe('renumberLists', () => {
+  it('keeps the start number of a run', () => {
+    expect(renumberLists('3. a\n3. b')).toBe('3. a\n4. b')
+  })
+
+  it('restarts after text', () => {
+    expect(renumberLists('1. a\ntext\n5. b\n5. c')).toBe('1. a\ntext\n5. b\n6. c')
   })
 })

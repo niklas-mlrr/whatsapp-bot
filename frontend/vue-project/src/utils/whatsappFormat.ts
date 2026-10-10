@@ -99,38 +99,83 @@ function renderInline(line: string): string {
 
 type LineKind = 'plain' | 'quote' | 'bullet' | 'numbered'
 
-function classifyLine(line: string): { kind: LineKind; body: string; num?: string } {
-  let m = line.match(/^>\s(.*)$/)
-  if (m) return { kind: 'quote', body: m[1] ?? '' }
-  m = line.match(/^[-*]\s+(.*)$/)
-  if (m) return { kind: 'bullet', body: m[1] ?? '' }
-  m = line.match(/^(\d+)\.\s+(.*)$/)
-  if (m) return { kind: 'numbered', body: m[2] ?? '', num: m[1] }
-  return { kind: 'plain', body: line }
+export interface ParsedLine {
+  /** Leading whitespace (indentation) */
+  indent: string
+  kind: LineKind
+  /** List/quote marker incl. trailing space, e.g. "- ", "3. ", "> " ('' for plain) */
+  marker: string
+  body: string
+  num?: number
+}
+
+/** Spaces per indentation level when indenting from the composer */
+export const INDENT_UNIT = '    '
+
+const LINE_RE = /^([ \t]*)(?:(> )|([-*] +)|((\d+)\. +))?(.*)$/
+
+export function parseLine(line: string): ParsedLine {
+  const m = line.match(LINE_RE)
+  const indent = m?.[1] ?? ''
+  const body = m?.[6] ?? line
+  if (m?.[2]) return { indent, kind: 'quote', marker: m[2], body }
+  if (m?.[3]) return { indent, kind: 'bullet', marker: m[3], body }
+  if (m?.[4]) return { indent, kind: 'numbered', marker: m[4], body, num: Number(m[5]) }
+  return { indent, kind: 'plain', marker: '', body: line.slice(indent.length) }
+}
+
+/** Indentation width in spaces (a tab counts as one indentation level) */
+function indentWidth(indent: string): number {
+  let w = 0
+  for (const ch of indent) w += ch === '\t' ? INDENT_UNIT.length : 1
+  return w
+}
+
+// 1.5em per indentation level (INDENT_UNIT spaces)
+function indentEm(indent: string): string {
+  return `${((indentWidth(indent) / INDENT_UNIT.length) * 1.5).toFixed(2)}em`
+}
+
+function indentSpacer(indent: string): string {
+  return indent ? `<span class="wa-indent" style="width:${indentEm(indent)}"></span>` : ''
 }
 
 function renderLines(text: string): string {
-  const lines = text.split('\n')
+  const lines = text.split('\n').map(parseLine)
+  const isList = (l: ParsedLine) => l.kind === 'bullet' || l.kind === 'numbered'
   const out: string[] = []
   let i = 0
   while (i < lines.length) {
-    const first = classifyLine(lines[i] ?? '')
-    const group: { body: string; num?: string }[] = []
+    const first = lines[i]!
+    const group: ParsedLine[] = []
     while (i < lines.length) {
-      const c = classifyLine(lines[i] ?? '')
-      if (c.kind !== first.kind) break
-      group.push(c)
+      const l = lines[i]!
+      const sameGroup = isList(first) ? isList(l) : l.kind === first.kind
+      if (!sameGroup) break
+      group.push(l)
       i++
     }
     if (first.kind === 'plain') {
-      out.push(group.map((g) => renderInline(g.body)).join('<br/>'))
+      out.push(group.map((g) => indentSpacer(g.indent) + renderInline(g.body)).join('<br/>'))
     } else if (first.kind === 'quote') {
-      out.push(`<span class="wa-quote">${group.map((g) => renderInline(g.body)).join('<br/>')}</span>`)
+      const inner = group.map((g) => indentSpacer(g.indent) + renderInline(g.body)).join('<br/>')
+      out.push(`<span class="wa-quote">${inner}</span>`)
     } else {
+      // Markers of one indentation level share a width so text lines up (also for 9. -> 10.)
+      const markerText = (g: ParsedLine) => (g.kind === 'numbered' ? `${g.num}.` : '•')
+      const widthByIndent = new Map<number, number>()
+      for (const g of group) {
+        const w = indentWidth(g.indent)
+        widthByIndent.set(w, Math.max(widthByIndent.get(w) ?? 1, markerText(g).length))
+      }
       const items = group
         .map((g) => {
-          const marker = first.kind === 'numbered' ? `${g.num}.` : '•'
-          return `<span class="wa-li"><span class="wa-li-marker">${marker}</span><span>${renderInline(g.body)}</span></span>`
+          const pad = g.indent ? ` style="padding-left:${indentEm(g.indent)}"` : ''
+          const minW = widthByIndent.get(indentWidth(g.indent)) ?? 1
+          return (
+            `<span class="wa-li"${pad}><span class="wa-li-marker" style="min-width:${minW}ch">${markerText(g)}</span>` +
+            `<span>${renderInline(g.body)}</span></span>`
+          )
         })
         .join('')
       out.push(`<span class="wa-list">${items}</span>`)
@@ -260,47 +305,187 @@ export function toggleInlineFormat(text: string, selStart: number, selEnd: numbe
   return { text: text.slice(0, start) + replaced + text.slice(end), selStart: start, selEnd: start + replaced.length }
 }
 
-const LINE_PREFIX_RE: Record<LineFormat, RegExp> = {
-  quote: /^> /,
-  bullet: /^[-*] /,
-  numbered: /^\d+\. /,
-}
-const ANY_PREFIX_RE = /^(> |[-*] |\d+\. )/
-
-/**
- * Toggle a line prefix (quote / bullet / numbered list) on every line touched
- * by the selection. Switching between list types replaces the old prefix.
- */
-export function toggleLinePrefix(text: string, selStart: number, selEnd: number, format: LineFormat): TextEdit {
+/** Range of whole lines touched by a selection: [lineStart, lineEnd) */
+function touchedLines(text: string, selStart: number, selEnd: number): { lineStart: number; lineEnd: number } {
   const start = Math.min(selStart, selEnd)
   let end = Math.max(selStart, selEnd)
   // A selection ending right after a newline should not include the next line
   if (end > start && text[end - 1] === '\n') end--
-
   const lineStart = text.lastIndexOf('\n', start - 1) + 1
   const nl = text.indexOf('\n', end)
-  const lineEnd = nl === -1 ? text.length : nl
+  return { lineStart, lineEnd: nl === -1 ? text.length : nl }
+}
 
-  const lines = text.slice(lineStart, lineEnd).split('\n')
-  const targets = lines.some((l) => l.trim()) ? lines.map((l) => !!l.trim()) : lines.map(() => true)
-  const remove = lines.every((l, i) => !targets[i] || LINE_PREFIX_RE[format].test(l))
+/** Offset of the n-th line (0-based) in text */
+function lineOffset(text: string, lineIndex: number): number {
+  let pos = 0
+  for (let i = 0; i < lineIndex; i++) {
+    const nl = text.indexOf('\n', pos)
+    if (nl === -1) return text.length
+    pos = nl + 1
+  }
+  return pos
+}
+
+function lineIndexAt(text: string, offset: number): number {
+  let n = 0
+  for (let i = 0; i < offset; i++) if (text[i] === '\n') n++
+  return n
+}
+
+function formatLine(l: ParsedLine): string {
+  return l.indent + l.marker + l.body
+}
+
+/**
+ * Renumber numbered lists: within a run (same indentation, nested items don't break it)
+ * the first item keeps its number and the following ones count up from it.
+ */
+export function renumberLists(text: string): string {
+  const next = new Map<number, number>()
+  const dropFrom = (level: number) => {
+    for (const k of [...next.keys()]) if (k >= level) next.delete(k)
+  }
+  return text
+    .split('\n')
+    .map((line) => {
+      const l = parseLine(line)
+      const level = indentWidth(l.indent)
+      if (l.kind === 'numbered') {
+        dropFrom(level + 1)
+        const n = next.get(level) ?? l.num ?? 1
+        next.set(level, n + 1)
+        return n === l.num ? line : formatLine({ ...l, marker: `${n}. ` })
+      }
+      if (l.kind === 'bullet') {
+        dropFrom(level)
+      } else if (l.body.trim() || l.kind === 'quote') {
+        // Text (or a quote) at this indentation ends the lists at this level and deeper
+        dropFrom(level)
+      }
+      return line
+    })
+    .join('\n')
+}
+
+/**
+ * Toggle a line prefix (quote / bullet / numbered list) on every line touched
+ * by the selection. Indentation is kept; switching list types replaces the old prefix.
+ */
+export function toggleLinePrefix(text: string, selStart: number, selEnd: number, format: LineFormat): TextEdit {
+  const { lineStart, lineEnd } = touchedLines(text, selStart, selEnd)
+  const lines = text.slice(lineStart, lineEnd).split('\n').map(parseLine)
+  const targets = lines.some((l) => (l.marker + l.body).trim())
+    ? lines.map((l) => !!(l.marker + l.body).trim())
+    : lines.map(() => true)
+  const kind: LineKind = format
+  const remove = lines.every((l, i) => !targets[i] || l.kind === kind)
 
   let n = 0
   const replaced = lines
     .map((l, i) => {
-      if (!targets[i]) return l
-      if (remove) return l.replace(LINE_PREFIX_RE[format], '')
-      const body = l.replace(ANY_PREFIX_RE, '')
+      if (!targets[i]) return formatLine(l)
+      if (remove) return l.indent + l.body
       n++
-      const prefix = format === 'quote' ? '> ' : format === 'bullet' ? '- ' : `${n}. `
-      return prefix + body
+      const marker = format === 'quote' ? '> ' : format === 'bullet' ? '- ' : `${n}. `
+      return l.indent + marker + l.body
     })
     .join('\n')
 
-  const newText = text.slice(0, lineStart) + replaced + text.slice(lineEnd)
+  const firstLine = lineIndexAt(text, lineStart)
+  const after = text.slice(lineEnd)
+  const renumbered = renumberLists(text.slice(0, lineStart) + replaced + after)
+  const newStart = lineOffset(renumbered, firstLine)
+  const blockEnd = renumbered.length - after.length
   if (selStart === selEnd && lines.length === 1) {
-    const caret = lineStart + replaced.length
-    return { text: newText, selStart: caret, selEnd: caret }
+    return { text: renumbered, selStart: blockEnd, selEnd: blockEnd }
   }
-  return { text: newText, selStart: lineStart, selEnd: lineStart + replaced.length }
+  return { text: renumbered, selStart: newStart, selEnd: blockEnd }
+}
+
+/**
+ * Indent (+1) or outdent (-1) every line touched by the selection by one INDENT_UNIT.
+ * Numbered items that change level are renumbered within their new list.
+ */
+export function shiftIndent(text: string, selStart: number, selEnd: number, direction: 1 | -1): TextEdit {
+  const { lineStart, lineEnd } = touchedLines(text, selStart, selEnd)
+  const lines = text.slice(lineStart, lineEnd).split('\n')
+  const deltas: number[] = []
+  const shifted = lines.map((line) => {
+    if (direction === 1) {
+      if (!line.trim() && lines.length > 1) {
+        deltas.push(0)
+        return line
+      }
+      deltas.push(INDENT_UNIT.length)
+      const l = parseLine(line)
+      // Moved numbered items start fresh; renumbering below fits them into their run
+      return INDENT_UNIT + (l.kind === 'numbered' ? formatLine({ ...l, marker: '1. ' }) : line)
+    }
+    const m = line.match(/^(\t| {1,4})/)
+    const cut = m?.[1]?.length ?? 0
+    deltas.push(-cut)
+    if (!cut) return line
+    const l = parseLine(line.slice(cut))
+    return l.kind === 'numbered' ? formatLine({ ...l, marker: '1. ' }) : formatLine(l)
+  })
+
+  const firstLine = lineIndexAt(text, lineStart)
+  const result = renumberLists(text.slice(0, lineStart) + shifted.join('\n') + text.slice(lineEnd))
+  // Renumbering may change line lengths before the block, so locate it by line index
+  const newStart = lineOffset(result, firstLine)
+  const blockLen = result.split('\n').slice(firstLine, firstLine + lines.length).join('\n').length
+
+  if (selStart === selEnd && lines.length === 1) {
+    // Keep the caret on the same character of the line (never left of the line start)
+    const offset = Math.max(0, selStart - lineStart + (deltas[0] ?? 0))
+    const caret = newStart + Math.min(offset, blockLen)
+    return { text: result, selStart: caret, selEnd: caret }
+  }
+  return { text: result, selStart: newStart, selEnd: newStart + blockLen }
+}
+
+/**
+ * Insert a line break that continues the current list / quote / indentation:
+ * "2. foo|" -> "2. foo\n3. |". On an empty item the list ends instead
+ * (nested items move one level out first).
+ */
+export function insertNewline(text: string, selStart: number, selEnd: number): TextEdit {
+  const start = Math.min(selStart, selEnd)
+  const end = Math.max(selStart, selEnd)
+  const lineStart = text.lastIndexOf('\n', start - 1) + 1
+  const nl = text.indexOf('\n', end)
+  const lineEnd = nl === -1 ? text.length : nl
+  const l = parseLine(text.slice(lineStart, lineEnd))
+  const prefixLen = l.indent.length + l.marker.length
+
+  // Empty list item / quote line with the caret at its end -> leave the list
+  if (start === end && l.kind !== 'plain' && !l.body.trim() && start === lineEnd) {
+    if (l.indent) return shiftIndent(text, start, end, -1)
+    const cleared = text.slice(0, lineStart) + text.slice(lineEnd)
+    return { text: cleared, selStart: lineStart, selEnd: lineStart }
+  }
+
+  // Caret inside the prefix itself -> plain line break
+  let continuation = ''
+  if (start - lineStart >= prefixLen) {
+    if (l.kind === 'numbered') continuation = `${l.indent}${(l.num ?? 0) + 1}. `
+    else if (l.kind === 'bullet') continuation = l.indent + l.marker.trimEnd() + ' '
+    else continuation = l.indent + l.marker
+  }
+
+  const insert = '\n' + continuation
+  const raw = text.slice(0, start) + insert + text.slice(end)
+  if (l.kind !== 'numbered') {
+    const caret = start + insert.length
+    return { text: raw, selStart: caret, selEnd: caret }
+  }
+  // Renumbering may change earlier lines too: put the caret after the new line's prefix
+  const result = renumberLists(raw)
+  const newLine = lineIndexAt(raw, start) + 1
+  const newLineStart = lineOffset(result, newLine)
+  const nl2 = result.indexOf('\n', newLineStart)
+  const p = parseLine(result.slice(newLineStart, nl2 === -1 ? result.length : nl2))
+  const caret = newLineStart + (continuation ? p.indent.length + p.marker.length : 0)
+  return { text: result, selStart: caret, selEnd: caret }
 }

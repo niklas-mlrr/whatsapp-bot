@@ -614,6 +614,9 @@ import {
   hasWhatsAppFormatting,
   toggleInlineFormat,
   toggleLinePrefix,
+  shiftIndent,
+  insertNewline,
+  parseLine,
   type InlineFormat,
   type LineFormat,
 } from '@/utils/whatsappFormat'
@@ -1743,7 +1746,8 @@ const submitEdit = async () => {
     return
   }
   
-  const newContent = input.value.trim()
+  // Keep leading indentation, drop trailing whitespace
+  const newContent = input.value.replace(/\s+$/, '')
   const messageId = editingMessage.value.id
   
   if (newContent === editingMessage.value.content) {
@@ -1885,7 +1889,7 @@ onMounted(async () => {
 })
 
 // --- WhatsApp formatting in the composer ---
-type FormatAction = { inline?: InlineFormat; line?: LineFormat }
+type FormatAction = { inline?: InlineFormat; line?: LineFormat; indent?: 1 | -1 }
 type FormatButton = FormatAction & { key: string; label: string; title: string; cls?: string }
 
 const formatButtons: FormatButton[] = [
@@ -1897,6 +1901,8 @@ const formatButtons: FormatButton[] = [
   { key: 'quote', label: '❝', title: 'Zitat', cls: 'text-base', line: 'quote' },
   { key: 'bullet', label: '•', title: 'Aufzählung', cls: 'text-base', line: 'bullet' },
   { key: 'numbered', label: '1.', title: 'Nummerierte Liste', line: 'numbered' },
+  { key: 'outdent', label: '⇤', title: 'Ausrücken (Umschalt+Tab)', cls: 'text-base', indent: -1 },
+  { key: 'indent', label: '⇥', title: 'Einrücken (Tab)', cls: 'text-base', indent: 1 },
 ]
 
 const FORMAT_BAR_STORAGE_KEY = 'composer.showFormatBar'
@@ -1925,7 +1931,9 @@ const applyFormat = async (action: FormatAction) => {
     ? toggleInlineFormat(input.value, start, end, action.inline)
     : action.line
       ? toggleLinePrefix(input.value, start, end, action.line)
-      : null
+      : action.indent
+        ? shiftIndent(input.value, start, end, action.indent)
+        : null
   if (!result) return
   input.value = result.text
   await nextTick()
@@ -1937,9 +1945,28 @@ const applyFormat = async (action: FormatAction) => {
 // Enter sends, Shift+Enter breaks the line; WhatsApp Web shortcuts for formatting
 const onComposerKeydown = (e: KeyboardEvent) => {
   if (e.isComposing) return
-  if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+  if (e.key === 'Enter' && !e.ctrlKey && !e.altKey && !e.metaKey) {
     e.preventDefault()
-    sendMessageHandler()
+    // Shift+Enter: new line that continues lists / quotes / indentation
+    if (e.shiftKey) insertLineBreak()
+    else sendMessageHandler()
+    return
+  }
+  // Tab / Shift+Tab indent list items, indented lines and multi-line selections;
+  // elsewhere Tab keeps moving focus as usual
+  if (e.key === 'Tab' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+    const textarea = messageInput.value
+    if (!textarea) return
+    const start = textarea.selectionStart ?? 0
+    const end = textarea.selectionEnd ?? start
+    const lineStart = input.value.lastIndexOf('\n', start - 1) + 1
+    const lineEndIdx = input.value.indexOf('\n', start)
+    const line = parseLine(input.value.slice(lineStart, lineEndIdx === -1 ? input.value.length : lineEndIdx))
+    const multiLine = input.value.slice(start, end).includes('\n')
+    if (line.kind !== 'plain' || line.indent || multiLine) {
+      e.preventDefault()
+      applyFormat({ indent: e.shiftKey ? -1 : 1 })
+    }
     return
   }
   if (!(e.ctrlKey || e.metaKey) || e.altKey) return
@@ -1954,16 +1981,18 @@ const onComposerKeydown = (e: KeyboardEvent) => {
   applyFormat({ inline })
 }
 
-// Insert a newline at the cursor position (for devices without Shift+Enter)
+// Insert a newline at the cursor (Shift+Enter and the <br> button for devices without it);
+// continues numbered/bullet lists, quotes and indentation
 const insertLineBreak = async () => {
   const textarea = messageInput.value
   if (!textarea) return
   const start = textarea.selectionStart ?? input.value.length
-  const end = textarea.selectionEnd ?? input.value.length
-  input.value = input.value.slice(0, start) + '\n' + input.value.slice(end)
+  const end = textarea.selectionEnd ?? start
+  const result = insertNewline(input.value, start, end)
+  input.value = result.text
   await nextTick()
   textarea.focus()
-  textarea.setSelectionRange(start + 1, start + 1)
+  textarea.setSelectionRange(result.selStart, result.selEnd)
   adjustTextareaHeight()
 }
 

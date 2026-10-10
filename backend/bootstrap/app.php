@@ -34,6 +34,9 @@ return Application::configure(basePath: dirname(__DIR__))
     ])
 
     ->withMiddleware(function (Middleware $middleware) {
+        // Message text is sent as typed: leading spaces are indentation (nested lists)
+        $middleware->trimStrings(except: ['content']);
+
         // Trust the local nginx reverse proxy so X-Forwarded-Proto (https) is
         // honored. Without this, Laravel sees the proxied request as http and
         // generates http:// URLs/redirects behind our TLS-terminating nginx.
