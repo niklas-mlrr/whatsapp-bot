@@ -180,7 +180,8 @@ Route::get('/test-tables', function () {
 // PRODUCTION ENDPOINTS - Always available
 // ============================================================================
 
-// GD Extension diagnostic endpoint (always available for troubleshooting)
+// GD Extension diagnostic endpoint (development only: exposes PHP config details)
+if (config('app.env') !== 'production') {
 Route::get('/test-gd', function () {
     $gdLoaded = extension_loaded('gd');
     $gdInfo = function_exists('gd_info') ? gd_info() : null;
@@ -205,6 +206,7 @@ Route::get('/test-gd', function () {
         'imagesy_exists' => function_exists('imagesy'),
     ]);
 });
+}
 
 // Webhook endpoint (temporarily without middleware for testing)
 // TODO: Re-enable middleware after testing
@@ -223,7 +225,7 @@ Route::get('/check-auth', function () {
 });
 
 // Webhook routes (called by receiver, verified by webhook secret)
-Route::middleware(['throttle:120,1'])->group(function () {
+Route::middleware(['verify.webhook', 'throttle:120,1'])->group(function () {
     // Update message status by WhatsApp message ID (called by receiver)
     Route::post('/messages/update-status', [MessageStatusController::class, 'updateStatusByWhatsAppId']);
     
@@ -260,7 +262,6 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     // Message status
     Route::prefix('messages/{message}')->group(function () {
         Route::post('read', [MessageStatusController::class, 'markAsRead']);
-        Route::post('react', [MessageStatusController::class, 'react']);
         Route::post('vote', [WhatsAppMessageController::class, 'vote']);
     });
 

@@ -126,8 +126,8 @@ class Chat extends Model
      */
     public function messages()
     {
-        return $this->hasMany(WhatsAppMessage::class, 'chat', 'id')
-            ->orderBy('sending_time', 'desc');
+        return $this->hasMany(WhatsAppMessage::class, 'chat_id', 'id')
+            ->orderBy('created_at', 'desc');
     }
 
     /**

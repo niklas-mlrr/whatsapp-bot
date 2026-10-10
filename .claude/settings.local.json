@@ -3,5 +3,9 @@
     "allow": [
       "Skill(schedule)"
     ]
-  }
+  },
+  "disabledMcpjsonServers": [
+    "craft",
+    "craft_schule"
+  ]
 }

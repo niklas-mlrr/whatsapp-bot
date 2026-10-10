@@ -131,9 +131,14 @@
                     referrerpolicy="no-referrer"
                     @error="handleAvatarError(chat)"
                   />
-                  <span v-else>{{ chat.name.slice(0,2).toUpperCase() }}</span>
+                  <span v-else>{{ getChatDisplayName(chat).slice(0,2).toUpperCase() }}</span>
                 </div>
                 <span class="flex-1 truncate">{{ getChatDisplayName(chat) }}</span>
+                <span
+                  v-if="formatChatTime(chat)"
+                  :class="['shrink-0 text-xs font-normal', chat.unread_count > 0 && (!selectedChat || selectedChat.id !== chat.id) ? 'text-green-600 dark:text-green-400' : 'text-gray-500 dark:text-gray-400']"
+                  :title="chat.last_message_at ? new Date(chat.last_message_at).toLocaleString('de-DE') : ''"
+                >{{ formatChatTime(chat) }}</span>
                 <!-- Unread message indicator -->
                 <span 
                   v-if="chat.unread_count && chat.unread_count > 0 && (!selectedChat || selectedChat.id !== chat.id)"
@@ -328,6 +333,28 @@
           </div>
         </div>
         
+        <!-- Formatting toolbar (WhatsApp syntax) -->
+        <div v-if="showFormatBar && selectedChat" class="flex flex-wrap items-center gap-1 px-3 md:px-6 pt-2" role="toolbar" aria-label="Textformatierung">
+          <button
+            v-for="f in formatButtons"
+            :key="f.key"
+            type="button"
+            @mousedown.prevent
+            @click="applyFormat(f)"
+            :title="f.title"
+            :aria-label="f.title"
+            class="h-8 min-w-[2rem] px-2 rounded-md text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-zinc-700 focus:outline-none focus:ring-2 focus:ring-green-400"
+          >
+            <span :class="f.cls">{{ f.label }}</span>
+          </button>
+        </div>
+
+        <!-- Live preview of formatted text -->
+        <div v-if="composerPreview" class="mx-3 md:mx-6 mt-2 px-3 py-2 rounded-lg bg-green-50 dark:bg-zinc-800 border border-green-200 dark:border-zinc-700 text-sm text-gray-800 dark:text-gray-200 max-h-32 overflow-y-auto">
+          <div class="text-[10px] uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-0.5">Vorschau</div>
+          <div class="whitespace-pre-wrap break-words" v-html="composerPreview"></div>
+        </div>
+
         <form @submit.prevent="sendMessageHandler" class="flex items-center gap-2 px-3 md:px-6 py-3 md:py-4 relative">
         <textarea
           ref="messageInput"
@@ -336,16 +363,25 @@
           rows="1"
           placeholder="Nachricht eingeben"
           @input="adjustTextareaHeight"
-          @keydown.enter.exact.prevent="sendMessageHandler"
+          @keydown="onComposerKeydown"
           :class="textareaClasses"
         ></textarea>
+        <button type="button" @click="toggleFormatBar" @mousedown.prevent :disabled="!selectedChat"
+          :title="showFormatBar ? 'Formatierung ausblenden' : 'Formatierung (fett, kursiv, ...)'"
+          :aria-pressed="showFormatBar"
+          :class="['shrink-0 h-10 w-10 rounded-full border text-sm font-semibold focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed',
+            showFormatBar
+              ? 'border-green-500 bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-300 dark:border-green-600'
+              : 'border-gray-300 dark:border-zinc-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-700']">
+          Aa
+        </button>
         <button type="button" @click="insertLineBreak" @mousedown.prevent :disabled="!selectedChat" title="Zeilenumbruch einfügen"
           class="shrink-0 h-10 px-2 rounded-full border border-gray-300 dark:border-zinc-600 text-gray-600 dark:text-gray-300 font-mono text-sm hover:bg-gray-100 dark:hover:bg-zinc-700 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed">
           &lt;br&gt;
         </button>
         <div class="relative">
           <button type="button" @click="openMenu" :disabled="!selectedChat"
-            class="inline-block w-10 h-10 bg-green-500 dark:bg-green-600 rounded-full flex items-center justify-center text-white ml-2 focus:outline-none disabled:bg-gray-200 dark:disabled:bg-zinc-700 hover:bg-green-600 dark:hover:bg-green-500">
+            class="inline-block w-10 h-10 bg-green-500 dark:bg-green-600 rounded-full flex items-center justify-center text-white md:ml-2 focus:outline-none disabled:bg-gray-200 dark:disabled:bg-zinc-700 hover:bg-green-600 dark:hover:bg-green-500">
             <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" /></svg>
           </button>
           <div v-if="showMenu" class="absolute left-0 bottom-12 z-10 bg-white dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700 rounded shadow-lg min-w-[160px]">
@@ -361,13 +397,19 @@
         <button
           type="submit"
           :disabled="!canSend"
-          class="bg-green-500 dark:bg-green-600 text-white rounded-full px-4 md:px-6 py-2 font-semibold hover:bg-green-600 dark:hover:bg-green-500 disabled:bg-gray-300 dark:disabled:bg-zinc-700 disabled:cursor-not-allowed flex items-center gap-2 min-w-[70px] md:min-w-[80px] justify-center text-sm md:text-base"
+          :title="isSending ? 'Wird gesendet...' : 'Senden'"
+          :aria-label="isSending ? 'Wird gesendet...' : 'Senden'"
+          class="shrink-0 bg-green-500 dark:bg-green-600 text-white rounded-full h-10 w-10 md:w-auto md:h-auto md:px-6 md:py-2 font-semibold hover:bg-green-600 dark:hover:bg-green-500 disabled:bg-gray-300 dark:disabled:bg-zinc-700 disabled:cursor-not-allowed flex items-center gap-2 md:min-w-[80px] justify-center text-sm md:text-base"
         >
           <svg v-if="isSending" class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
           </svg>
-          <span>{{ isSending ? 'Wird gesendet...' : 'Senden' }}</span>
+          <!-- Paper plane icon on small screens, text label from md up -->
+          <svg v-if="!isSending" class="h-5 w-5 rotate-90 md:hidden" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+          </svg>
+          <span class="hidden md:inline">{{ isSending ? 'Wird gesendet...' : 'Senden' }}</span>
         </button>
         </form>
       </div>
@@ -554,6 +596,14 @@ import { fetchChats, sendMessage, uploadFile, deleteChat } from '../api/messages
 import { API_CONFIG } from '@/config/api'
 import { useWebSocket } from '@/services/websocket'
 import apiClient from '@/services/api'
+import {
+  renderWhatsAppText,
+  hasWhatsAppFormatting,
+  toggleInlineFormat,
+  toggleLinePrefix,
+  type InlineFormat,
+  type LineFormat,
+} from '@/utils/whatsappFormat'
 
 // Initialize theme store
 const themeStore = useThemeStore()
@@ -656,54 +706,53 @@ const syncSelectedChat = (newChats: any[]) => {
   }
 }
 
-// Separate pending and approved chats
-const approvedChats = computed(() => {
-  const approved = chats.value.filter(c => !c.pending_approval)
-  
-  // Sort to put own number at the top
-  const sorted = approved.sort((a, b) => {
-    // Check multiple variations of the number
-    const checkIsOwn = (chat: any) => {
-      const patterns = ['1590 8115183', '15908115183', '4915908115183', '+4915908115183', '49 1590 8115183']
-      
-      // Check name
-      if (chat.name && patterns.some((p: string) => chat.name.includes(p))) {
-        return true
-      }
-      
-      // Check participants array
-      if (Array.isArray(chat.participants)) {
-        for (const participant of chat.participants) {
-          const participantStr = String(participant)
-          if (patterns.some((p: string) => participantStr.includes(p))) {
-            return true
-          }
-        }
-      }
-      
-      // Check metadata
-      if (chat.metadata?.whatsapp_id && patterns.some((p: string) => chat.metadata.whatsapp_id.includes(p))) {
-        return true
-      }
-      
-      // Check original_name
-      if (chat.original_name && patterns.some((p: string) => chat.original_name.includes(p))) {
-        return true
-      }
-      
-      return false
-    }
-    
-    const aIsOwn = checkIsOwn(a)
-    const bIsOwn = checkIsOwn(b)
-    
-    if (aIsOwn && !bIsOwn) return -1
-    if (!aIsOwn && bIsOwn) return 1
-    return 0
-  })
-  
-  return sorted
-})
+// The bot's own number (notes-to-self chat) stays pinned on top of the list
+const OWN_NUMBER_PATTERNS = ['1590 8115183', '15908115183', '4915908115183', '+4915908115183', '49 1590 8115183']
+
+const isOwnChat = (chat: any): boolean => {
+  const matches = (val: unknown) => typeof val === 'string' && OWN_NUMBER_PATTERNS.some(p => val.includes(p))
+  if (matches(chat.name) || matches(chat.metadata?.whatsapp_id) || matches(chat.original_name)) return true
+  return Array.isArray(chat.participants) && chat.participants.some((p: unknown) => matches(String(p)))
+}
+
+// Time of the most recent message (falls back to chat creation for empty chats)
+const chatActivityTime = (chat: any): number => {
+  const t = Date.parse(chat?.last_message_at || chat?.created_at || '')
+  return Number.isNaN(t) ? 0 : t
+}
+
+// WhatsApp-style label: time today, "Gestern", weekday within a week, else date
+const formatChatTime = (chat: any): string => {
+  if (!chat?.last_message_at) return ''
+  const t = chatActivityTime(chat)
+  if (!t) return ''
+  const d = new Date(t)
+  const now = new Date()
+  const dayStart = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
+  const days = Math.round((dayStart(now) - dayStart(d)) / 86400000)
+  if (days <= 0) return d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
+  if (days === 1) return 'Gestern'
+  if (days < 7) return d.toLocaleDateString('de-DE', { weekday: 'long' })
+  return d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: '2-digit' })
+}
+
+// Optimistically move a chat to the top after sending; the next poll confirms it
+const bumpChatActivity = (chatId: string | number) => {
+  const chat = chats.value.find(c => String(c.id) === String(chatId))
+  if (chat) chat.last_message_at = new Date().toISOString()
+}
+
+// Separate pending and approved chats; approved ones sorted by most recent message
+const approvedChats = computed(() =>
+  chats.value
+    .filter(c => !c.pending_approval)
+    .sort((a, b) => {
+      const aOwn = isOwnChat(a)
+      const bOwn = isOwnChat(b)
+      if (aOwn !== bOwn) return aOwn ? -1 : 1
+      return chatActivityTime(b) - chatActivityTime(a) || Number(b.id) - Number(a.id)
+    })
+)
 const pendingChats = computed(() => chats.value.filter(c => c.pending_approval))
 const input = ref('')
 const attachmentFile = ref<File | null>(null)
@@ -1181,6 +1230,7 @@ async function sendMessageHandler() {
   const messageAttachmentName = attachmentName.value
   const messageAttachmentSize = attachmentSize.value
   const messageReplyTo = replyToMessage.value
+  const sentChatId = selectedChat.value.id
   
   isSending.value = true
   
@@ -1263,6 +1313,7 @@ async function sendMessageHandler() {
     }
     
     await sendMessage(payload)
+    bumpChatActivity(sentChatId)
     
     // Remove temporary message and reload to show the real message
     if (messageListRef.value && messageListRef.value.removeTemporaryMessage) {
@@ -1452,6 +1503,7 @@ async function createPoll() {
                     || selectedChat.value.original_name
                     || selectedChat.value.name;
 
+    const pollChatId = selectedChat.value.id
     await sendMessage({
       sender: 'me',
       chat: chatJid,
@@ -1459,6 +1511,7 @@ async function createPoll() {
       content: content,
       pollData: pollData
     })
+    bumpChatActivity(pollChatId)
 
     // Close the modal and reset form
     closePollModal()
@@ -1586,7 +1639,7 @@ const rejectChat = async (chat: any) => {
 }
 
 const confirmDeleteChat = async (chat: any) => {
-  if (!confirm(`Möchten Sie den Chat mit "${chat.name}" wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden.`)) {
+  if (!confirm(`Möchten Sie den Chat mit "${getChatDisplayName(chat)}" wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden.`)) {
     return
   }
   
@@ -1599,10 +1652,7 @@ const confirmDeleteChat = async (chat: any) => {
     // If the deleted chat was selected, clear the selection
     if (selectedChat.value && selectedChat.value.id === chat.id) {
       selectedChat.value = null
-      // Select the first available chat if any
-      if (chats.value.length > 0) {
-        selectedChat.value = chats.value[0]
-      }
+      showSidebarOnMobile.value = true
     }
   } catch (e: any) {
     console.error('Error deleting chat:', e)
@@ -1722,9 +1772,11 @@ const checkAuthAndRedirect = async () => {
 
 // Set up polling interval variable at component level
 let pollInterval: number | null = null
+let isUnmounted = false
 
 // Clean up interval when component unmounts
 onUnmounted(() => {
+  isUnmounted = true
   if (pollInterval) {
     clearInterval(pollInterval)
   }
@@ -1771,8 +1823,11 @@ onMounted(async () => {
     loadingChats.value = false
   }
   
+  // Component may have been left while the initial fetch was running
+  if (isUnmounted) return
+
   // Set up periodic polling for new chats (every 5 seconds)
-  pollInterval = setInterval(async () => {
+  pollInterval = window.setInterval(async () => {
     try {
       const response = await fetchChats()
       if (response && response.data && response.data.data) {
@@ -1813,6 +1868,76 @@ onMounted(async () => {
     }
   }, 5000) // Poll every 5 seconds
 })
+
+// --- WhatsApp formatting in the composer ---
+type FormatAction = { inline?: InlineFormat; line?: LineFormat }
+type FormatButton = FormatAction & { key: string; label: string; title: string; cls?: string }
+
+const formatButtons: FormatButton[] = [
+  { key: 'bold', label: 'B', title: 'Fett (Strg+B)', cls: 'font-bold', inline: 'bold' },
+  { key: 'italic', label: 'I', title: 'Kursiv (Strg+I)', cls: 'italic font-serif', inline: 'italic' },
+  { key: 'strike', label: 'S', title: 'Durchgestrichen (Strg+Umschalt+X)', cls: 'line-through', inline: 'strike' },
+  { key: 'code', label: '</>', title: 'Inline-Code', cls: 'font-mono text-xs', inline: 'code' },
+  { key: 'mono', label: '```', title: 'Monospace-Block (Strg+Umschalt+M)', cls: 'font-mono text-xs', inline: 'mono' },
+  { key: 'quote', label: '❝', title: 'Zitat', cls: 'text-base', line: 'quote' },
+  { key: 'bullet', label: '•', title: 'Aufzählung', cls: 'text-base', line: 'bullet' },
+  { key: 'numbered', label: '1.', title: 'Nummerierte Liste', line: 'numbered' },
+]
+
+const FORMAT_BAR_STORAGE_KEY = 'composer.showFormatBar'
+const showFormatBar = ref(false)
+try {
+  showFormatBar.value = localStorage.getItem(FORMAT_BAR_STORAGE_KEY) === '1'
+} catch {}
+
+const toggleFormatBar = () => {
+  showFormatBar.value = !showFormatBar.value
+  try {
+    localStorage.setItem(FORMAT_BAR_STORAGE_KEY, showFormatBar.value ? '1' : '0')
+  } catch {}
+  nextTick(() => messageInput.value?.focus())
+}
+
+// Rendered preview, only when the text actually contains formatting
+const composerPreview = computed(() => (hasWhatsAppFormatting(input.value) ? renderWhatsAppText(input.value) : ''))
+
+const applyFormat = async (action: FormatAction) => {
+  const textarea = messageInput.value
+  if (!textarea || !selectedChat.value) return
+  const start = textarea.selectionStart ?? input.value.length
+  const end = textarea.selectionEnd ?? start
+  const result = action.inline
+    ? toggleInlineFormat(input.value, start, end, action.inline)
+    : action.line
+      ? toggleLinePrefix(input.value, start, end, action.line)
+      : null
+  if (!result) return
+  input.value = result.text
+  await nextTick()
+  textarea.focus()
+  textarea.setSelectionRange(result.selStart, result.selEnd)
+  adjustTextareaHeight()
+}
+
+// Enter sends, Shift+Enter breaks the line; WhatsApp Web shortcuts for formatting
+const onComposerKeydown = (e: KeyboardEvent) => {
+  if (e.isComposing) return
+  if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+    e.preventDefault()
+    sendMessageHandler()
+    return
+  }
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return
+  const key = e.key.toLowerCase()
+  let inline: InlineFormat | null = null
+  if (!e.shiftKey && key === 'b') inline = 'bold'
+  else if (!e.shiftKey && key === 'i') inline = 'italic'
+  else if (e.shiftKey && key === 'x') inline = 'strike'
+  else if (e.shiftKey && key === 'm') inline = 'mono'
+  if (!inline) return
+  e.preventDefault()
+  applyFormat({ inline })
+}
 
 // Insert a newline at the cursor position (for devices without Shift+Enter)
 const insertLineBreak = async () => {

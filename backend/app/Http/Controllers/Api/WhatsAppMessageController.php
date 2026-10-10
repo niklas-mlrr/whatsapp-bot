@@ -725,7 +725,7 @@ class WhatsAppMessageController extends Controller
                 \Log::info('Prepared outbound media', ['type' => $data['type']]);
             }
 
-            \Log::info('Sending payload to receiver', $sendPayload);
+            \Log::info('Sending payload to receiver', $this->redactMediaForLog($sendPayload));
             
             // Build HTTP client, allow insecure TLS if explicitly enabled for self-signed certs
             $http = Http::timeout(30)
@@ -749,11 +749,12 @@ class WhatsAppMessageController extends Controller
                     'message' => 'Failed to send message to WhatsApp',
                     'receiver_status' => $response->status(),
                     'receiver_response' => $response->body(),
-                    'receiver_url' => $receiverUrl,
-                    'payload' => $sendPayload
                 ];
                 
-                \Log::error('Failed to send message to receiver', $errorResponse);
+                \Log::error('Failed to send message to receiver', $errorResponse + [
+                    'receiver_url' => $receiverUrl,
+                    'payload' => $this->redactMediaForLog($sendPayload),
+                ]);
                 
                 return response()->json($errorResponse, 500);
             }
@@ -801,6 +802,13 @@ class WhatsAppMessageController extends Controller
                 'metadata' => $metadata,
             ]);
             
+            // Keep the chat's last-message reference current for outgoing messages too
+            try {
+                $chat->updateLastMessage($message);
+            } catch (\Throwable $e) {
+                \Log::warning('Failed to update last message for chat', ['chat_id' => $chat->id, 'error' => $e->getMessage()]);
+            }
+
             // Load relationships for proper accessor functionality
             $message->load(['senderUser', 'replyToMessage.senderUser']);
             
@@ -818,77 +826,10 @@ class WhatsAppMessageController extends Controller
         } catch (\Exception $e) {
             \Log::error('Error sending message to receiver', [
                 'exception' => $e->getMessage(),
-                'receiver_url' => $receiverUrl,
-                'payload' => $sendPayload
+                'receiver_url' => $receiverUrl ?? null,
+                'payload' => $this->redactMediaForLog($sendPayload ?? null),
             ]);
             return response()->json(['status' => 'error', 'message' => 'Internal Server Error'], 500);
-        }
-    }
-    
-    // GET /api/chats - Get list of chats with metadata
-    public function chats(Request $request): JsonResponse
-    {
-        try {
-            $validated = $request->validate([
-                'search' => 'nullable|string|max:255',
-                'unread_only' => 'nullable|boolean',
-                'per_page' => 'nullable|integer|min:1|max:100',
-                'page' => 'nullable|integer|min:1',
-            ]);
-            
-            // Subquery to get the last message for each chat
-            $latestMessages = WhatsAppMessage::selectRaw('MAX(id) as last_message_id')
-                ->groupBy('chat');
-                
-            // Main query to get chat metadata
-            $query = WhatsAppMessage::with(['senderUser', 'chat', 'pollVotes'])
-                ->select([
-                    'chat',
-                    'sender',
-                    'sending_time as last_message_time',
-                    'content as last_message_content',
-                    'type as last_message_type',
-                    'status as last_message_status',
-                    'read_at as last_message_read_at',
-                    \DB::raw('(SELECT COUNT(*) FROM whatsapp_messages AS unread_messages WHERE unread_messages.chat = whatsapp_messages.chat AND unread_messages.read_at IS NULL) as unread_count'),
-                ])
-                ->whereIn('id', $latestMessages)
-                ->orderBy('sending_time', 'desc');
-            
-            // Apply search filter
-            if ($request->filled('search')) {
-                $searchTerm = '%' . $validated['search'] . '%';
-                $query->where('chat', 'like', $searchTerm);
-            }
-            
-            // Filter unread only
-            if ($request->boolean('unread_only')) {
-                $query->having('unread_count', '>', 0);
-            }
-            
-            // Pagination
-            $perPage = $validated['per_page'] ?? 20;
-            $chats = $query->paginate($perPage);
-            
-            // Transform the results to include participants (assuming chat is a single participant for now)
-            $chats->getCollection()->transform(function ($chat) {
-                $chat->participants = [$chat->sender];
-                return $chat;
-            });
-            
-            return ChatResource::collection($chats);
-            
-        } catch (\Exception $e) {
-            \Log::error('Failed to fetch chats', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-            
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Failed to fetch chats',
-                'error' => $e->getMessage()
-            ], 500);
         }
     }
     
@@ -1685,6 +1626,23 @@ class WhatsAppMessageController extends Controller
      * Create a configured HTTP client for the receiver service.
      * Handles timeout, headers, and optional TLS verification.
      */
+    /**
+     * Replace inline base64 media with a size marker so payloads can be logged
+     * without writing whole files into the log.
+     */
+    private function redactMediaForLog(?array $payload): ?array
+    {
+        if (!is_array($payload) || !isset($payload['media']) || !is_string($payload['media'])) {
+            return $payload;
+        }
+
+        if (str_starts_with($payload['media'], 'data:') || strlen($payload['media']) > 1024) {
+            $payload['media'] = '[base64 media, ' . strlen($payload['media']) . ' chars]';
+        }
+
+        return $payload;
+    }
+
     private function getReceiverHttpClient(): \Illuminate\Http\Client\PendingRequest
     {
         $http = Http::timeout(10)

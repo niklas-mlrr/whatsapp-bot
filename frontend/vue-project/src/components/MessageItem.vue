@@ -450,7 +450,7 @@
             {{ userIds.length }}
           </span>
           <div v-if="activeTooltipEmoji === String(emoji)" class="absolute -top-7 left-1/2 -translate-x-1/2 whitespace-pre leading-tight text-xs bg-black text-white px-2 py-1 rounded shadow pointer-events-none z-10">
-            <span v-html="getGroupedReactionTooltip(emoji).replace(/\n/g, '<br/>')"></span>
+            <span>{{ getGroupedReactionTooltip(emoji) }}</span>
           </div>
         </button>
         <button 
@@ -549,6 +549,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, defineComponent } from 'vue'
 import { API_CONFIG } from '@/config/api'
+import { renderWhatsAppText } from '@/utils/whatsappFormat'
 import { useChatStore } from '@/stores/chat'
 import { useAuthStore } from '@/stores/auth'
 
@@ -653,7 +654,7 @@ const isMe = computed(() => props.message.sender === 'me' || props.message.isMe)
 const showSenderName = computed(() => Boolean(props.isGroupChat) && !isMe.value && Boolean(props.message.sender))
 
 const renderedContent = computed(() => {
-  return linkifyContent(props.message.content)
+  return renderWhatsAppText(props.message.content)
 })
 
 const shouldShowStatusTooltip = computed(() => {
@@ -871,34 +872,6 @@ const documentUrl = computed(() => {
 const bubbleAlign = computed(() => 
   isMe.value ? 'justify-end' : 'justify-start'
 )
-
-function linkifyContent(raw?: string): string {
-  if (!raw || typeof raw !== 'string') return ''
-
-  const normalized = raw.replace(/<br\s*\/?\s*>/gi, '\n')
-  const urlRegex = /((https?:\/\/|www\.)[^\s<]+|(?:(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,}))(?:\/[^\s<]*)?)/gi
-
-  const lines = normalized.split('\n')
-  const linkedLines = lines.map((line) => {
-    return line.replace(urlRegex, (match: string, _g0: string, _g1: string, offset: number) => {
-      const prevChar = offset > 0 ? line[offset - 1] : ''
-      // Don't linkify emails like test@example.com
-      if (prevChar === '@' || match.includes('@')) {
-        return match
-      }
-      let url = match
-      let trailing = ''
-      while (url.length > 0 && /[\)\]\}\.,!\?:;]+$/.test(url)) {
-        trailing = url.slice(-1) + trailing
-        url = url.slice(0, -1)
-      }
-      const href = url.startsWith('http') ? url : `https://${url}`
-      return `<a href="${href}" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:underline break-all">${url}</a>${trailing}`
-    })
-  })
-
-  return linkedLines.join('<br/>')
-}
 
 const bubbleClass = computed(() => {
   const baseClasses = [

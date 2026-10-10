@@ -55,7 +55,12 @@ class ChatService
                 c.type,
                 c.unread_count,
                 c.participants,
-                c.created_by
+                c.created_by,
+                (
+                    SELECT MAX(m.created_at)
+                    FROM whatsapp_messages m
+                    WHERE m.chat_id = c.id AND m.deleted_at IS NULL
+                ) AS last_message_created_at
             FROM chats c
             LEFT JOIN chat_user cu ON c.id = cu.chat_id AND cu.user_id = ?
             WHERE (
@@ -64,7 +69,7 @@ class ChatService
                 OR (c.participants IS NOT NULL AND c.participants LIKE ?)
             )
             AND (c.is_archived = 0 OR c.is_archived IS NULL)
-            ORDER BY c.updated_at DESC
+            ORDER BY COALESCE(last_message_created_at, c.created_at) DESC, c.id DESC
         ", [$userId, $userId, $userId, $likePattern]);
     }
 
@@ -110,6 +115,8 @@ class ChatService
                 'contact_info_updated_at' => $contactInfo['updated_at'] ?? null,
                 'updated_at' => $chat->updated_at,
                 'created_at' => $chat->created_at,
+                // Time of the newest message; the chat list is sorted by it
+                'last_message_at' => $this->toIso8601($chat->last_message_created_at),
                 'description' => null,
                 'is_archived' => $chat->is_archived,
                 'is_muted' => $chat->is_muted,
@@ -122,6 +129,18 @@ class ChatService
         }
 
         return $formatted;
+    }
+
+    /**
+     * Convert a raw DB datetime (app timezone) to ISO 8601 for reliable client-side parsing.
+     */
+    private function toIso8601(?string $value): ?string
+    {
+        if (!$value) {
+            return null;
+        }
+
+        return \Illuminate\Support\Carbon::parse($value, config('app.timezone'))->toIso8601String();
     }
 
     /**

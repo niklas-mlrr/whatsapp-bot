@@ -5,6 +5,7 @@
 import express from 'express';
 import { getSocketInstance, isSocketConnected } from '../middleware/socketReady.js';
 import { resolveChatJid } from '../utils/jid.js';
+import { verifyApiKey } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -12,7 +13,7 @@ const router = express.Router();
  * @param {import('express').Application} app - Express app instance
  */
 export function createReactionRoutes(app) {
-    app.post('/send-reaction', async (req, res) => {
+    app.post('/send-reaction', verifyApiKey, async (req, res) => {
         console.log('Received send-reaction request:', req.body);
 
         const sockInstance = getSocketInstance();

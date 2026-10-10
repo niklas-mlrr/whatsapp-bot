@@ -634,7 +634,9 @@ class MessageStatusController extends Controller
                 $payload['participant'] = $participant;
             }
 
-            $response = \Illuminate\Support\Facades\Http::timeout(10)->post("{$receiverUrl}/send-reaction", $payload);
+            $response = \Illuminate\Support\Facades\Http::timeout(10)
+                ->withHeaders(['X-API-Key' => config('app.receiver_api_key', '')])
+                ->post("{$receiverUrl}/send-reaction", $payload);
 
             if (!$response->successful()) {
                 Log::channel('whatsapp')->error('Failed to send reaction to WhatsApp', [
