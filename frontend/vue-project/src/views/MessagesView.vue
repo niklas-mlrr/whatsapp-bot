@@ -710,6 +710,8 @@ const syncSelectedChat = (newChats: any[]) => {
 const OWN_NUMBER_PATTERNS = ['1590 8115183', '15908115183', '4915908115183', '+4915908115183', '49 1590 8115183']
 
 const isOwnChat = (chat: any): boolean => {
+  // Groups list every member incl. our own number in participants -> never the own chat
+  if (chat.is_group) return false
   const matches = (val: unknown) => typeof val === 'string' && OWN_NUMBER_PATTERNS.some(p => val.includes(p))
   if (matches(chat.name) || matches(chat.metadata?.whatsapp_id) || matches(chat.original_name)) return true
   return Array.isArray(chat.participants) && chat.participants.some((p: unknown) => matches(String(p)))
