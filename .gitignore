@@ -52,3 +52,5 @@ nginx-whatsapp-bot-complete.conf
 *.env.bak
 # phpinfo / debug endpoints — never expose in web root
 /backend/public/info.php
+# receiver auth-dir session credential backups
+/receiver/baileys_auth_info.bak-*/
