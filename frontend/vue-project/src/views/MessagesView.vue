@@ -139,6 +139,19 @@
                   :class="['shrink-0 text-xs font-normal', chat.unread_count > 0 && (!selectedChat || selectedChat.id !== chat.id) ? 'text-green-600 dark:text-green-400' : 'text-gray-500 dark:text-gray-400']"
                   :title="chat.last_message_at ? new Date(chat.last_message_at).toLocaleString('de-DE') : ''"
                 >{{ formatChatTime(chat) }}</span>
+                <!-- Pin icon for the own-number chat (always sorted on top) -->
+                <svg
+                  v-if="isOwnChat(chat)"
+                  class="shrink-0 h-4 w-4 rotate-45 text-gray-400 dark:text-gray-500"
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  role="img"
+                  aria-label="Angeheftet"
+                >
+                  <title>Angeheftet</title>
+                  <path d="M16 9V4h1a1 1 0 0 0 0-2H7a1 1 0 0 0 0 2h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z" />
+                </svg>
                 <!-- Unread message indicator -->
                 <span 
                   v-if="chat.unread_count && chat.unread_count > 0 && (!selectedChat || selectedChat.id !== chat.id)"
